@@ -1,4 +1,4 @@
-# **my-package**
+# **llm-eval**
 
 ```{toctree}
 :maxdepth: 2
@@ -15,8 +15,8 @@ overview
 
 CHANGELOG
 CONTRIBUTING
-License <https://raw.githubusercontent.com/allenai/python-package-template/main/LICENSE>
-GitHub Repository <https://github.com/allenai/python-package-template>
+License <https://raw.githubusercontent.com/allenai/ai2-llm-eval/main/LICENSE>
+GitHub Repository <https://github.com/allenai/ai2-llm-eval>
 ```
 
 ## Indices and tables

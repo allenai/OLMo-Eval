@@ -97,7 +97,7 @@ jobs:
         if: always()
         run: |
           . .venv/bin/activate
-          pip uninstall -y my-package
+          pip uninstall -y llm-eval
 
   release:
     name: Release

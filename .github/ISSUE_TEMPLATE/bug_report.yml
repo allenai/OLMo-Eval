@@ -6,7 +6,7 @@ body:
 - type: markdown
   attributes:
     value: >
-      #### Before submitting a bug, please make sure the issue hasn't been already addressed by searching through [the existing and past issues](https://github.com/allenai/python-package-template/issues?q=is%3Aissue+sort%3Acreated-desc+).
+      #### Before submitting a bug, please make sure the issue hasn't been already addressed by searching through [the existing and past issues](https://github.com/allenai/ai2-llm-eval/issues?q=is%3Aissue+sort%3Acreated-desc+).
 - type: textarea
   attributes:
     label: 🐛 Describe the bug
@@ -17,7 +17,7 @@ body:
 
       ```python
       # All necessary imports at the beginning
-      import my_package
+      import llm_eval
 
       # A succinct reproducing example trimmed down to the essential parts:
       assert False is True, "Oh no!"
