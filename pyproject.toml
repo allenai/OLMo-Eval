@@ -17,9 +17,11 @@ classifiers = [
 authors = [
     {name = "Allen Institute for Artificial Intelligence", email = "contact@allenai.org"}
 ]
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 dependencies = [
   # Add your own dependencies here
+  "ai2-catwalk @ git+https://github.com/allenai/catwalk.git@olmo-eval",
+  "pygsheets"
 ]
 license = {file = "LICENSE"}
 
@@ -68,7 +70,7 @@ include-package-data = true
 llm_eval = ["py.typed"]
 
 [tool.setuptools.dynamic]
-version = {attr = "llm_eval.VERSION"}
+version = {attr = "llm_eval.version.VERSION"}
 
 [tool.black]
 line-length = 100
