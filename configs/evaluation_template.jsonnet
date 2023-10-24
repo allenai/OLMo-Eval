@@ -16,11 +16,11 @@ local gsheet = null;
 // Models to evaluate
 
 local models = [
-    {
+    /*{
         model_path: "s3://ai2-llm/test_fixtures/olmo-1b", //❗Specify olmo unsharded checkpoint path
         gpus_needed: 1,
         trust_remote_code: true
-    },
+    },*/
     {
         model_path: "EleutherAI/pythia-1b",
         revision: "step140000", //❗Specify checkpoint if needed

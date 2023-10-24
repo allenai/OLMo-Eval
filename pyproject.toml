@@ -18,9 +18,12 @@ authors = [
     {name = "Allen Institute for Artificial Intelligence", email = "contact@allenai.org"}
 ]
 requires-python = ">=3.10"
+
+# TODO: update tango once the PR is merged, and new version released.
 dependencies = [
   # Add your own dependencies here
   "ai2-catwalk @ git+https://github.com/allenai/catwalk.git@olmo-eval",
+  "ai2-tango[torch,transformers,fairscale,beaker,wandb,gs] @ git+https://github.com/allenai/tango.git@gs-bug-fixes",
   "pygsheets"
 ]
 license = {file = "LICENSE"}
