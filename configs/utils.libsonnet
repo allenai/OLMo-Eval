@@ -16,6 +16,8 @@ local flatten_task_sets(task_sets) = std.flatMap(
     task_sets
 );
 
+
+// models: [model1, model2], task_configs: [task1, task2, task3] --> [(model1, task1), (model1, task2), ... (model2, task3)]
 local model_task_cross_product(models, task_configs) = std.flatMap(
     function(task_config) std.map(
         function(model_config)
@@ -33,15 +35,22 @@ local basepath(path) =
   local temp = std.split(path, "/");
   temp[std.length(temp)-1];
 
-
 local full_model(model_config) = basepath(model_config.model_path) + std.get(model_config, "revision", "");
+
+local contains = function(main_string, sub_string)
+    std.length(std.findSubstr(sub_string, main_string)) > 0;
+
+local is_olmo_model = function(model_config)
+    contains(std.get(model_config, "model_path"), "olmo");
+
+// Model steps
 
 local model_location_step_name(model_config) = "model_location_" + full_model(model_config);
 local model_location_ref(model_config) = {type: "ref", ref: model_location_step_name(model_config)};
 
 local create_model_location_steps(models) = std.foldl(
     function(x, model_config) x + {
-        [model_location_step_name(model_config)]: {
+        [if is_olmo_model(model_config) then model_location_step_name(model_config)]: {
             type: "get-model-path",
             model_path: model_config.model_path,
             revision: std.get(model_config, "revision"),
@@ -54,7 +63,6 @@ local create_model_location_steps(models) = std.foldl(
     {}
 );
 
-
 local catwalk_model_step_name(model_config) = "catwalk_model_" + full_model(model_config);
 local catwalk_model_ref(model_config) = {type: "ref", ref: catwalk_model_step_name(model_config)};
 
@@ -62,7 +70,7 @@ local create_catwalk_model_steps(models) = std.foldl(
     function(x, model_config) x + {
         [catwalk_model_step_name(model_config)]: {
             type: "construct-catwalk-model",
-            model_path: model_location_ref(model_config),
+            model_path: if is_olmo_model(model_config) then model_location_ref(model_config) else model_config.model_path,
             model_class: std.get(model_config, "hf_model_class"),
             revision: std.get(model_config, "revision"),
             trust_remote_code: std.get(model_config, "trust_remote_code", false),
@@ -76,7 +84,7 @@ local create_catwalk_model_steps(models) = std.foldl(
 );
 
 
-
+// Task steps
 local task_step_name(config) = "task_" + config.task_set + "_" + config.task_name + std.get(config.task_kwargs, "task_rename", "");
 local task_ref(config) = {type: "ref", ref: task_step_name(config)};
 
@@ -95,6 +103,8 @@ local create_task_steps(task_configs) = std.foldl(
     {}
 );
 
+
+// Output steps
 local outputs_step_name(config) =
     "outputs_" +
     full_model(config) + "_" +
