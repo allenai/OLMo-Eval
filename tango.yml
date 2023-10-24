@@ -12,7 +12,7 @@
 workspace:
   type: "local"
   # ❗Change this to the workspace you want to use 👇
-  workspace: "my-local-workspace"
+  dir: "my-local-workspace"
 
 # ❗Uncomment (and comment the workspace above) to save outputs to GS workspace, so that they are shareable.
 #workspace:
