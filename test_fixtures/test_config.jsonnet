@@ -29,7 +29,7 @@ local models = [
         prediction_kwargs: {
             model_max_length: 128,
             // max_batch_tokens: 32,
-            // limit: 1000,
+            limit: 20,
             //fewshot_seed: 1234, //etc.
         }
     },
