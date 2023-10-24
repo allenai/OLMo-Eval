@@ -1,7 +1,7 @@
 from catwalk.model import Model
 from catwalk.models import MODELS
-from tango.common.testing import TangoTestCase
 
+from llm_eval.common.testing import LLMEvalTestCase
 from llm_eval.steps.run_catwalk import (
     ConstructCatwalkModel,
     ConstructTaskDict,
@@ -9,7 +9,7 @@ from llm_eval.steps.run_catwalk import (
 )
 
 
-class TestConstructTaskDict(TangoTestCase):
+class TestConstructTaskDict(LLMEvalTestCase):
     def test_step(self):
         step = ConstructTaskDict()
         result = step.run(task_name="arc_easy", task_rename="my-arc-task", my_kwarg=23)
@@ -52,7 +52,7 @@ class TestConstructTaskDict(TangoTestCase):
         assert "keep_instance_fields" in result
 
 
-class TestConstructCatwalkModel(TangoTestCase):
+class TestConstructCatwalkModel(LLMEvalTestCase):
     def test_step(self):
         step = ConstructCatwalkModel()
         result = step.run(model_path="sshleifer/tiny-gpt2")
@@ -61,7 +61,7 @@ class TestConstructCatwalkModel(TangoTestCase):
         assert "lm::pretrained=sshleifer-tiny-gpt2" in MODELS
 
 
-class TestPredictAndCalculateMetricsStep(TangoTestCase):
+class TestPredictAndCalculateMetricsStep(LLMEvalTestCase):
     def test_step(self):
         model = ConstructCatwalkModel().run(model_path="sshleifer/tiny-gpt2")
         task_dict = ConstructTaskDict().run(task_name="boolq")
