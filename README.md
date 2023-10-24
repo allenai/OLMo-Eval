@@ -61,7 +61,7 @@ tango --settings tango.yml run llm_eval/evaluation_template.jsonnet
 
 ```commandline
 tango run configs/evaluation_template.jsonnet \
-    -w gs://olmo-evaluation-runs/your-eval-experiment
+    -w gs://olmo-evaluation-runs/your-eval-workspace
 ```
 
 ### Accessing outputs of steps
@@ -70,12 +70,11 @@ All intermediate and final results will be saved to the specified workspace, and
 
 ```python
 from tango import Workspace
-workspace = Workspace.from_url("gs://olmo-evaluation-runs/your-eval-experiment")
+workspace = Workspace.from_url("gs://olmo-evaluation-runs/your-eval-workspace")
 result = workspace.step_result("combine-all-outputs")
 ```
 
 If you specify `gsheet` in your config, final results will also be appended to the google sheet.
-
 
 ### If you want to run the evaluation steps on beaker individually
 
@@ -108,6 +107,13 @@ export GITHUB_TOKEN="<your token>"  # Needed for beaker to clone the repo.
 tango --settings tango-in-beaker.yml run llm_eval/evaluation_template.jsonnet
 ```
 
+### Troubleshooting
+
+If some error causes the workspace to go into a bad state (i.e., you get errors that say step should not be in completed state, etc.), you can clear the workspace with
+
+```commandline
+python scripts/empty_workspace.py olmo-evaluation-runs/your-eval-workspace
+```
 
 ## Contributing
 
