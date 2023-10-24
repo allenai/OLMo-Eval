@@ -1,0 +1,33 @@
+# Tango settings file
+#
+# See https://ai2-tango.readthedocs.io/en/latest/api/settings.html
+# for a list and description of all available fields.
+
+# ❗Fields that should be updated are marked with 👇
+
+# ❗This config runs the steps on the machine on which the tango command is run.
+# ❗See tango-in-beaker.yml if you want to run the experiments on beaker individually.
+
+# ❗This saves all outputs locally
+workspace:
+  type: "local"
+  # ❗Change this to the workspace you want to use 👇
+  workspace: "my-local-workspace"
+
+# ❗Uncomment (and comment the workspace above) to save outputs to GS workspace, so that they are shareable.
+#workspace:
+#  type: "gs"
+#  # ❗Change this to the workspace you want to use 👇
+#  workspace: "olmo-evaluation-runs/test-workspace"
+#  project: "ai2-olmo"
+
+# Define the executor to use (how steps will be run).
+executor:
+  type: multicore
+  # ❗Update to how many steps you want to run in parallel (they will run sequentially if dependent on previous steps) 👇
+  parallelism: 1
+
+include_package:
+  - llm_eval.steps
+
+log_level: info

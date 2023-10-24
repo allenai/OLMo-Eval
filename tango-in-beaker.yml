@@ -18,8 +18,8 @@
 workspace:
   type: "gs"
   # ❗Change this to the workspace you want to use 👇
-  workspace: "akshitab-eval-test"
-  project: "ai2-allennlp"
+  workspace: "olmo-evaluation-runs/test-workspace"
+  project: "ai2-olmo"
 
 # Define the executor to use (how steps will be run).
 executor:
@@ -59,6 +59,6 @@ executor:
 
 
 include_package:
-  - evaluation.steps
+  - llm_eval.steps
 
 log_level: info
