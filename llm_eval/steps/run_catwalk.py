@@ -35,7 +35,10 @@ class ConstructTaskDict(Step):
         # TODO: not clean.
         if hasattr(task_obj, "clone") and "files" in kwargs:
             if "EVAL_DATA_PATH" in os.environ:
-                files = [os.path.join(os.environ["EVAL_DATA_PATH"], filename) for filename in kwargs["files"]]
+                files = [
+                    os.path.join(os.environ["EVAL_DATA_PATH"], filename)
+                    for filename in kwargs["files"]
+                ]
             else:
                 files = kwargs["files"]
             task_obj = task_obj.clone(files=files)
@@ -71,7 +74,9 @@ class ConstructTaskDict(Step):
         task_name = task_dict["name"]
         task_obj = task_dict["task_obj"]
         if "unconditioned_prompt" not in task_dict:
-            if hasattr(task_obj, "inner_task") and hasattr(task_obj.inner_task, "unconditioned_prompt"):
+            if hasattr(task_obj, "inner_task") and hasattr(
+                task_obj.inner_task, "unconditioned_prompt"
+            ):
                 prompt = task_obj.inner_task.unconditioned_prompt()
                 logger.info(f"Using unconditioned prompt for {task_name}: '{prompt}'")
                 task_dict["unconditioned_prompt"] = prompt
@@ -147,10 +152,12 @@ class ProcessOutputs(Step):
             for instance_prediction in outputs["instance_predictions"]:
                 subdomain = instance_prediction["instance"]["subdomain"]
                 sum_logits[subdomain] = (
-                    sum_logits.get(subdomain, 0) + instance_prediction["prediction"]["model_output"]["sum_logits"]
+                    sum_logits.get(subdomain, 0)
+                    + instance_prediction["prediction"]["model_output"]["sum_logits"]
                 )
                 num_tokens[subdomain] = (
-                    num_tokens.get(subdomain, 0) + instance_prediction["prediction"]["model_output"]["num_tokens"]
+                    num_tokens.get(subdomain, 0)
+                    + instance_prediction["prediction"]["model_output"]["num_tokens"]
                 )
 
             for subdomain in sum_logits:
@@ -179,6 +186,18 @@ class PredictAndCalculateMetricsStep(Step):
         batch_size: int = DEFAULT_PREDICTION_KWARGS["batch_size"],
         **kwargs,
     ) -> Dict:
+        """
+        :param model: The catwalk model object.
+        :param task_dict: The task dict containing the catwalk task object and kwargs.
+        :param split: The data split (default="validation").
+        :param limit: Number of instances on which to run the predictions (default=1000).
+        :param random_subsample_seed: Random seed for subsampling the instances (default=1234).
+        :param model_max_length: Max length of the generation (default=2048).
+        :param max_batch_tokens: (default=20480).
+        :param batch_size: (default=32).
+        :param kwargs:
+        :return:
+        """
         task_name = task_dict["name"]
         task = task_dict["task_obj"]
 
@@ -198,7 +217,9 @@ class PredictAndCalculateMetricsStep(Step):
                 **kwargs,
             )
         ]
-        metrics = model.calculate_metrics(task, predictions)  # this updates the `predictions` object too
+        metrics = model.calculate_metrics(
+            task, predictions
+        )  # this updates the `predictions` object too
 
         end_time = time.time()
 
@@ -210,9 +231,13 @@ class PredictAndCalculateMetricsStep(Step):
         )
 
         if instance_predictions:
-            self.logger.info(f"First instance details for task {task_name}: {instance_predictions[0]}")
+            self.logger.info(
+                f"First instance details for task {task_name}: {instance_predictions[0]}"
+            )
 
-        task_options = {key: val for key, val in task_dict.items() if key not in ["name", "task_obj"]}
+        task_options = {
+            key: val for key, val in task_dict.items() if key not in ["name", "task_obj"]
+        }
         model_kwargs = {}
         if hasattr(model, "model_kwargs"):
             model_kwargs.update(model.model_kwargs)
@@ -274,7 +299,11 @@ class WriteOutputsAsRows(Step):
     VERSION = "001"
 
     def run(
-        self, models: List[str], outputs: List[Dict], prediction_kwargs: List[Dict], gsheet: Optional[str] = None
+        self,
+        models: List[str],
+        outputs: List[Dict],
+        prediction_kwargs: List[Dict],
+        gsheet: Optional[str] = None,
     ) -> List:
         tsv_outputs = []
         for idx, d in enumerate(outputs):
@@ -316,7 +345,11 @@ class WriteOutputsAsRowsMultipleMetrics(Step):
     VERSION = "001"
 
     def run(
-        self, models: List[str], outputs: List[Dict], prediction_kwargs: List[Dict], gsheet: Optional[str] = None
+        self,
+        models: List[str],
+        outputs: List[Dict],
+        prediction_kwargs: List[Dict],
+        gsheet: Optional[str] = None,
     ) -> Dict[str, List[Dict]]:
         per_metric_type_tsv_outputs: Dict[str, List[Dict]] = {}
         for idx, d in enumerate(outputs):
