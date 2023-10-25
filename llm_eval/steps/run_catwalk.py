@@ -17,6 +17,7 @@ from catwalk.tasks import TASKS, get_instances
 from catwalk.tasks.tasks_lm import TASKS_LM
 from catwalk.utils import guess_instance_id
 from tango.step import Step
+from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,9 @@ class ConstructTaskDict(Step):
                 ]
             else:
                 files = kwargs["files"]
-            task_obj = task_obj.clone(files=files)
+            task_obj = task_obj.clone(
+                files=files, detailed_output=kwargs.get("detailed_output", False)
+            )
         task_dict["task_obj"] = task_obj
 
         if task_rename:
@@ -251,6 +254,13 @@ class PredictAndCalculateMetricsStep(Step):
             "instance_predictions": instance_predictions,
         }
 
+        if hasattr(task, "process_extra_output"):
+            output["per_instance"] = output["instance_predictions"]
+            del output["instance_predictions"]
+            output = task.process_extra_output(output)
+            output["instance_predictions"] = output["per_instance"]
+            del output["per_instance"]
+
         return output
 
     @classmethod
@@ -352,6 +362,7 @@ class WriteOutputsAsRowsMultipleMetrics(Step):
         gsheet: Optional[str] = None,
     ) -> Dict[str, List[Dict]]:
         per_metric_type_tsv_outputs: Dict[str, List[Dict]] = {}
+        any_token_count_avg_logits_by_domain = False
         for idx, d in enumerate(outputs):
             model = models[idx]
             pred_kwargs = copy.deepcopy(DEFAULT_PREDICTION_KWARGS)
@@ -375,8 +386,31 @@ class WriteOutputsAsRowsMultipleMetrics(Step):
                 per_metric_type_tsv_outputs[metric_type_name] = per_metric_type_tsv_outputs.get(
                     metric_type_name, []
                 ) + [row]
+            if "extra_output" in d and "token_count_avg_logits_by_domain" in d["extra_output"]:
+                any_token_count_avg_logits_by_domain = True
+                for subdomain, token2countNLogit in tqdm(
+                    d["extra_output"]["token_count_avg_logits_by_domain"].items(),
+                    desc="reading token_count_avg_logits_by_domain",
+                ):
+                    for token, countNLogit in token2countNLogit.items():
+                        row = {}
+                        task = d["task"]
+                        row["model"] = model
+                        if "revision" in d["model_kwargs"]:
+                            row["revision"] = d["model_kwargs"]["revision"]
+                        row["subdomain"] = subdomain
+                        row["token"] = token
+                        row["count"] = countNLogit[0]
+                        row["avg_logits"] = countNLogit[1]
+                        if f"{task}_token_count_avg_logits" not in per_metric_type_tsv_outputs:
+                            per_metric_type_tsv_outputs[f"{task}_token_count_avg_logits"] = []
+                        per_metric_type_tsv_outputs[f"{task}_token_count_avg_logits"].append(row)
 
         if gsheet:
+            if any_token_count_avg_logits_by_domain:
+                raise NotImplementedError(
+                    "token_count_avg_logits_by_domain not supported for gsheet"
+                )
             for metric_type_name, tsv_outputs in per_metric_type_tsv_outputs.items():
                 write_to_gsheet(gsheet, tsv_outputs, sheet_title=metric_type_name)
 
