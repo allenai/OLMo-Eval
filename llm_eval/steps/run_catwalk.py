@@ -46,10 +46,7 @@ class ConstructTaskDict(Step):
         # TODO: not clean.
         if hasattr(task_obj, "clone") and "files" in kwargs:
             if eval_data_path:
-                files = [
-                    os.path.join(eval_data_path, filename)
-                    for filename in kwargs["files"]
-                ]
+                files = [os.path.join(eval_data_path, filename) for filename in kwargs["files"]]
             else:
                 files = kwargs["files"]
             task_obj = task_obj.clone(files=files)
