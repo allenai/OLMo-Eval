@@ -89,11 +89,12 @@ This is done so that each individual step does not need to install catwalk and t
 [Reference](https://beaker-docs.apps.allenai.org/interactive/images.html#building-custom-images)
 
 ```commandline
-beaker session create --image=beaker://akshitab/llm-eval --bare
+beaker session create --gpus 1 --image beaker://ai2/cuda11.5-cudnn8-dev-ubuntu20.04 --bare --save-image
 conda create -n eval-env python=3.10
 conda activate eval-env
 pip install -e '.[dev]'
 exit
+beaker image rename <image-id> llm_eval_image
 ```
 </details>
 

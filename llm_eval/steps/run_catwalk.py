@@ -19,14 +19,25 @@ from catwalk.utils import guess_instance_id
 from tango.step import Step
 from tqdm import tqdm
 
+try:
+    from hf_olmo import *  # noqa: F403
+except ImportError:
+    pass
+
 logger = logging.getLogger(__name__)
 
 
 @Step.register("construct-task")
 class ConstructTaskDict(Step):
-    VERSION = "004"
+    VERSION = "005"
 
-    def run(self, task_name: str, task_rename: Optional[str] = None, **kwargs) -> Dict:  # Task:
+    def run(
+        self,
+        task_name: str,
+        task_rename: Optional[str] = None,
+        eval_data_path: Optional[str] = os.environ.get("EVAL_DATA_PATH"),
+        **kwargs,
+    ) -> Dict:  # Task:
         task_dict = {"name": task_name}
         try:
             task_obj = TASKS_LM.get(task_name, TASKS.get(task_name))
@@ -35,11 +46,8 @@ class ConstructTaskDict(Step):
 
         # TODO: not clean.
         if hasattr(task_obj, "clone") and "files" in kwargs:
-            if "EVAL_DATA_PATH" in os.environ:
-                files = [
-                    os.path.join(os.environ["EVAL_DATA_PATH"], filename)
-                    for filename in kwargs["files"]
-                ]
+            if eval_data_path:
+                files = [os.path.join(eval_data_path, filename) for filename in kwargs["files"]]
             else:
                 files = kwargs["files"]
             task_obj = task_obj.clone(
