@@ -39,6 +39,7 @@ def get_model_path(
             checkpoint_dir=checkpoint_dir, local_dir=model_dir
         )
     except ImportError:
+        raise ImportError("Package `hf_olmo` cannot be found on the PYTHONPATH.")
         model_name = os.path.basename(checkpoint_dir)
         local_model_path = os.path.join(model_dir, model_name)
 

@@ -18,6 +18,11 @@ from catwalk.tasks.tasks_lm import TASKS_LM
 from catwalk.utils import guess_instance_id
 from tango.step import Step
 
+try:
+    from hf_olmo import *  # noqa: F403
+except ImportError:
+    pass
+
 logger = logging.getLogger(__name__)
 
 
