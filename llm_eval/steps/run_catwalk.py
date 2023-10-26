@@ -394,7 +394,6 @@ class WriteOutputsAsRowsMultipleMetrics(Step):
                     metric_type_name, []
                 ) + [row]
             if "extra_output" in d and "token_count_avg_logits_by_domain" in d["extra_output"]:
-                any_token_count_avg_logits_by_domain = True
                 for subdomain, token2countNLogit in tqdm(
                     d["extra_output"]["token_count_avg_logits_by_domain"].items(),
                     desc="reading token_count_avg_logits_by_domain",
