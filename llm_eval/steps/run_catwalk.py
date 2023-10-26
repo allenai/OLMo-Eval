@@ -362,7 +362,6 @@ class WriteOutputsAsRowsMultipleMetrics(Step):
         gsheet: Optional[str] = None,
     ) -> Dict[str, List[Dict]]:
         per_metric_type_tsv_outputs: Dict[str, List[Dict]] = {}
-        any_token_count_avg_logits_by_domain = False
         for idx, d in enumerate(outputs):
             model = models[idx]
             pred_kwargs = copy.deepcopy(DEFAULT_PREDICTION_KWARGS)
@@ -407,11 +406,10 @@ class WriteOutputsAsRowsMultipleMetrics(Step):
                         per_metric_type_tsv_outputs[f"{task}_token_count_avg_logits"].append(row)
 
         if gsheet:
-            if any_token_count_avg_logits_by_domain:
-                raise NotImplementedError(
-                    "token_count_avg_logits_by_domain not supported for gsheet"
-                )
             for metric_type_name, tsv_outputs in per_metric_type_tsv_outputs.items():
+                # skip _token_count_avg_logits because it's too big
+                if metric_type_name.endswith("_token_count_avg_logits"):
+                    continue
                 write_to_gsheet(gsheet, tsv_outputs, sheet_title=metric_type_name)
 
         return per_metric_type_tsv_outputs
