@@ -15,7 +15,7 @@ local common_kwargs = {
 
 // TODO: refactor catwalk's Perplexity task so that it actually uses the s3 path.
 // until then, let the path be present in nfs ($EVAL_DATA_PATH).
-local data_dir = "olmo-ppl-val-v3/";
+local data_dir = "v3_not_deconned/";
 
 local create_task_kwargs(task_names) = [
     {
@@ -45,7 +45,8 @@ local task_dicts = create_task_kwargs(
     "redpajama",
     "falcon-refinedweb",
     "dolma-v1_5",
-    "dolma_100_subreddits"
+    "dolma_100_subreddits",
+    "dolma_100_programing_languages"
     ]
 );
 
