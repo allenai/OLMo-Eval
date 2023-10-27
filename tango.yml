@@ -23,9 +23,10 @@ workspace:
 
 # Define the executor to use (how steps will be run).
 executor:
-  type: multicore
+  type: default
   # ❗Update to how many steps you want to run in parallel (they will run sequentially if dependent on previous steps) 👇
-  parallelism: 1
+  # type: multicore
+  # parallelism: 1
 
 include_package:
   - llm_eval.steps

@@ -27,7 +27,7 @@ executor:
   # ❗Change this to the Beaker workspace you want to use 👇
   beaker_workspace: ai2/akshitab_llm
   # ❗Change this to the Beaker image (and conda environment) you want to use (not required to change)👇
-  beaker_image: akshitab/olmo-eval-image-2
+  beaker_image: akshitab/llm_eval
   venv_name: eval-env
   scheduler:
     type: simple
@@ -38,7 +38,7 @@ executor:
       - ai2/allennlp-cirrascale
   allow_dirty: true
   # ❗Uncomment and install any additional requirements if you need to (will be run for every step)👇
-  # install_cmd: "pip install --upgrade pip; pip install -e .; pip install -r evaluation/requirements.txt;"
+  # install_cmd: "pip install 'hf_olmo @ git+https://github.com/allenai/LLM.git@main#subdirectory=hf_olmo'"
   datasets:
     - source:
         host_path: /net/nfs.cirrascale
