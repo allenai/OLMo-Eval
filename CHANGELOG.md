@@ -6,3 +6,4 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
+- Updated code that records the fine-grained perplexity metrics per subdomain to also include perplexity over words, characters, bytes, and also bits per byte.
