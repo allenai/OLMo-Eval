@@ -8,3 +8,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 - fixed incorrect paths in readme
 - updated default image in tango-in-beaker.yml
+- adds option to track avg logit per token type
