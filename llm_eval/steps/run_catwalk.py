@@ -1,12 +1,13 @@
 import copy
 import logging
+import math
 import os
 import time
+from collections import defaultdict
 from datetime import datetime
 from pydoc import locate
 from typing import Any, Dict, List, Optional
 
-import numpy as np
 import pandas as pd
 import pytz
 from catwalk.dependencies.lm_eval.utils import simple_parse_args_string
@@ -155,11 +156,13 @@ class ProcessOutputs(Step):
         **kwargs,
     ) -> Dict:
         task_name = outputs["task"]
-        new_metrics: Dict[str, Dict] = {}
+        new_metrics: defaultdict[str, Dict] = defaultdict(dict)
         if "subdomain" in outputs["instance_predictions"][0]["instance"]:
-            new_metrics[f"ppl_token_{task_name}_subdomains"] = {}
             sum_logits: Dict[str, float] = {}
             num_tokens: Dict[str, int] = {}
+            num_chars: Dict[str, int] = {}
+            num_words: Dict[str, int] = {}
+            num_bytes: Dict[str, int] = {}
             for instance_prediction in outputs["instance_predictions"]:
                 subdomain = instance_prediction["instance"]["subdomain"]
                 sum_logits[subdomain] = (
@@ -170,11 +173,35 @@ class ProcessOutputs(Step):
                     num_tokens.get(subdomain, 0)
                     + instance_prediction["prediction"]["model_output"]["num_tokens"]
                 )
+                num_chars[subdomain] = (
+                    num_chars.get(subdomain, 0)
+                    + instance_prediction["prediction"]["model_output"]["num_chars"]
+                )
+                num_words[subdomain] = (
+                    num_words.get(subdomain, 0)
+                    + instance_prediction["prediction"]["model_output"]["num_words"]
+                )
+                num_bytes[subdomain] = (
+                    num_bytes.get(subdomain, 0)
+                    + instance_prediction["prediction"]["model_output"]["num_bytes"]
+                )
 
             for subdomain in sum_logits:
-                new_metrics[f"ppl_token_{task_name}_subdomains"][subdomain] = np.exp(
-                    -sum_logits[subdomain] / num_tokens[subdomain]
+                new_metrics[f"ppl_token_{task_name}_subdomains"][subdomain] = safe_exp(
+                    -sum_logits[subdomain] / max(num_tokens[subdomain], 1)
                 )
+                new_metrics[f"ppl_char_{task_name}_subdomains"][subdomain] = safe_exp(
+                    -sum_logits[subdomain] / max(num_chars[subdomain], 1)
+                )
+                new_metrics[f"ppl_word_{task_name}_subdomains"][subdomain] = safe_exp(
+                    -sum_logits[subdomain] / max(num_words[subdomain], 1)
+                )
+                new_metrics[f"ppl_byte_{task_name}_subdomains"][subdomain] = safe_exp(
+                    -sum_logits[subdomain] / max(num_bytes[subdomain], 1)
+                )
+                new_metrics[f"bits_per_byte_{task_name}_subdomains"][subdomain] = -sum_logits[
+                    subdomain
+                ] / (num_bytes[subdomain] * math.log(2))
 
         outputs["metrics"].update(new_metrics)
 
@@ -440,3 +467,12 @@ def write_to_gsheet(gsheet: str, rows: List[Dict], sheet_title: str = "Sheet1"):
     current_df = worksheet.get_as_df()
     new_df = pd.concat([current_df, new_df])
     worksheet.set_dataframe(new_df, (1, 1), nan="")
+
+
+def safe_exp(x):
+    try:
+        ans = math.exp(x)
+    except OverflowError:
+        ans = 1e30
+        logger.warning(f"OverflowError when computing math.exp({x})")
+    return ans
