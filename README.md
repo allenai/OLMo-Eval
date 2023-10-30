@@ -54,7 +54,7 @@ export GDRIVE_SERVICE_ACCOUNT_JSON=$(cat downloaded_credentials_file.json)
 * Login to a machine with the required number of GPUs (cloud machine / beaker interactive session / beaker batch job).
 * Update [tango.yml](tango.yml) (the fields that should be updated are marked).
 ```commandline
-tango --settings tango.yml run llm_eval/evaluation_template.jsonnet
+tango --settings tango.yml run configs/evaluation_template.jsonnet
 ```
 
 * If you want to save results to google cloud buckets, so that they are shareable (also configurable in [tango.yml](tango.yml)):
@@ -105,7 +105,7 @@ export GITHUB_TOKEN="<your token>"  # Needed for beaker to clone the repo.
 ```
 
 ```commandline
-tango --settings tango-in-beaker.yml run llm_eval/evaluation_template.jsonnet
+tango --settings tango-in-beaker.yml run configs/evaluation_template.jsonnet
 ```
 
 ### Troubleshooting
