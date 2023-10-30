@@ -8,7 +8,7 @@ local common_kwargs = {
         detailed_output: true,
     },
     prediction_kwargs: {
-        split: "validation",
+        split: "test",
         model_max_length: task_utils.model_max_length,
     }
 };
@@ -21,7 +21,7 @@ local create_task_kwargs(task_names) = [
     {
         task_kwargs: {
             task_rename: "ppl_" + task_name,
-            files: [data_dir + "/" + task_name + "/val"]
+            files: [data_dir + "/" + task_name + "/test"]
         }
     }
     for task_name in task_names

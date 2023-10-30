@@ -38,7 +38,7 @@ executor:
       - ai2/allennlp-cirrascale
   allow_dirty: true
   # ❗Uncomment and install any additional requirements if you need to (will be run for every step)👇
-  # install_cmd: "pip install --upgrade pip; pip install -e .; pip install -r evaluation/requirements.txt;"
+  # install_cmd: "pip install 'hf_olmo @ git+https://github.com/allenai/LLM.git@main#subdirectory=hf_olmo'"
   datasets:
     - source:
         host_path: /net/nfs.cirrascale
