@@ -474,4 +474,5 @@ def safe_exp(x):
         ans = math.exp(x)
     except OverflowError:
         ans = 1e30
+        logger.warning(f"OverflowError when computing math.exp({x})")
     return ans
