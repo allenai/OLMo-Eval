@@ -7,3 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 - Updated code that records the fine-grained perplexity metrics per subdomain to also include perplexity over words, characters, bytes, and also bits per byte.
+- fixed incorrect paths in readme
+- updated default image in tango-in-beaker.yml
+- adds option to track avg logit per token type
