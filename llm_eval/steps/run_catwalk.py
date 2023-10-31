@@ -467,7 +467,7 @@ class SaveWriteOutputsAsRowsMultipleMetricsAsFile(Step):
                 aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
                 aws_session_token=os.environ["AWS_SESSION_TOKEN"],
             )
-            client = session.client('s3', endpoint_url=..., config=...)
+            client = session.client('s3')
             transport_params=dict(client=client)
         with smart_open.open(output_file, "wb", transport_params=transport_params) as f:
             f.write(json.dumps(write_outputs).encode())
