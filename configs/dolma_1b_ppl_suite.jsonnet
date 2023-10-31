@@ -9,6 +9,7 @@ local ppl_suite = import 'task_sets/eval_suite_ppl_test_v3_not_deconned.libsonne
 // Set it to null if you do not want your results to be uploaded to a google sheet (they will still be saved as an object).
 // local gsheet = "ppl-suite-token-ppls-working-env";
 local gsheet = "perplexity-suite-paper";
+local output_dir = "s3://ai2-llm/eval-results/perplexity/olmo/1b/olmo-small-dolma-150B-mcli-results/";
 
 local create_models = function(model_path, revisions, gpus_needed) [
     {
@@ -42,5 +43,5 @@ local task_sets = [
 
 
 {
-    steps: utils.create_fine_grained_pipeline(models, task_sets, gsheet)
+    steps: utils.create_fine_grained_pipeline(models, task_sets, gsheet, output_dir)
 }
