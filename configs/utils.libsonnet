@@ -230,7 +230,7 @@ local create_pipeline(models, task_sets, gsheet) =
 
     all_steps;
 
-local create_fine_grained_pipeline(models, task_sets, gsheet, output_file = null) =
+local create_fine_grained_pipeline(models, task_sets, gsheet, output_dir = null) =
 
     // Model steps
     local model_location_steps = create_model_location_steps(models);
@@ -249,7 +249,7 @@ local create_fine_grained_pipeline(models, task_sets, gsheet, output_file = null
     // Aggregate results for each task set and model combination
     local combine_all_outputs = create_processed_outputs_as_rows_multiple_metrics_steps(model_task_configs, gsheet);
 
-    local save_to_file = create_save_write_outputs_as_rows_multiple_metrics_as_file_steps(output_file);
+    local save_to_file = create_save_write_outputs_as_rows_multiple_metrics_as_file_steps(output_dir);
 
     local all_steps =
         model_location_steps +

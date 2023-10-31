@@ -454,13 +454,13 @@ class WriteOutputsAsRowsMultipleMetrics(Step):
 class SaveWriteOutputsAsRowsMultipleMetricsAsFile(Step):
     VERSION = "001"
 
-    def run(self, write_outputs: Dict[str, List[Dict]], output_file: str) -> None:
+    def run(self, write_outputs: Dict[str, List[Dict]], output_dir: str) -> None:
         import smart_open
-        if output_file is None:
+        if output_dir is None:
             logger.info("output_file is None, skipping save to file")
             return
         transport_params = None
-        if output_file.startswith("s3://"):
+        if output_dir.startswith("s3://"):
             import boto3
             session = boto3.Session(
                 aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
@@ -469,9 +469,11 @@ class SaveWriteOutputsAsRowsMultipleMetricsAsFile(Step):
             )
             client = session.client('s3')
             transport_params=dict(client=client)
-        with smart_open.open(output_file, "wb", transport_params=transport_params) as f:
-            f.write(json.dumps(write_outputs).encode())
-            logger.info(f"saved to results to {output_file}")
+        for table_name in write_outputs:
+            output_file = os.path.join(output_dir, table_name + ".json.gz")
+            with smart_open.open(output_file, "wb", transport_params=transport_params) as f:
+                f.write(json.dumps(write_outputs[table_name]).encode())
+                logger.info(f"saved to results to {output_file}")
 
 
 def write_to_gsheet(gsheet: str, rows: List[Dict], sheet_title: str = "Sheet1"):
