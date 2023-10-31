@@ -192,12 +192,12 @@ local create_processed_outputs_as_rows_multiple_metrics_steps(model_task_configs
         }
     };
 
-local create_save_write_outputs_as_rows_multiple_metrics_as_file_steps(output_file) =
+local create_save_write_outputs_as_rows_multiple_metrics_as_file_steps(output_dir) =
     {
         "save-to-file": {
             type: "save-write-outputs-as-rows-multiple-metrics-as-file",
             write_outputs: {type: "ref", ref: "combine-all-outputs"},
-            output_file: output_file,
+            output_dir: output_dir,
             step_resources: {
                 gpu_count: 0
             }
