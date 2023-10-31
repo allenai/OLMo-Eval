@@ -27,7 +27,7 @@ executor:
   # ❗Change this to the Beaker workspace you want to use 👇
   beaker_workspace: ai2/perplexity-suite-paper-dolma
   # ❗Change this to the Beaker image (and conda environment) you want to use (not required to change)👇
-  beaker_image: ianm/llm_eval_olmo
+  beaker_image: ianm/llm_eval_olmo_fixed
   venv_name: eval-env
   scheduler:
     type: simple
