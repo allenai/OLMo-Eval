@@ -1,4 +1,5 @@
 import copy
+import json
 import logging
 import math
 import os
@@ -10,6 +11,7 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 import pytz
+import smart_open
 from catwalk.dependencies.lm_eval.utils import simple_parse_args_string
 from catwalk.model import Model
 from catwalk.models import MODELS, add_decoder_only_model
@@ -447,6 +449,19 @@ class WriteOutputsAsRowsMultipleMetrics(Step):
                 write_to_gsheet(gsheet, tsv_outputs, sheet_title=metric_type_name)
 
         return per_metric_type_tsv_outputs
+
+
+@Step.register("save-write-outputs-as-rows-multiple-metrics-as-file")
+class SaveWriteOutputsAsRowsMultipleMetricsAsFile(Step):
+    VERSION = "001"
+
+    def run(self, write_outputs: Dict[str, List[Dict]], output_file: str) -> None:
+        if output_file is None:
+            logger.info("output_file is None, skipping save to file")
+            return
+        with smart_open.open(output_file, "wb") as f:
+            f.write(json.dumps(write_outputs).encode())
+            logger.info(f"saved to results to {output_file}")
 
 
 def write_to_gsheet(gsheet: str, rows: List[Dict], sheet_title: str = "Sheet1"):
