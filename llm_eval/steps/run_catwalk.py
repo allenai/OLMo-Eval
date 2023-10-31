@@ -11,7 +11,6 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 import pytz
-import smart_open
 from catwalk.dependencies.lm_eval.utils import simple_parse_args_string
 from catwalk.model import Model
 from catwalk.models import MODELS, add_decoder_only_model
@@ -456,10 +455,21 @@ class SaveWriteOutputsAsRowsMultipleMetricsAsFile(Step):
     VERSION = "001"
 
     def run(self, write_outputs: Dict[str, List[Dict]], output_file: str) -> None:
+        import smart_open
         if output_file is None:
             logger.info("output_file is None, skipping save to file")
             return
-        with smart_open.open(output_file, "wb") as f:
+        transport_params = None
+        if output_file.startswith("s3://"):
+            import boto3
+            session = boto3.Session(
+                aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+                aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+                aws_session_token=os.environ["AWS_SESSION_TOKEN"],
+            )
+            client = session.client('s3', endpoint_url=..., config=...)
+            transport_params=dict(client=client)
+        with smart_open.open(output_file, "wb", transport_params=transport_params) as f:
             f.write(json.dumps(write_outputs).encode())
             logger.info(f"saved to results to {output_file}")
 
