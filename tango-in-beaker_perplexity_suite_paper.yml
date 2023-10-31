@@ -56,6 +56,12 @@ executor:
       value: /net/nfs.cirrascale/allennlp/akshitab/eval_data
     - name: GDRIVE_SERVICE_ACCOUNT_JSON
       secret: GDRIVE_SERVICE_ACCOUNT_JSON
+    - name: AWS_ACCESS_KEY_ID
+      secret: AWS_ACCESS_KEY_ID
+    - name: AWS_SECRET_ACCESS_KEY
+      secret: AWS_SECRET_ACCESS_KEY
+    - name: AWS_SESSION_TOKEN
+      secret: AWS_SESSION_TOKEN
 
 
 include_package:
