@@ -34,7 +34,7 @@ local revisions = [
 ];
 
 
-local models = create_models("s3://ai2-llm/checkpoints/1b/olmo-small-dolma-150B-mcli/", revisions, 1); //EleutherAI/pythia-6.9b needs diff batch size
+local models = create_models("s3://ai2-llm/checkpoints/1b/olmo-small-dolma-150B-mcli-hf-tokenizer/", revisions, 1); //EleutherAI/pythia-6.9b needs diff batch size
 
 local task_sets = [
     ppl_suite.task_set
