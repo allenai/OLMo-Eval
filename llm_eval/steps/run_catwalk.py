@@ -470,10 +470,11 @@ class SaveWriteOutputsAsRowsMultipleMetricsAsFile(Step):
             client = session.client('s3')
             transport_params=dict(client=client)
         for table_name in write_outputs:
-            output_file = os.path.join(output_dir, table_name + ".json.gz")
+            output_file = os.path.join(output_dir, table_name + ".jsonl.gz")
             with smart_open.open(output_file, "wb", transport_params=transport_params) as f:
-                f.write(json.dumps(write_outputs[table_name]).encode())
-                logger.info(f"saved to results to {output_file}")
+                for row in tqdm(write_outputs[table_name], desc=f"writing {table_name} to file"):
+                    f.write(json.dumps(row).encode())
+                    f.write(b"\n")
 
 
 def write_to_gsheet(gsheet: str, rows: List[Dict], sheet_title: str = "Sheet1"):
