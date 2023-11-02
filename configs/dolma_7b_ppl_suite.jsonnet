@@ -40,7 +40,7 @@ local revisions = [
 ];
 
 
-local models = create_models("s3://ai2-llm/checkpoints/7b/v1_5-mix-mitch-ish-hf-tokenizer/", revisions, 1); //EleutherAI/pythia-6.9b needs diff batch size
+local models = create_models("s3://ai2-llm/checkpoints/7b/v1_5-mix-mitch-ish-hf-tokenizer-olmo/", revisions, 1); //EleutherAI/pythia-6.9b needs diff batch size
 
 local task_sets = [
     ppl_suite.task_set

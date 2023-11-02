@@ -41,7 +41,7 @@ local contains = function(main_string, sub_string)
     std.length(std.findSubstr(sub_string, main_string)) > 0;
 
 local is_olmo_model = function(model_config)
-    contains(std.get(model_config, "model_path"), "olmo") || contains(std.get(model_config, "model_path"), "s3://ai2-llm/checkpoints");
+    contains(std.get(model_config, "model_path"), "olmo");
 
 // Model steps
 
