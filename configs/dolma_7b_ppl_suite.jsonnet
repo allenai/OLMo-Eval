@@ -48,5 +48,5 @@ local task_sets = [
 
 
 {
-    steps: utils.create_fine_grained_pipeline(models, task_sets, gsheet)
+    steps: utils.create_fine_grained_pipeline(models, task_sets, gsheet, output_dir)
 }
