@@ -36,7 +36,8 @@ local create_models = function(model_path, revisions, gpus_needed) [
 // ];
 local revisions = [
     "step104750-unsharded",
-    "step179000-unsharded"
+    "step179000-unsharded",
+    "step226000-unsharded"
 ];
 
 
