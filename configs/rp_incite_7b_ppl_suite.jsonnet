@@ -5,6 +5,7 @@ local utils = import 'utils.libsonnet';
 local ppl_suite = import 'task_sets/eval_suite_ppl_test_v3_not_deconned.libsonnet';
 
 local gsheet = "perplexity-suite-paper";
+local output_dir = "s3://ai2-llm/eval-results/perplexity/redpajama-incite/7b/";
 
 local create_models = function(model_path, revisions, gpus_needed) [
     {
@@ -42,5 +43,5 @@ local task_sets = [
 
 
 {
-    steps: utils.create_fine_grained_pipeline(models, task_sets, gsheet)
+    steps: utils.create_fine_grained_pipeline(models, task_sets, gsheet, output_dir)
 }
