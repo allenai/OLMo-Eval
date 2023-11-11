@@ -430,6 +430,7 @@ class WriteOutputsAsRowsMultipleMetrics(Step):
                         row = {}
                         task = d["task"]
                         row["model"] = model
+                        row['split'] = pred_kwargs['split']
                         if "revision" in d["model_kwargs"]:
                             row["revision"] = d["model_kwargs"]["revision"]
                         row["subdomain"] = subdomain
