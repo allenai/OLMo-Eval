@@ -29,6 +29,10 @@ export GLOBAL_MODEL_DIR=/net/nfs.cirrascale/allennlp/akshitab/eval_models
  
 # optional; if evaluating on perplexity datasets
 export EVAL_DATA_PATH=/net/nfs.cirrascale/allennlp/akshitab/eval_data
+
+# optional; if using checkpoints stored on S3
+export AWS_ACCESS_KEY_ID=<access key>
+export AWS_SECRET_ACCESS_KEY=<secret key>
 ```
 
 #### If you want results to (also) be written to a Google Sheet
