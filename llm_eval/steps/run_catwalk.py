@@ -1,5 +1,6 @@
 import copy
 import logging
+import json
 import math
 import os
 import time
@@ -348,6 +349,7 @@ class WriteOutputsAsRows(Step):
         models: List[str],
         outputs: List[Dict],
         prediction_kwargs: List[Dict],
+        simple_pipeline: bool = False,
         gsheet: Optional[str] = None,
     ) -> List:
         tsv_outputs = []
@@ -373,10 +375,21 @@ class WriteOutputsAsRows(Step):
             row["metric"] = metrics_dict[primary_metric]
             row["processing_time"] = d["processing_time"]
             row["num_instances"] = d["num_instances"]
-            row["tango_workspace"] = self.workspace.url
-            row["tango_step"] = self.unique_id
+            if not simple_pipeline:
+                row["tango_workspace"] = self.workspace.url
+                row["tango_step"] = self.unique_id
 
             row.update(pred_kwargs)
+            if simple_pipeline:
+                row['all_metrics'] = json.dumps(metrics_dict)
+                row['beaker_id'] = d.get('beaker_info', {}).get('BEAKER_EXPERIMENT_ID', '')
+                if 'name' in row:
+                    del row['name']  # Stored as "task"
+                if 'task_obj' in row:
+                    del row['task_obj']
+                if 'num_recorded_inputs' in row:
+                    del row['num_recorded_inputs']
+
             tsv_outputs.append(row)
 
         if gsheet:
