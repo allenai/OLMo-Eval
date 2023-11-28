@@ -10,5 +10,7 @@
     num_shots: 0,
     random_subsample_seed: 1234,
     num_recorded_inputs: 3,
-    gsheet: "OLMo-evals-testing"
+    full_output_file: "predictions.jsonl",  // Set to "/results/predictions.jsonl" in beaker jobs
+    metrics_file: "metrics.json",  // Set to "/results/metrics.jsonl" in beaker jobs
+    gsheet: "OLMo-evals-testing"  // Set to null if no Google Sheet is needed
 }

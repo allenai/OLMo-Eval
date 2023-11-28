@@ -112,6 +112,39 @@ export GITHUB_TOKEN="<your token>"  # Needed for beaker to clone the repo.
 tango --settings tango-in-beaker.yml run configs/evaluation_template.jsonnet
 ```
 
+
+### Running simple pipeline as single beaker job
+
+The `llm_eval/run_lm_eval.py` script provides a way to run an evaluation as a single beaker
+job with associated result set. Arguments can be provided in a config file, an example is found 
+in `configs/run_lm_eval_example.jsonnet`, or as direct arguments (see documentation in script). E.g.,
+
+```commandline
+python -m llm_eval.run_lm_eval --config_file configs/run_lm_eval_example.jsonnet
+```
+or
+```commandline
+python -m llm_eval.run_lm_eval --model lm::pretrained=EleutherAI/pythia-160m,revision=step140000 \
+    --task arc_challenge arc_easy  --split validation \
+    --full_output_file predictions.jsonl --metrics_file metrics.json --model_max_length 2048 \
+    --max_batch_tokens 4096 --num_recorded_inputs 3 --num_shots 0 --gsheet OLMo-evals-testing
+```
+
+To launch a job in beaker, it's easiest to use [beaker-gantry](https://github.com/allenai/beaker-gantry), e.g.,
+```commandline
+gantry run --gpus 1 --venv base --workspace ai2/lm-eval --cluster ai2/aristo-cirrascale \
+   --beaker-image oyvindt/OLMoEvalLatest \
+   --env 'HF_DATASETS_CACHE=/net/nfs.cirrascale/aristo/oyvindt/hf_datasets_cache' -- \
+   python llm_eval/run_lm_eval.py \
+   --model lm::pretrained=EleutherAI/pythia-160m,revision=step140000 \
+   --task arc_challenge arc_easy boolq  --split validation \
+   --full_output_file /results/predictions.jsonl --metrics_file /results/metrics.json \
+   --model_max_length 2048 --max_batch_tokens 4096 --num_recorded_inputs 3 \
+   --num_shots 0 --gsheet OLMo-evals-testing
+```
+or reference a config file, either in `nfs.cirrascale` or a beaker dataset (which can be mounted
+in the gantry command).
+
 ### Troubleshooting
 
 If some error causes the workspace to go into a bad state (i.e., you get errors that say step should not be in completed state, etc.), you can clear the workspace with
