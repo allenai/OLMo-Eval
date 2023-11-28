@@ -153,11 +153,14 @@ def main(args: argparse.Namespace):
 
     num_tasks = len(verbose_output)
     if args_dict['gsheet']:
-        rows = WriteOutputsAsRows(cache_results=False).run(
-            [hf_name]*num_tasks, verbose_output, task_dicts,
-            simple_pipeline=True,
-            gsheet=args_dict['gsheet']
-        )
+        try:
+            rows = WriteOutputsAsRows(cache_results=False).run(
+                [hf_name]*num_tasks, verbose_output, task_dicts,
+                simple_pipeline=True,
+                gsheet=args_dict['gsheet']
+            )
+        except Exception as e:
+            logger.warning(f"Something went wrong when writing Google Sheet: {e}")
 
     if args_dict['metrics_file']:
         logger.info(f"Saving metrics in {args_dict['metrics_file']}...")
