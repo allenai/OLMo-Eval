@@ -7,7 +7,7 @@ import torch
 from catwalk.dependencies.lm_eval.utils import simple_parse_args_string
 from catwalk.models import MODELS
 from catwalk.tasks import TASK_SETS
-from catwalk.utils import filter_dict_keys, guess_instance_id, sanitize
+from catwalk.utils import filter_dict_keys, sanitize
 from rjsonnet import evaluate_file
 from tango.common.logging import initialize_logging
 
@@ -22,8 +22,8 @@ from llm_eval.steps import (
 # Catwalk eval script which is focused on LM models referenced on the fly
 
 _parser = argparse.ArgumentParser()
-_parser.add_argument("--config_file", type=str, required=None, help="Config file for evaluation")
-_parser.add_argument("--model", type=str, required=None, help="Name of model")
+_parser.add_argument("--config_file", type=str, required=False, help="Config file for evaluation")
+_parser.add_argument("--model", type=str, required=False, help="Name of model")
 _parser.add_argument("--task", type=str, nargs="+")
 _parser.add_argument("--task_file", type=str, help="Jsonl file with task specs")
 _parser.add_argument("--split", type=str, default="validation")
@@ -155,7 +155,7 @@ def main(args: argparse.Namespace):
             **model_obj.model_kwargs,
         ).eval()
         if not hasattr(model_cached, "tokenizer"):
-            tokenizer_cached = model_obj._make_tokenizer()
+            _ = model_obj._make_tokenizer()
 
     # unconditioned_prompt is taken separately from task_dict, so not on this list
     valid_model_args = [
@@ -206,7 +206,7 @@ def main(args: argparse.Namespace):
     num_tasks = len(verbose_output)
     if args_dict["gsheet"]:
         try:
-            rows = WriteOutputsAsRows(cache_results=False).run(
+            _ = WriteOutputsAsRows(cache_results=False).run(
                 [hf_name] * num_tasks,
                 verbose_output,
                 task_dicts,
