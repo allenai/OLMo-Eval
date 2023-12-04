@@ -55,7 +55,7 @@ dev = [
     "packaging"
 ]
 olmo = [
-    "hf_olmo @ git+ssh://github.com/allenai/LLM.git@main#subdirectory=hf_olmo",
+    "ai2-olmo>=v0.1.1",
     "omegaconf"
 ]
 
