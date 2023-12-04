@@ -22,37 +22,37 @@ from llm_eval.steps import (
 # Catwalk eval script which is focused on LM models referenced on the fly
 
 _parser = argparse.ArgumentParser()
-_parser.add_argument("--config_file", type=str, required=False, help="Config file for evaluation")
+_parser.add_argument("--config-file", type=str, required=False, help="Config file for evaluation")
 _parser.add_argument("--model", type=str, required=False, help="Name of model")
 _parser.add_argument("--task", type=str, nargs="+")
-_parser.add_argument("--task_file", type=str, help="Jsonl file with task specs")
+_parser.add_argument("--task-file", type=str, help="Jsonl file with task specs")
 _parser.add_argument("--split", type=str, default="validation")
-_parser.add_argument("--batch_size", type=int, default=32)
-_parser.add_argument("--max_batch_tokens", type=int, help="Limit batch size to max tokens")
+_parser.add_argument("--batch-size", type=int, default=32)
+_parser.add_argument("--max-batch-tokens", type=int, help="Limit batch size to max tokens")
 _parser.add_argument(
-    "--model_max_length", type=int, help="Max input length the model should accept"
+    "--model-max-length", type=int, help="Max input length the model should accept"
 )
-_parser.add_argument("--num_shots", type=int, help="Number of examples in prompt")
+_parser.add_argument("--num-shots", type=int, help="Number of examples in prompt")
 _parser.add_argument(
-    "--fewshot_seed",
+    "--fewshot-seed",
     type=int,
     help="Random seed for picking fixed prompt examples, leave out for varied examples",
 )
 _parser.add_argument("--limit", type=int, help="Max number of instances for a task")
 _parser.add_argument(
-    "--full_output_file", type=str, default=None, help="Filename for verbose output"
+    "--full-output-file", type=str, default=None, help="Filename for verbose output"
 )
-_parser.add_argument("--metrics_file", type=str, default=None, help="Filename for metrics output")
+_parser.add_argument("--metrics-file", type=str, default=None, help="Filename for metrics output")
 _parser.add_argument(
-    "--num_recorded_inputs",
+    "--num-recorded-inputs",
     type=int,
     default=0,
     help="Number of sample model inputs in full output, for sanity checks",
 )
-_parser.add_argument("--model_path", type=str, help="Explicit path to load model from")
-_parser.add_argument("--model_class", type=str, help="Custom Python class for loading model")
+_parser.add_argument("--model-path", type=str, help="Explicit path to load model from")
+_parser.add_argument("--model-class", type=str, help="Custom Python class for loading model")
 _parser.add_argument(
-    "--random_subsample_seed",
+    "--random-subsample-seed",
     type=int,
     help="Random seed for subsampling task instances using limit",
 )
@@ -63,7 +63,7 @@ def main(args: argparse.Namespace):
     initialize_logging(log_level="INFO")
     logger = logging.getLogger()
     if args.config_file and args.model:
-        raise ValueError("Cannot specify both --config_file and --model arguments")
+        raise ValueError("Cannot specify both --config-file and --model arguments")
     args_dict = vars(args)
     args_raw = {}
     if args.config_file:

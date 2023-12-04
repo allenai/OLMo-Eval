@@ -12,7 +12,7 @@ class TestRunLLMEvalScript(LLMEvalTestCase):
         config_file = self.PROJECT_ROOT / "configs" / "run_lm_eval_example.jsonnet"
 
         _ = subprocess.run(
-            ["python", "-m", "llm_eval.run_lm_eval", "--config_file", config_file],
+            ["python", "-m", "llm_eval.run_lm_eval", "--config-file", config_file],
             capture_output=True,
             text=True,
         )
@@ -47,17 +47,17 @@ class TestRunLLMEvalScript(LLMEvalTestCase):
                 "arc_easy",
                 "--split",
                 "validation",
-                "--full_output_file",
+                "--full-output-file",
                 predictions_file,
-                "--metrics_file",
+                "--metrics-file",
                 metrics_file,
-                "--model_max_length",
+                "--model-max-length",
                 "2048",
-                "--max_batch_tokens",
+                "--max-batch-tokens",
                 "4096",
-                "--num_recorded_inputs",
+                "--num-recorded-inputs",
                 "3",
-                "--num_shots",
+                "--num-shots",
                 "0",
                 "--limit",
                 "10",
