@@ -1,6 +1,6 @@
 import copy
-import logging
 import json
+import logging
 import math
 import os
 import time
@@ -381,14 +381,14 @@ class WriteOutputsAsRows(Step):
 
             row.update(pred_kwargs)
             if simple_pipeline:
-                row['all_metrics'] = json.dumps(metrics_dict)
-                row['beaker_id'] = d.get('beaker_info', {}).get('BEAKER_EXPERIMENT_ID', '')
-                if 'name' in row:
-                    del row['name']  # Stored as "task"
-                if 'task_obj' in row:
-                    del row['task_obj']
-                if 'num_recorded_inputs' in row:
-                    del row['num_recorded_inputs']
+                row["all_metrics"] = json.dumps(metrics_dict)
+                row["beaker_id"] = d.get("beaker_info", {}).get("BEAKER_EXPERIMENT_ID", "")
+                if "name" in row:
+                    del row["name"]  # Stored as "task"
+                if "task_obj" in row:
+                    del row["task_obj"]
+                if "num_recorded_inputs" in row:
+                    del row["num_recorded_inputs"]
 
             tsv_outputs.append(row)
 
