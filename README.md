@@ -27,7 +27,7 @@ The current `task_sets` can be found at [configs/task_sets](configs/task_sets). 
 The configuration can be run as follows:
 
 ```commandline
-tango --settings tango.yml run configs/evaluation_template.jsonnet --workspace my-eval-workspace
+tango --settings tango.yml run configs/example_config.jsonnet --workspace my-eval-workspace
 ```
 
 This executes all the steps defined in the config, and saves them in a local `tango` workspace called `my-eval-workspace`. If you add a new task_set or model to your config and run the same command again, it will reuse the previous outputs, and only compute the new outputs.
@@ -55,5 +55,7 @@ result = workspace.step_result("outputs_pythia-1bstep140000_gen_tasks_drop")
 
 * [Save output to google sheet](ADVANCED.md#save-output-to-google-sheet)
 * [Use a remote workspace](ADVANCED.md#use-a-remote-workspace)
+* [Run without Tango (useful for debugging)](ADVANCED.md#run-without-tango)
+* [Run on Beaker](BEAKER.md)
 
 
