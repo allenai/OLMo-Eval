@@ -51,6 +51,15 @@ result = workspace.step_result("outputs_pythia-1bstep140000_gen_tasks_drop")
 ```
 
 
+## Evaluating common models on standard benchmarks
+
+The [eval_table](configs/eval_table.jsonnet) config evaluates `falcon-7b`, `mpt-7b`, `llama2-7b`, and `llama2-13b`, on [`standard_benchmarks`](configs/task_sets/standard_benchmarks.libsonnet) and [`MMLU`](`configs/task_sets/mmlu_tasks.libsonnet`). Run as follows:
+
+
+```commandline
+tango --settings tango.yml run configs/eval_table.jsonnet --workspace my-eval-workspace
+```
+
 ## Advanced
 
 * [Save output to google sheet](ADVANCED.md#save-output-to-google-sheet)
