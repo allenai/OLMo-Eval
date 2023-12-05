@@ -1,6 +1,8 @@
 
 # Evaluation
 
+TODO: Remove these notes!!
+
 We use tango and catwalk to build the pipeline.
 The catwalk code exists [here](https://github.com/allenai/catwalk/tree/olmo-eval).
 

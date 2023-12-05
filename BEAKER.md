@@ -1,5 +1,5 @@
 
-# Run on beaker
+# Run on Beaker
 
 ## Option 1: Run full pipeline in an interactive session
 
