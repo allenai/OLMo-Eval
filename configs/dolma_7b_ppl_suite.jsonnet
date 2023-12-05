@@ -8,8 +8,9 @@ local ppl_suite = import 'task_sets/eval_suite_ppl_test_v3_not_deconned.libsonne
 //❗Set gsheet to the name of your google sheet.
 // Set it to null if you do not want your results to be uploaded to a google sheet (they will still be saved as an object).
 // local gsheet = "ppl-suite-token-ppls-working-env";
-local gsheet = "perplexity-suite-paper";
-local output_dir = "s3://ai2-llm/eval-results/perplexity/olmo/7b/v1_5-mix-mitch-ish/";
+// local gsheet = "perplexity-suite-paper";
+local output_dir = "s3://ai2-llm/eval-results/perplexity/olmo/7b/v1_5-mix-mitch-ish-1_5T_tokens/";
+local gsheet = null;
 
 local create_models = function(model_path, revisions, gpus_needed) [
     {
@@ -37,7 +38,8 @@ local create_models = function(model_path, revisions, gpus_needed) [
 local revisions = [
     "step104750-unsharded",
     "step179000-unsharded",
-    "step226000-unsharded"
+    "step226000-unsharded",
+    "step337000-unsharded"
 ];
 
 
