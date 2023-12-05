@@ -6,6 +6,8 @@ import yaml
 
 def main(args):
     for checkpoint_dir in os.listdir(args.checkpoints_dir):
+        if not checkpoint_dir.endswith("unsharded"):
+            continue
         config_path = os.path.join(args.checkpoints_dir, checkpoint_dir, "config.yaml")
         if os.path.exists(config_path):
             with open(config_path, "r") as f:
