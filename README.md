@@ -34,8 +34,7 @@ This executes all the steps defined in the config, and saves them in a local `ta
 
 The output should look like this:
 
-TODO: add picture.
-
+<img width="1886" alt="Screen Shot 2023-12-04 at 9 22 35 PM" src="https://github.com/allenai/ai2-llm-eval/assets/6500683/14a74e61-75d8-470c-8bde-12e35c38c44a">
 
 ### Load pipeline output
 
