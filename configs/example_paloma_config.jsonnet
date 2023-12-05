@@ -11,7 +11,7 @@ local ppl_suite = import 'task_sets/paloma_hf_release_val.libsonnet';
 local gsheet = null;
 //❗Set output_dir to a directory where you want to save outputs as jsonl.gz files .
 // Set it to null if you do not want your results saved as jsonl.gz files.
-local output_dir = "/Users/ianm/projects/paloma-release/ai2-llm-eval/output/";
+local output_dir = null;
 
 local create_models = function(model_path, revisions, gpus_needed) [
     {
