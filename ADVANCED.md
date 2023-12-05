@@ -22,7 +22,9 @@ tango --settings tango.yml run configs/evaluation_template.jsonnet --workspace m
 
 * Enable Google Datastore in your GCE console for your project.
 
-* ```commandline
+* Login with CLI
+
+```commandline
 gcloud auth login
 gcloud auth application-default login
 gcloud config set project <your-project>
