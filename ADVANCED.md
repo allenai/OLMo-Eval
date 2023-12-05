@@ -15,3 +15,33 @@
 export GDRIVE_SERVICE_ACCOUNT_JSON=$(cat downloaded_credentials_file.json)
 tango --settings tango.yml run configs/evaluation_template.jsonnet --workspace my-eval-workspace
 ```
+
+## Use a remote workspace
+
+`tango` allows you to use a `google` workspace.
+
+* Enable Google Datastore in your GCE console for your project.
+
+* ```commandline
+gcloud auth login
+gcloud auth application-default login
+gcloud config set project <your-project>
+```
+
+* Run with a `gs:` workspace.
+
+```commandline
+tango --settings tango.yml run configs/evaluation_template.jsonnet --workspace gs://my-gs-workspace
+```
+
+This will create a `tango` workspace in google cloud bucket.
+
+💡 See `tango.yml` to set this as the default option.
+
+### Troubleshooting
+
+If some error causes your google workspace to go into a bad state (i.e., you get errors that say step should not be in completed state, etc.), you can clear the workspace with
+
+```commandline
+python scripts/empty_workspace.py my-gs-workspace
+```
