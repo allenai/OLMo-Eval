@@ -79,6 +79,7 @@ def main(args: argparse.Namespace):
     # Some shenanigans to map from run_lm_eval argument structure to ConstructCatwalkModel format
     # TODO fix this mess!
     hf_name = args_dict["model"]
+    model_name = hf_name
     model_args = {}
     if hf_name not in MODELS:
         prefix_split = hf_name.split("::", 1)
@@ -87,6 +88,7 @@ def main(args: argparse.Namespace):
         if "pretrained" not in model_args:
             raise ValueError(f"Unknown model {hf_name}")
         hf_name = model_args["pretrained"]
+        model_name = hf_name
         del model_args["pretrained"]
         for key in ["revision", "trust_remote_code"]:
             if args_raw.get(key):
@@ -207,7 +209,7 @@ def main(args: argparse.Namespace):
     if args_dict["gsheet"]:
         try:
             _ = WriteOutputsAsRows(cache_results=False).run(
-                [hf_name] * num_tasks,
+                [model_name] * num_tasks,
                 verbose_output,
                 task_dicts,
                 simple_pipeline=True,
