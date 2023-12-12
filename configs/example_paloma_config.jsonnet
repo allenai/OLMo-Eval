@@ -3,6 +3,7 @@
 local utils = import 'utils.libsonnet';
 
 //❗ To run this config you will need to first set up the data following the instructions in ai2-llm-eval/eval_data/README.md
+//❗ Also note that this will run validation results. Change to paloma_hf_release_test.libsonnet to run test results.
 local ppl_suite = import 'task_sets/paloma_hf_release_val.libsonnet';
 
 
