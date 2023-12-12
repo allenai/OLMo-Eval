@@ -192,6 +192,18 @@ local create_processed_outputs_as_rows_multiple_metrics_steps(model_task_configs
         }
     };
 
+local create_save_write_outputs_as_rows_multiple_metrics_as_file_steps(output_dir) =
+    {
+        "save-to-file": {
+            type: "save-write-outputs-as-rows-multiple-metrics-as-file",
+            write_outputs: {type: "ref", ref: "combine-all-outputs"},
+            output_dir: output_dir,
+            step_resources: {
+                gpu_count: 0
+            }
+        }
+    };
+
 local create_pipeline(models, task_sets, gsheet) =
 
     // Model steps
@@ -218,7 +230,7 @@ local create_pipeline(models, task_sets, gsheet) =
 
     all_steps;
 
-local create_fine_grained_pipeline(models, task_sets, gsheet) =
+local create_fine_grained_pipeline(models, task_sets, gsheet, output_dir = null) =
 
     // Model steps
     local model_location_steps = create_model_location_steps(models);
@@ -237,13 +249,16 @@ local create_fine_grained_pipeline(models, task_sets, gsheet) =
     // Aggregate results for each task set and model combination
     local combine_all_outputs = create_processed_outputs_as_rows_multiple_metrics_steps(model_task_configs, gsheet);
 
+    local save_to_file = create_save_write_outputs_as_rows_multiple_metrics_as_file_steps(output_dir);
+
     local all_steps =
         model_location_steps +
         catwalk_model_steps +
         task_steps +
         outputs_steps +
         processed_outputs_steps +
-        combine_all_outputs;
+        combine_all_outputs +
+        save_to_file;
 
     all_steps;
 
