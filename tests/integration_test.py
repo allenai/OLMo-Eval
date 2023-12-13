@@ -4,7 +4,7 @@ import os
 import petname
 from tango.common.params import Params
 
-from llm_eval.common.testing import LLMEvalTestCase, run_experiment
+from olmo_eval.common.testing import LLMEvalTestCase, run_experiment
 
 
 def test_jsonnet_config():

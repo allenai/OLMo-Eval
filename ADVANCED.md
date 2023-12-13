@@ -51,16 +51,16 @@ python scripts/empty_workspace.py my-gs-workspace
 
 ## Run without Tango
 
-The [`llm_eval/run_lm_eval.py`](llm_eval/run_lm_eval.py) script provides a way to run an evaluation as a single
+The [`olmo_eval/run_lm_eval.py`](olmo_eval/run_lm_eval.py) script provides a way to run an evaluation as a single
 job with associated result set. Arguments can be provided in a config file, an example is found 
 in `configs/run_lm_eval_example.jsonnet`, or as direct arguments (see documentation in script). E.g.,
 
 ```commandline
-python -m llm_eval.run_lm_eval --config_file configs/run_lm_eval_example.jsonnet
+python -m olmo_eval.run_lm_eval --config_file configs/run_lm_eval_example.jsonnet
 ```
 or
 ```commandline
-python -m llm_eval.run_lm_eval --model lm::pretrained=EleutherAI/pythia-160m,revision=step140000 \
+python -m olmo_eval.run_lm_eval --model lm::pretrained=EleutherAI/pythia-160m,revision=step140000 \
     --task arc_challenge arc_easy  --split validation \
     --full_output_file predictions.jsonl --metrics_file metrics.json --model_max_length 2048 \
     --max_batch_tokens 4096 --num_recorded_inputs 3 --num_shots 0 --gsheet OLMo-evals-testing

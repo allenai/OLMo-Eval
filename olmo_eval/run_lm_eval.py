@@ -11,7 +11,7 @@ from catwalk.utils import filter_dict_keys, sanitize
 from rjsonnet import evaluate_file
 from tango.common.logging import initialize_logging
 
-from llm_eval.steps import (
+from olmo_eval.steps import (
     ConstructCatwalkModel,
     ConstructTaskDict,
     PredictAndCalculateMetricsStep,

@@ -1,7 +1,7 @@
 
 # ai2-llm-eval
 
-The `llm_eval` framework is a way to run evaluation pipelines for language models on NLP tasks. 
+The `olmo_eval` framework is a way to run evaluation pipelines for language models on NLP tasks. 
 The codebase is extensible and contains `task_sets` and example configurations, which run a series
 of [`tango`](https://github.com/allenai/tango) steps for computating the model outputs and metrics.
 

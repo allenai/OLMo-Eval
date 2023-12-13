@@ -1,8 +1,8 @@
 from catwalk.model import Model
 from catwalk.models import MODELS
 
-from llm_eval.common.testing import LLMEvalTestCase
-from llm_eval.steps.run_catwalk import (
+from olmo_eval.common.testing import LLMEvalTestCase
+from olmo_eval.steps.run_catwalk import (
     ConstructCatwalkModel,
     ConstructTaskDict,
     PredictAndCalculateMetricsStep,

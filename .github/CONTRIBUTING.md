@@ -139,7 +139,7 @@ When you're ready to contribute code to address an open issue, please follow the
 
     We also strive to maintain high test coverage, so most contributions should include additions to [the unit tests](https://github.com/allenai/ai2-llm-eval/tree/main/tests). These tests are run with [`pytest`](https://docs.pytest.org/en/latest/), which you can use to locally run any test modules that you've added or changed.
 
-    For example, if you've fixed a bug in `llm_eval/a/b.py`, you can run the tests specific to that module with
+    For example, if you've fixed a bug in `olmo_eval/a/b.py`, you can run the tests specific to that module with
 
         pytest -v tests/a/b_test.py
 

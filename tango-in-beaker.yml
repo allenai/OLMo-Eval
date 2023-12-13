@@ -59,6 +59,6 @@ executor:
 
 
 include_package:
-  - llm_eval.steps
+  - olmo_eval.steps
 
 log_level: info

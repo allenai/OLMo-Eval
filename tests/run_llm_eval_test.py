@@ -4,7 +4,7 @@ import subprocess
 
 from rjsonnet import evaluate_file
 
-from llm_eval.common.testing import LLMEvalTestCase
+from olmo_eval.common.testing import LLMEvalTestCase
 
 
 class TestRunLLMEvalScript(LLMEvalTestCase):
@@ -12,7 +12,7 @@ class TestRunLLMEvalScript(LLMEvalTestCase):
         config_file = self.PROJECT_ROOT / "configs" / "run_lm_eval_example.jsonnet"
 
         _ = subprocess.run(
-            ["python", "-m", "llm_eval.run_lm_eval", "--config-file", config_file],
+            ["python", "-m", "olmo_eval.run_lm_eval", "--config-file", config_file],
             capture_output=True,
             text=True,
         )
@@ -39,7 +39,7 @@ class TestRunLLMEvalScript(LLMEvalTestCase):
             [
                 "python",
                 "-m",
-                "llm_eval.run_lm_eval",
+                "olmo_eval.run_lm_eval",
                 "--model",
                 "lm::pretrained=EleutherAI/pythia-160m,revision=step140000",
                 "--task",

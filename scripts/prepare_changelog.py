@@ -1,7 +1,7 @@
 from datetime import datetime
 from pathlib import Path
 
-from llm_eval.version import VERSION
+from olmo_eval.version import VERSION
 
 
 def main():

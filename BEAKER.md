@@ -39,7 +39,7 @@ tango --settings tango-in-beaker.yml run configs/example_config.jsonnet --worksp
 
 ## Option 3: Run full pipeline in a single beaker job
 
-Note: Use with `llm_eval/run_llm_eval.py`. See details [here](ADVANCED.md#run-without-tango).
+Note: Use with `olmo_eval/run_lm_eval.py`. See details [here](ADVANCED.md#run-without-tango).
 
 Use [beaker-gantry](https://github.com/allenai/beaker-gantry), e.g.,
 
@@ -47,7 +47,7 @@ Use [beaker-gantry](https://github.com/allenai/beaker-gantry), e.g.,
 gantry run --gpus 1 --venv base --workspace ai2/lm-eval --cluster ai2/aristo-cirrascale \
    --beaker-image oyvindt/OLMoEvalLatest \
    --env 'HF_DATASETS_CACHE=/net/nfs.cirrascale/aristo/oyvindt/hf_datasets_cache' -- \
-   python llm_eval/run_lm_eval.py \
+   python olmo_eval/run_lm_eval.py \
    --model lm::pretrained=EleutherAI/pythia-160m,revision=step140000 \
    --task arc_challenge arc_easy boolq  --split validation \
    --full_output_file /results/predictions.jsonl --metrics_file /results/metrics.json \

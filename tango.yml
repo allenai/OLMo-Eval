@@ -29,6 +29,6 @@ executor:
   # parallelism: 1
 
 include_package:
-  - llm_eval.steps
+  - olmo_eval.steps
 
 log_level: info
