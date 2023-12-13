@@ -11,6 +11,5 @@ git clone https://huggingface.co/datasets/olmo-friends/paloma
 
 Then when you run the pipe line you will first need to export the path to this data
 ```
-cd paloma
 export EVAL_DATA_PATH=$(pwd)
 ```
