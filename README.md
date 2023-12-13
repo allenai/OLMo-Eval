@@ -20,6 +20,11 @@ conda activate eval-pipeline
 pip install -e .
 ```
 
+## PALOMA
+
+Details on running the evaluation on PALOMA can be found [here](paloma/README.md).
+
+
 ## Quickstart
 
 The current `task_sets` can be found at [configs/task_sets](configs/task_sets). In this example, we run `gen_tasks` on `EleutherAI/pythia-1b`. The example config is [here](configs/example_config.jsonnet).
