@@ -55,7 +55,7 @@ dev = [
     "packaging"
 ]
 olmo = [
-    "ai2-olmo>=v0.1.1",
+    "ai2-olmo>=v0.2.2",
     "omegaconf"
 ]
 
