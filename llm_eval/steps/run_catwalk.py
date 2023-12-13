@@ -442,6 +442,7 @@ class WriteOutputsAsRowsMultipleMetrics(Step):
                         row = {}
                         task = d["task"]
                         row["model"] = model
+                        row["split"] = pred_kwargs["split"]
                         if "revision" in d["model_kwargs"]:
                             row["revision"] = d["model_kwargs"]["revision"]
                         row["subdomain"] = subdomain
@@ -460,6 +461,35 @@ class WriteOutputsAsRowsMultipleMetrics(Step):
                 write_to_gsheet(gsheet, tsv_outputs, sheet_title=metric_type_name)
 
         return per_metric_type_tsv_outputs
+
+
+@Step.register("save-write-outputs-as-rows-multiple-metrics-as-file")
+class SaveWriteOutputsAsRowsMultipleMetricsAsFile(Step):
+    VERSION = "001"
+
+    def run(self, write_outputs: Dict[str, List[Dict]], output_dir: str) -> None:
+        import smart_open
+
+        if output_dir is None:
+            logger.info("output_file is None, skipping save to file")
+            return
+        transport_params = None
+        if output_dir.startswith("s3://"):
+            import boto3
+
+            session = boto3.Session(
+                aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+                aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+                aws_session_token=os.environ["AWS_SESSION_TOKEN"],
+            )
+            client = session.client("s3")
+            transport_params = dict(client=client)
+        for table_name in write_outputs:
+            output_file = os.path.join(output_dir, table_name + ".jsonl.gz")
+            with smart_open.open(output_file, "wb", transport_params=transport_params) as f:
+                for row in tqdm(write_outputs[table_name], desc=f"writing {table_name} to file"):
+                    f.write(json.dumps(row).encode())
+                    f.write(b"\n")
 
 
 def write_to_gsheet(gsheet: str, rows: List[Dict], sheet_title: str = "Sheet1"):
