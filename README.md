@@ -1,5 +1,5 @@
 
-# ai2-llm-eval
+# ai2-olmo-eval
 
 The `olmo_eval` framework is a way to run evaluation pipelines for language models on NLP tasks. 
 The codebase is extensible and contains `task_sets` and example configurations, which run a series
