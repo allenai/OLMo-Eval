@@ -15,9 +15,10 @@ from catwalk.dependencies.lm_eval.utils import simple_parse_args_string
 from catwalk.model import Model
 from catwalk.models import MODELS, add_decoder_only_model
 from catwalk.task import rc_metrics
-from catwalk.tasks import TASKS, get_instances
+from catwalk.tasks import TASKS
 from catwalk.tasks.tasks_lm import TASKS_LM
 from catwalk.utils import guess_instance_id
+from catwalk.run_lm_eval import get_instances
 from tango.step import Step
 from tqdm import tqdm
 
