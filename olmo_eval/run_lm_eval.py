@@ -62,6 +62,11 @@ _parser.add_argument("--gsheet", type=str, help="Name of Google Sheet for writin
 def main(args: argparse.Namespace):
     initialize_logging(log_level="INFO")
     logger = logging.getLogger()
+    try:
+        from hf_olmo import *
+    except:
+        logger.warning("Module hf_olmo not available!")
+
     if args.config_file and args.model:
         raise ValueError("Cannot specify both --config-file and --model arguments")
     args_dict = vars(args)

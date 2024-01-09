@@ -128,6 +128,7 @@ class ConstructCatwalkModel(Step):
                 hf_name = model_path
             if model_class:
                 model_args["model_class"] = locate(model_class)
+                logger.info("Using model_class override: {model_args['model_class']}")
 
                 # TODO: why do we do this?
                 # # Assuming tokenizer will be loaded with model, so fail if trying to load it otherwise
