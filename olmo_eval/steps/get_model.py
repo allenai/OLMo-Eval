@@ -7,7 +7,7 @@ from tango import step
 logger = logging.getLogger(__name__)
 
 
-@step("get-model-path", cacheable=True, version="005")
+@step("get-model-path", cacheable=True, version="006")
 def get_model_path(
     model_path: Union[str, os.PathLike],
     revision: Optional[str] = None,
@@ -31,11 +31,11 @@ def get_model_path(
         checkpoint_dir += "/" + revision
 
     try:
-        from hf_olmo.add_hf_config_to_olmo_checkpoint import (
-            download_remote_checkpoint_and_add_hf_config,
+        from hf_olmo.convert_olmo_to_hf import (
+            download_remote_checkpoint_and_convert_to_hf,
         )
 
-        local_model_path = download_remote_checkpoint_and_add_hf_config(
+        local_model_path = download_remote_checkpoint_and_convert_to_hf(
             checkpoint_dir=checkpoint_dir, local_dir=model_dir
         )
     except ImportError:

@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Fixed incorrect paths in readme
 - Fixed model names written to gsheet by run_lm_eval.py
+- Fixed hf_olmo module and function name that has changed
 
 ### Changed
 
