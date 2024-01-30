@@ -1,5 +1,10 @@
 
-# ai2-olmo-eval
+# OLMo-Eval
+
+OLMo-Eval is a repository for evaluating open language models. 
+
+
+## Overview
 
 The `olmo_eval` framework is a way to run evaluation pipelines for language models on NLP tasks. 
 The codebase is extensible and contains `task_sets` and example configurations, which run a series
@@ -14,15 +19,15 @@ The pipeline is built using [ai2-tango](https://github.com/allenai/tango) and [a
 
 ## Installation
 
+
+After cloning the repository, please run
+
 ```commandline
 conda create -n eval-pipeline python=3.10
 conda activate eval-pipeline
+cd OLMo-Eval
 pip install -e .
 ```
-
-## PALOMA
-
-Details on running the evaluation on PALOMA can be found [here](paloma/README.md).
 
 
 ## Quickstart
@@ -64,6 +69,12 @@ The [eval_table](configs/eval_table.jsonnet) config evaluates `falcon-7b`, `mpt-
 ```commandline
 tango --settings tango.yml run configs/eval_table.jsonnet --workspace my-eval-workspace
 ```
+
+
+## PALOMA
+
+Details on running the evaluation on PALOMA can be found [here](paloma/README.md).
+
 
 ## Advanced
 
