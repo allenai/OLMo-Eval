@@ -1,7 +1,7 @@
 
 # OLMo-Eval
 
-OLMo-Eval is a repository for evaluating open language models. 
+OLMo-Eval is a repository for evaluating open language models.
 
 
 ## Overview
@@ -46,6 +46,8 @@ The output should look like this:
 
 <img width="1886" alt="Screen Shot 2023-12-04 at 9 22 35 PM" src="https://github.com/allenai/ai2-llm-eval/assets/6500683/14a74e61-75d8-470c-8bde-12e35c38c44a">
 
+New models and datasets can be added by modifying the [example configuration](configs/example_config.jsonnet).
+
 ### Load pipeline output
 
 ```python
@@ -72,6 +74,8 @@ tango --settings tango.yml run configs/eval_table.jsonnet --workspace my-eval-wo
 
 
 ## PALOMA
+
+This repository was also used to run evaluations for the [PALOMA paper](https://www.semanticscholar.org/paper/Paloma%3A-A-Benchmark-for-Evaluating-Language-Model-Magnusson-Bhagia/1a3f7e23ef8f0bf06d0efa0dc174e4e361226ead?utm_source=direct_link)
 
 Details on running the evaluation on PALOMA can be found [here](paloma/README.md).
 
