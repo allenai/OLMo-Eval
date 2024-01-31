@@ -16,7 +16,19 @@ So far the models evaluated by the benchmark are the 6 baseline 1B parameter mod
 ## Setup
 Start by following the installation instructions for this repo in this [readme](../README.md).
 
-Then follow the instructions in this [readme](eval_data/README.md) to obtain and set up the evaluation data.
+Then, download the PALOMA dataset from HF hub:
+
+```commandline
+huggingface-cli login
+git lfs install
+git clone https://huggingface.co/datasets/allenai/paloma
+```
+
+Finally, export the path to this data when running the pipeline:
+
+```commandline
+export EVAL_DATA_PATH=/path/to/paloma
+```
 
 ## Running evaluation
 After following the setup instructions above, you can make an evaluation configuration based on our template [here](../configs/example_paloma_config.jsonnet). This is designed to work with any model hosted on the HuggingFace hub. Just specify the name of the model on the hub and any revisions (i.e., checkpoints) that you want results over. Read the comments in the configuration with the ❗ symbol for more information about details you may need to fill in.  Finally make sure to set an output directory for `output_dir` where you want the job to output your results. 
@@ -41,4 +53,17 @@ Our approach for fixing the training data order requires the use of the same tra
 We ask that submissions that do not investigate changes in vocabulary opt in to our standardized vocabulary to enable the greatest level of comprability. That vocabulary is available from the tokenizer hosted on HuggingFace hub as `allenai/gpt-neox-olmo-dolma-v1_5`. 
 
 ## Making a submission
-At present we are building out an automatic submission process that will soon be available. Until then please reach out to us by emailing the first author of Paloma, if you would like to submit results to the benchmark.
+At present we are building out an automatic submission process that will soon be available. Until then please reach out to us by emailing `ianm@allenai.org`, if you would like to submit results to the benchmark.
+
+## Citation
+
+```bibtex
+@article{Magnusson2023PalomaAB,
+  title={Paloma: A Benchmark for Evaluating Language Model Fit},
+  author={Ian Magnusson and Akshita Bhagia and Valentin Hofmann and Luca Soldaini and A. Jha and Oyvind Tafjord and Dustin Schwenk and Pete Walsh and Yanai Elazar and Kyle Lo and Dirk Groeneveld and Iz Beltagy and Hanna Hajishirzi and Noah A. Smith and Kyle Richardson and Jesse Dodge},
+  journal={ArXiv},
+  year={2023},
+  volume={abs/2312.10523},
+  url={https://api.semanticscholar.org/CorpusID:266348815}
+}
+```
