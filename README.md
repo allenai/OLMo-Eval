@@ -8,7 +8,7 @@ OLMo-Eval is a repository for evaluating open language models.
 
 The `olmo_eval` framework is a way to run evaluation pipelines for language models on NLP tasks. 
 The codebase is extensible and contains `task_sets` and example configurations, which run a series
-of [`tango`](https://github.com/allenai/tango) steps for computating the model outputs and metrics.
+of [`tango`](https://github.com/allenai/tango) steps for computing the model outputs and metrics.
 
 
 Using this pipeline, you can evaluate _m_ models on _t_ task_sets, where each task_set consists of one or more individual tasks.
