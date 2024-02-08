@@ -9,8 +9,8 @@ Run catwalk evaluations in beaker without requiring setting up and managing a ta
 
 Clone the eval repository.
 ```
-git clone https://github.com/allenai/ai2-olmo-eval.git
-cd ai2-olmo-eval
+git clone https://github.com/allenai/OLMo-eval.git
+cd OLMo-eval
 ```
 
 Create conda environment and install requirements (including beaker gantry and jupyter notebook):
