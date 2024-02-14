@@ -1,0 +1,1 @@
+git+https://github.com/allenai/catwalk.git@mmlu_rc_tasks
