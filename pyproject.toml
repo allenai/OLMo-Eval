@@ -77,7 +77,7 @@ olmo_eval = ["py.typed"]
 
 [tool.setuptools.dynamic]
 version = {attr = "olmo_eval.version.VERSION"}
-dynamic-dependencies = {file = "requirements.txt"}
+dependencies = {file = "requirements.txt"}
 
 [tool.black]
 line-length = 100
