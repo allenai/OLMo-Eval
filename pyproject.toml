@@ -21,7 +21,7 @@ requires-python = ">=3.10"
 
 dependencies = [
   # Add your own dependencies here
-  "ai2-catwalk@git+ssh://git@github.com:allenai/catwalk.git#dh-prompting-exps",
+  "ai2-catwalk@git+ssh://git@github.com/allenai/catwalk.git#dh-prompting-exps",
   #"ai2-catwalk>=1.0.0rc0",
   "ai2-tango[torch,transformers,fairscale,beaker,wandb,gs]>=1.3.2",
   "pygsheets"
