@@ -19,6 +19,7 @@ from catwalk.task import rc_metrics
 from catwalk.tasks import TASKS
 from catwalk.tasks.tasks_lm import TASKS_LM
 from catwalk.utils import guess_instance_id
+from olmo_eval.tasks.olmes_v0_1.catwalk_tasks import TASKS_STD
 from tango.step import Step
 from tqdm import tqdm
 
@@ -28,6 +29,8 @@ except ImportError:
     pass
 
 logger = logging.getLogger(__name__)
+
+TASKS_LM.update(TASKS_STD)  # Add OLMES-v0.1 tasks
 
 
 @Step.register("construct-task")
