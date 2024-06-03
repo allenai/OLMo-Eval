@@ -95,7 +95,7 @@ def create_catwalk_mmlu_std_tasks():
         res[f"mmlu_mc_std_{sub}"] = EleutherMMLUTask(f"mmlu-{sub}", ranked_classification=True).add_metrics(
             rc_metrics(primary="acc_raw"))
         res[f"mmlu_std_{sub}"] = EleutherMMLUTask(f"mmlu-rc-{sub}", ranked_classification=True).add_metrics(
-            rc_metrics(primary="acc_char"))
+            rc_metrics(primary="acc_per_char"))
     return res
 
 def create_all_tasks():
