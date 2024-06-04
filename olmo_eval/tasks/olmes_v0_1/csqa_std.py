@@ -1,10 +1,12 @@
 """
 Commonsense QA
 """
+from typing import Optional
+
 from catwalk.dependencies.lm_eval.base import MultipleChoiceTask
+
 from .std_fewshot import STD_FEWSHOT
 from .utils import make_cloze_prompt, make_mcq_prompt
-
 
 _CITATION = """
 @inproceedings{talmor-etal-2019-commonsenseqa,
@@ -43,7 +45,9 @@ class CommonsenseQAStd(MultipleChoiceTask):
 
     def training_docs(self):
         if self._training_docs is None:
-            self._training_docs = list(map(self._process_doc, self.dataset["train"]))
+            self._training_docs: Optional[list] = list(
+                map(self._process_doc, self.dataset["train"])
+            )
         return self._training_docs
 
     def validation_docs(self):
@@ -65,7 +69,9 @@ class CommonsenseQAStd(MultipleChoiceTask):
 
     def fewshot_examples(self, k, rnd):
         if self._fewshot_docs is None:
-            self._fewshot_docs = list(map(self._process_doc, STD_FEWSHOT[self.DATASET_PATH]))
+            self._fewshot_docs: Optional[list] = list(
+                map(self._process_doc, STD_FEWSHOT[self.DATASET_PATH])
+            )
         assert k <= len(self._fewshot_docs)
         return self._fewshot_docs[:k]
 
@@ -90,7 +96,7 @@ class CommonsenseQAMCStd(CommonsenseQAStd):
     # Answer: B
 
     def _process_doc(self, doc):
-        num_choices = len(doc["choices"]['text'])
+        num_choices = len(doc["choices"]["text"])
         choice_labels = ["A", "B", "C", "D", "E"][:num_choices]
         query = make_mcq_prompt(doc["question"], doc["choices"]["text"])
         out_doc = {
@@ -104,4 +110,3 @@ class CommonsenseQAMCStd(CommonsenseQAStd):
     def unconditioned_prompt(self):
         # Don't need unconditioned normalization here
         return None
-

@@ -14,10 +14,12 @@ state-of-the-art models.
 Homepage: https://rowanzellers.com/hellaswag/
 """
 import re
+from typing import Optional
+
 from catwalk.dependencies.lm_eval.base import MultipleChoiceTask
+
 from .std_fewshot import STD_FEWSHOT
 from .utils import make_mcq_prompt
-
 
 _CITATION = """
 @inproceedings{zellers2019hellaswag,
@@ -45,7 +47,9 @@ class HellaSwagStd(MultipleChoiceTask):
 
     def training_docs(self):
         if self._training_docs is None:
-            self._training_docs = list(map(self._process_doc, self.dataset["train"]))
+            self._training_docs: Optional[list] = list(
+                map(self._process_doc, self.dataset["train"])
+            )
         return self._training_docs
 
     def validation_docs(self):
@@ -62,7 +66,9 @@ class HellaSwagStd(MultipleChoiceTask):
 
     def fewshot_examples(self, k, rnd):
         if self._fewshot_docs is None:
-            self._fewshot_docs = list(map(self._process_doc, STD_FEWSHOT[self.DATASET_PATH]))
+            self._fewshot_docs: Optional[list] = list(
+                map(self._process_doc, STD_FEWSHOT[self.DATASET_PATH])
+            )
         assert k <= len(self._fewshot_docs)
         return self._fewshot_docs[:k]
 
@@ -71,7 +77,7 @@ class HellaSwagStd(MultipleChoiceTask):
         # Health: How to cope with suicidal thoughts. Put off any plans. Promise yourself that you'll wait 48 hours before doing anything. Remember, thoughts don't have the power to force you to act. Sometimes extreme pain can distort our perception. Waiting before taking action will give your mind time to clear.
         text = text.strip()
         # NOTE: Brackets are artifacts of the WikiHow dataset portion of HellaSwag.
-        #text = text.replace(" [title]", ". ") # original code creates double full stop when . [title]
+        # text = text.replace(" [title]", ". ") # original code creates double full stop when . [title]
         text = re.sub("\\.? \\[title\\]", ". ", text)
         text = re.sub("\\[.*?\\]", "", text)
         text = text.replace("  ", " ")
@@ -99,10 +105,12 @@ class HellaSwagMCStd(HellaSwagStd):
 
     def _process_doc(self, doc):
         letter_indices = ["A", "B", "C", "D", "E"]
-        query = make_mcq_prompt(f"{doc['activity_label']}: {doc['ctx_a']} {doc['ctx_b'].capitalize()}",
-                                doc["endings"],
-                                question_prefix="",
-                                choices_prefix="Choose the best continuation:\n")
+        query = make_mcq_prompt(
+            f"{doc['activity_label']}: {doc['ctx_a']} {doc['ctx_b'].capitalize()}",
+            doc["endings"],
+            question_prefix="",
+            choices_prefix="Choose the best continuation:\n",
+        )
         query = self.preprocess(query)
         out_doc = {
             "query": query,

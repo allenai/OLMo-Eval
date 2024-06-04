@@ -1,13 +1,7 @@
 from typing import Dict
 
-from catwalk.task import Task, ppl_metrics, rc_metrics
-from catwalk.tasks.eleuther import (
-    EleutherClassificationTask,
-    EleutherMMLUTask,
-    EleutherTask,
-    create_mmlu_tasks,
-)
-from catwalk.tasks.perplexity_jsonl import PerplexityJsonLTask
+from catwalk.task import Task, rc_metrics
+from catwalk.tasks.eleuther import EleutherMMLUTask
 
 from .mmlu_std import create_catwalk_mmlu_std_tasks
 
@@ -24,9 +18,9 @@ TASKS_STD: Dict[str, Task] = {
     "arc_easy_mc_std": EleutherMMLUTask("arc_easy_mc_std", ranked_classification=True).add_metrics(
         rc_metrics(primary="acc_raw")
     ),
-    "arc_challenge_std": EleutherMMLUTask("arc_challenge_std", ranked_classification=True).add_metrics(
-        rc_metrics(primary="acc_uncond")
-    ),
+    "arc_challenge_std": EleutherMMLUTask(
+        "arc_challenge_std", ranked_classification=True
+    ).add_metrics(rc_metrics(primary="acc_uncond")),
     "arc_challenge_mc_std": EleutherMMLUTask(
         "arc_challenge_mc_std", ranked_classification=True
     ).add_metrics(rc_metrics(primary="acc_raw")),
@@ -39,16 +33,16 @@ TASKS_STD: Dict[str, Task] = {
     "hellaswag_std": EleutherMMLUTask("hellaswag_std", ranked_classification=True).add_metrics(
         rc_metrics(primary="acc_per_char")
     ),
-    "hellaswag_mc_std": EleutherMMLUTask("hellaswag_mc_std", ranked_classification=True).add_metrics(
-        rc_metrics(primary="acc_raw")
-    ),
+    "hellaswag_mc_std": EleutherMMLUTask(
+        "hellaswag_mc_std", ranked_classification=True
+    ).add_metrics(rc_metrics(primary="acc_raw")),
     **create_catwalk_mmlu_std_tasks(),
     "winogrande_std": EleutherMMLUTask("winogrande_std", ranked_classification=True).add_metrics(
         rc_metrics(primary="acc_raw")
     ),
-    "winogrande_mc_std": EleutherMMLUTask("winogrande_mc_std", ranked_classification=True).add_metrics(
-        rc_metrics(primary="acc_raw")
-    ),
+    "winogrande_mc_std": EleutherMMLUTask(
+        "winogrande_mc_std", ranked_classification=True
+    ).add_metrics(rc_metrics(primary="acc_raw")),
     "csqa_std": EleutherMMLUTask("csqa_std", ranked_classification=True).add_metrics(
         rc_metrics(primary="acc_uncond")
     ),
@@ -58,9 +52,9 @@ TASKS_STD: Dict[str, Task] = {
     "openbookqa_std": EleutherMMLUTask("openbookqa_std", ranked_classification=True).add_metrics(
         rc_metrics(primary="acc_uncond")
     ),
-    "openbookqa_mc_std": EleutherMMLUTask("openbookqa_mc_std", ranked_classification=True).add_metrics(
-        rc_metrics(primary="acc_raw")
-    ),
+    "openbookqa_mc_std": EleutherMMLUTask(
+        "openbookqa_mc_std", ranked_classification=True
+    ).add_metrics(rc_metrics(primary="acc_raw")),
     "piqa_std": EleutherMMLUTask("piqa_std", ranked_classification=True).add_metrics(
         rc_metrics(primary="acc_per_char")
     ),
@@ -70,7 +64,7 @@ TASKS_STD: Dict[str, Task] = {
     "socialiqa_std": EleutherMMLUTask("socialiqa_std", ranked_classification=True).add_metrics(
         rc_metrics(primary="acc_per_char")
     ),
-    "socialiqa_mc_std": EleutherMMLUTask("socialiqa_mc_std", ranked_classification=True).add_metrics(
-        rc_metrics(primary="acc_raw")
-    )
+    "socialiqa_mc_std": EleutherMMLUTask(
+        "socialiqa_mc_std", ranked_classification=True
+    ).add_metrics(rc_metrics(primary="acc_raw")),
 }

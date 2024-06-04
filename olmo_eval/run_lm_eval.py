@@ -146,9 +146,7 @@ def main(args: argparse.Namespace):
     for task in tasks:
         all_task_args = default_task_args.copy()
         all_task_args.update(task)
-        task_dicts.append(
-            construct_task_step.run(task_name=task["name"], **all_task_args)
-        )
+        task_dicts.append(construct_task_step.run(task_name=task["name"], **all_task_args))
 
     # Initial loading of model done here for early failures and overrides if needed
     if hasattr(model_obj, "_make_model"):

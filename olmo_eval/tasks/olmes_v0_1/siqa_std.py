@@ -1,7 +1,10 @@
 """
 Social IQA
 """
+from typing import Optional
+
 from catwalk.dependencies.lm_eval.base import MultipleChoiceTask
+
 from .std_fewshot import STD_FEWSHOT
 from .utils import make_cloze_prompt, make_mcq_prompt
 
@@ -44,7 +47,9 @@ class SocialIQAStd(MultipleChoiceTask):
 
     def training_docs(self):
         if self._training_docs is None:
-            self._training_docs = list(map(self._process_doc, self.dataset["train"]))
+            self._training_docs: Optional[list] = list(
+                map(self._process_doc, self.dataset["train"])
+            )
         return self._training_docs
 
     def validation_docs(self):
@@ -65,7 +70,9 @@ class SocialIQAStd(MultipleChoiceTask):
 
     def fewshot_examples(self, k, rnd):
         if self._fewshot_docs is None:
-            self._fewshot_docs = list(map(self._process_doc, STD_FEWSHOT[self.DATASET_PATH]))
+            self._fewshot_docs: Optional[list] = list(
+                map(self._process_doc, STD_FEWSHOT[self.DATASET_PATH])
+            )
         assert k <= len(self._fewshot_docs)
         return self._fewshot_docs[:k]
 

@@ -14,7 +14,10 @@ based algorithm and a word co-occurrence algorithm.
 
 Homepage: https://allenai.org/data/open-book-qa
 """
+from typing import Optional
+
 from catwalk.dependencies.lm_eval.base import MultipleChoiceTask
+
 from .std_fewshot import STD_FEWSHOT
 from .utils import make_cloze_prompt, make_mcq_prompt
 
@@ -44,7 +47,9 @@ class OpenBookQAStd(MultipleChoiceTask):
 
     def training_docs(self):
         if self._training_docs is None:
-            self._training_docs = list(map(self._process_doc, self.dataset["train"]))
+            self._training_docs: Optional[list] = list(
+                map(self._process_doc, self.dataset["train"])
+            )
         return self._training_docs
 
     def validation_docs(self):
@@ -66,7 +71,9 @@ class OpenBookQAStd(MultipleChoiceTask):
 
     def fewshot_examples(self, k, rnd):
         if self._fewshot_docs is None:
-            self._fewshot_docs = list(map(self._process_doc, STD_FEWSHOT[self.DATASET_PATH]))
+            self._fewshot_docs: Optional[list] = list(
+                map(self._process_doc, STD_FEWSHOT[self.DATASET_PATH])
+            )
         assert k <= len(self._fewshot_docs)
         return self._fewshot_docs[:k]
 
@@ -78,6 +85,7 @@ class OpenBookQAStd(MultipleChoiceTask):
 
     def doc_to_decontamination_query(self, doc):
         return doc["query"]
+
 
 class OpenBookQAMCStd(OpenBookQAStd):
     # Include answer choices in prompt, answer is just the single letter A, B, ... E.g.,
@@ -102,4 +110,3 @@ class OpenBookQAMCStd(OpenBookQAStd):
     def unconditioned_prompt(self):
         # Don't need unconditioned normalization here
         return None
-    

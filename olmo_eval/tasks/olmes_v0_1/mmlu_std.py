@@ -12,10 +12,11 @@ important shortcomings.
 
 Homepage: https://github.com/hendrycks/test
 """
+from typing import Optional
+
 from catwalk.dependencies.lm_eval.base import MultipleChoiceTask
 from catwalk.task import rc_metrics
 from catwalk.tasks.eleuther import EleutherMMLUTask
-
 
 _CITATION = """
 @article{hendryckstest2021,
@@ -87,20 +88,22 @@ SUBJECTS = [
     "world_religions",
 ]
 
+
 def create_catwalk_mmlu_std_tasks():
-    """Creates a dictionary of tasks from a list of subjects
-    """
+    """Creates a dictionary of tasks from a list of subjects"""
     res = {}
     for sub in SUBJECTS:
-        res[f"mmlu_mc_std_{sub}"] = EleutherMMLUTask(f"mmlu-{sub}", ranked_classification=True).add_metrics(
-            rc_metrics(primary="acc_raw"))
-        res[f"mmlu_std_{sub}"] = EleutherMMLUTask(f"mmlu-rc-{sub}", ranked_classification=True).add_metrics(
-            rc_metrics(primary="acc_per_char"))
+        res[f"mmlu_mc_std_{sub}"] = EleutherMMLUTask(
+            f"mmlu-{sub}", ranked_classification=True
+        ).add_metrics(rc_metrics(primary="acc_raw"))
+        res[f"mmlu_std_{sub}"] = EleutherMMLUTask(
+            f"mmlu-rc-{sub}", ranked_classification=True
+        ).add_metrics(rc_metrics(primary="acc_per_char"))
     return res
 
+
 def create_all_tasks():
-    """Creates a dictionary of tasks from a list of subjects
-    """
+    """Creates a dictionary of tasks from a list of subjects"""
     res = {f"mmlu-{sub}": create_task(sub) for sub in SUBJECTS}
     res.update({f"mmlu-rc-{sub}": create_task(sub, choice_labels=None) for sub in SUBJECTS})
     return res
@@ -126,7 +129,6 @@ class GeneralHendrycksTest(MultipleChoiceTask):
         self.choice_labels = choice_labels
         super().__init__()
 
-
     def has_training_docs(self):
         return True
 
@@ -147,11 +149,11 @@ class GeneralHendrycksTest(MultipleChoiceTask):
         return " ".join(words)
 
     def unconditioned_prompt(self):
-        return None # To save compute as the standard will not use unconditional scoring
-        #if self.choice_labels is None:
+        return None  # To save compute as the standard will not use unconditional scoring
+        # if self.choice_labels is None:
         #    return "Answer:"
         ## Don't need unconditioned normalization here
-        #return None
+        # return None
 
     def fewshot_context(self, doc, num_fewshot, **kwargs):
         subject = self.DATASET_NAME
@@ -183,9 +185,7 @@ class GeneralHendrycksTest(MultipleChoiceTask):
                     [f" {key}. {choice}\n" for key, choice in zip(keys, doc["choices"])]
                 )
             elif self.choice_labels is False:
-                choices = "".join(
-                    [f" * {choice}\n" for key, choice in zip(keys, doc["choices"])]
-                )
+                choices = "".join([f" * {choice}\n" for key, choice in zip(keys, doc["choices"])])
             else:
                 choices = ""
             prompt = f"{question}\n{choices}Answer:"
@@ -194,7 +194,7 @@ class GeneralHendrycksTest(MultipleChoiceTask):
         keys = ["A", "B", "C", "D"]
         return {
             "query": format_example(doc, keys),
-            "choices": keys if self.choice_labels else doc['choices'],
+            "choices": keys if self.choice_labels else doc["choices"],
             "gold": doc["answer"],
         }
 
@@ -202,7 +202,7 @@ class GeneralHendrycksTest(MultipleChoiceTask):
         # fewshot_examples is not just sampling from train_docs because dev is
         # in the same distribution as val/test but auxiliary_train isn't
         if self._fewshot_docs is None:
-            self._fewshot_docs = list(map(self._process_doc, self.dataset["dev"]))
+            self._fewshot_docs: Optional[list] = list(map(self._process_doc, self.dataset["dev"]))
 
         # use the unchanged order of the dev set without sampling,
         # just as in the original code https://github.com/hendrycks/test/blob/master/evaluate.py#L28

@@ -12,10 +12,12 @@ a co-occurrence method fail to answer correctly) and an Easy Set of 5,197 questi
 
 Homepage: https://allenai.org/data/arc
 """
+from typing import Optional
+
 from catwalk.dependencies.lm_eval.base import MultipleChoiceTask
+
 from .std_fewshot import STD_FEWSHOT
 from .utils import make_cloze_prompt, make_mcq_prompt
-
 
 _CITATION = """
 @article{Clark2018ThinkYH,
@@ -44,7 +46,9 @@ class ARCEasyStd(MultipleChoiceTask):
 
     def training_docs(self):
         if self._training_docs is None:
-            self._training_docs = list(map(self._process_doc, self.dataset["train"]))
+            self._training_docs: Optional[list] = list(
+                map(self._process_doc, self.dataset["train"])
+            )
         return self._training_docs
 
     def validation_docs(self):
@@ -71,7 +75,9 @@ class ARCEasyStd(MultipleChoiceTask):
 
     def fewshot_examples(self, k, rnd):
         if self._fewshot_docs is None:
-            self._fewshot_docs = list(map(self._process_doc, STD_FEWSHOT[self.DATASET_NAME]))
+            self._fewshot_docs: Optional[list] = list(
+                map(self._process_doc, STD_FEWSHOT[self.DATASET_NAME])
+            )
         assert k <= len(self._fewshot_docs)
         return self._fewshot_docs[:k]
 
@@ -99,7 +105,7 @@ class ARCEasyMCStd(ARCEasyStd):
         # of {'1', '2', '3', '4', '5'}. We map them back to letters.
         num_to_letter = {"1": "A", "2": "B", "3": "C", "4": "D", "5": "E"}
         doc["answerKey"] = num_to_letter.get(doc["answerKey"], doc["answerKey"])
-        num_choices = len(doc["choices"]['text'])
+        num_choices = len(doc["choices"]["text"])
         choice_labels = ["A", "B", "C", "D", "E"][:num_choices]
         query = make_mcq_prompt(doc["question"], doc["choices"]["text"])
         out_doc = {
@@ -118,6 +124,7 @@ class ARCEasyMCStd(ARCEasyStd):
 class ARCChallengeStd(ARCEasyStd):
     DATASET_PATH = "ai2_arc"
     DATASET_NAME = "ARC-Challenge"
+
 
 class ARCChallengeMCStd(ARCEasyMCStd):
     DATASET_PATH = "ai2_arc"

@@ -9,7 +9,10 @@ actually learning about the world?
 
 Homepage: https://yonatanbisk.com/piqa/
 """
+from typing import Optional
+
 from catwalk.dependencies.lm_eval.base import MultipleChoiceTask
+
 from .std_fewshot import STD_FEWSHOT
 from .utils import make_cloze_prompt, make_mcq_prompt
 
@@ -43,7 +46,9 @@ class PiQAStd(MultipleChoiceTask):
 
     def training_docs(self):
         if self._training_docs is None:
-            self._training_docs = list(map(self._process_doc, self.dataset["train"]))
+            self._training_docs: Optional[list] = list(
+                map(self._process_doc, self.dataset["train"])
+            )
         return self._training_docs
 
     def validation_docs(self):
@@ -62,7 +67,9 @@ class PiQAStd(MultipleChoiceTask):
 
     def fewshot_examples(self, k, rnd):
         if self._fewshot_docs is None:
-            self._fewshot_docs = list(map(self._process_doc, STD_FEWSHOT[self.DATASET_PATH]))
+            self._fewshot_docs: Optional[list] = list(
+                map(self._process_doc, STD_FEWSHOT[self.DATASET_PATH])
+            )
         assert k <= len(self._fewshot_docs)
         return self._fewshot_docs[:k]
 
@@ -75,13 +82,13 @@ class PiQAStd(MultipleChoiceTask):
     def doc_to_decontamination_query(self, doc):
         return doc["goal"]
 
+
 class PiQAMCStd(PiQAStd):
     # Include answer choices in prompt, answer is just the single letter A, B, ... E.g.,
     # Goal: To create a makeshift ice pack,
     #  A. take a sponge and soak it in oil. Put the sponge in a refrigerator and let it freeze. Once frozen, take it out and put it in a ziploc bag. You can now use it as an ice pack.
     #  B. take a sponge and soak it in water. Put the sponge in a refrigerator and let it freeze. Once frozen, take it out and put it in a ziploc bag. You can now use it as an ice pack.
     # Answer: B
-
 
     def _process_doc(self, doc):
         choices = [doc["sol1"], doc["sol2"]]

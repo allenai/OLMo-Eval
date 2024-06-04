@@ -14,9 +14,12 @@ See: https://arxiv.org/abs/1806.02847
 
 Homepage: https://leaderboard.allenai.org/winogrande/submissions/public
 """
+from typing import Optional
+
 import numpy as np
-from catwalk.dependencies.lm_eval.base import rf, MultipleChoiceTask, Task
+from catwalk.dependencies.lm_eval.base import MultipleChoiceTask, Task, rf
 from catwalk.dependencies.lm_eval.metrics import mean
+
 from .std_fewshot import STD_FEWSHOT
 from .utils import make_mcq_prompt
 
@@ -28,7 +31,6 @@ _CITATION = """
     year={2019}
 }
 """
-
 
 
 class WinograndeStd(Task):
@@ -52,7 +54,7 @@ class WinograndeStd(Task):
 
     def training_docs(self):
         if self._training_docs is None:
-            self._training_docs = list(self.dataset["train"])
+            self._training_docs: Optional[list] = list(self.dataset["train"])
         return self._training_docs
 
     def validation_docs(self):
@@ -69,7 +71,9 @@ class WinograndeStd(Task):
 
     def fewshot_examples(self, k, rnd):
         if self._fewshot_docs is None:
-            self._fewshot_docs = list(map(self._process_doc, STD_FEWSHOT[self.DATASET_PATH]))
+            self._fewshot_docs: Optional[list] = list(
+                map(self._process_doc, STD_FEWSHOT[self.DATASET_PATH])
+            )
         assert k <= len(self._fewshot_docs)
         return self._fewshot_docs[:k]
 
@@ -159,7 +163,9 @@ class WinograndeMCStd(MultipleChoiceTask):
 
     def training_docs(self):
         if self._training_docs is None:
-            self._training_docs = list(map(self._process_doc, self.dataset["train"]))
+            self._training_docs: Optional[list] = list(
+                map(self._process_doc, self.dataset["train"])
+            )
         return self._training_docs
 
     def validation_docs(self):
@@ -173,9 +179,9 @@ class WinograndeMCStd(MultipleChoiceTask):
 
         letter_indices = ["A", "B"]
         options = [doc["option1"], doc["option2"]]
-        query = make_mcq_prompt(doc["sentence"].replace("_", "___"),
-                                options,
-                                question_prefix="Fill in the blank: ")
+        query = make_mcq_prompt(
+            doc["sentence"].replace("_", "___"), options, question_prefix="Fill in the blank: "
+        )
         out_doc = {
             "query": query,
             "choices": letter_indices,
@@ -186,7 +192,9 @@ class WinograndeMCStd(MultipleChoiceTask):
 
     def fewshot_examples(self, k, rnd):
         if self._fewshot_docs is None:
-            self._fewshot_docs = list(map(self._process_doc, STD_FEWSHOT[self.DATASET_PATH]))
+            self._fewshot_docs: Optional[list] = list(
+                map(self._process_doc, STD_FEWSHOT[self.DATASET_PATH])
+            )
         assert k <= len(self._fewshot_docs)
         return self._fewshot_docs[:k]
 

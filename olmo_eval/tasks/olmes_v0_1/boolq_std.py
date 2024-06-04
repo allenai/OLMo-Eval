@@ -2,7 +2,10 @@
 BoolQ
 """
 
+from typing import Optional
+
 from catwalk.dependencies.lm_eval.base import MultipleChoiceTask
+
 from .std_fewshot import STD_FEWSHOT
 from .utils import make_cloze_prompt, make_mcq_prompt
 
@@ -23,7 +26,9 @@ class BoolQStd(MultipleChoiceTask):
 
     def training_docs(self):
         if self._training_docs is None:
-            self._training_docs = list(map(self._process_doc, self.dataset["train"]))
+            self._training_docs: Optional[list] = list(
+                map(self._process_doc, self.dataset["train"])
+            )
         return self._training_docs
 
     def validation_docs(self):
@@ -38,8 +43,9 @@ class BoolQStd(MultipleChoiceTask):
         # Question: do iran and afghanistan speak the same language?
         # Answer: yes
         choices = ["yes", "no"]
-        query = make_cloze_prompt(doc["question"] + "?",
-                                  question_prefix=f"{doc['passage']}\nQuestion: ")
+        query = make_cloze_prompt(
+            doc["question"] + "?", question_prefix=f"{doc['passage']}\nQuestion: "
+        )
         out_doc = {
             "id": doc["idx"],
             "query": query,
@@ -50,7 +56,9 @@ class BoolQStd(MultipleChoiceTask):
 
     def fewshot_examples(self, k, rnd):
         if self._fewshot_docs is None:
-            self._fewshot_docs = list(map(self._process_doc, STD_FEWSHOT[self.DATASET_NAME]))
+            self._fewshot_docs: Optional[list] = list(
+                map(self._process_doc, STD_FEWSHOT[self.DATASET_NAME])
+            )
         assert k <= len(self._fewshot_docs)
         return self._fewshot_docs[:k]
 
@@ -74,10 +82,10 @@ class BoolQMCStd(BoolQStd):
 
     def _process_doc(self, doc):
         choice_labels = ["A", "B"]
-        choices = ['yes', 'no']
-        query = make_mcq_prompt(doc["question"]+'?',
-                                choices,
-                                question_prefix=f"{doc['passage']}\nQuestion: ")
+        choices = ["yes", "no"]
+        query = make_mcq_prompt(
+            doc["question"] + "?", choices, question_prefix=f"{doc['passage']}\nQuestion: "
+        )
         out_doc = {
             "id": doc["idx"],
             "query": query,
@@ -89,4 +97,3 @@ class BoolQMCStd(BoolQStd):
     def unconditioned_prompt(self):
         # Don't need unconditioned normalization here
         return None
-
