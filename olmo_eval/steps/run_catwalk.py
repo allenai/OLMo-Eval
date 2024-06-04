@@ -19,9 +19,10 @@ from catwalk.task import rc_metrics
 from catwalk.tasks import TASKS
 from catwalk.tasks.tasks_lm import TASKS_LM
 from catwalk.utils import guess_instance_id
-from olmo_eval.tasks.olmes_v0_1.catwalk_tasks import TASKS_STD
 from tango.step import Step
 from tqdm import tqdm
+
+from olmo_eval.tasks.olmes_v0_1.catwalk_tasks import TASKS_STD
 
 try:
     from hf_olmo import *  # noqa: F403
