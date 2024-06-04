@@ -22,12 +22,16 @@ from catwalk.utils import guess_instance_id
 from tango.step import Step
 from tqdm import tqdm
 
+from olmo_eval.tasks.olmes_v0_1.catwalk_tasks import TASKS_STD
+
 try:
     from hf_olmo import *  # noqa: F403
 except ImportError:
     pass
 
 logger = logging.getLogger(__name__)
+
+TASKS_LM.update(TASKS_STD)  # Add OLMES-v0.1 tasks
 
 
 @Step.register("construct-task")

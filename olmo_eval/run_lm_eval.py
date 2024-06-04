@@ -144,9 +144,9 @@ def main(args: argparse.Namespace):
     task_dicts = []
     construct_task_step = ConstructTaskDict(cache_results=False)
     for task in tasks:
-        task_dicts.append(
-            construct_task_step.run(task_name=task["name"], **task, **default_task_args)
-        )
+        all_task_args = default_task_args.copy()
+        all_task_args.update(task)
+        task_dicts.append(construct_task_step.run(task_name=task["name"], **all_task_args))
 
     # Initial loading of model done here for early failures and overrides if needed
     if hasattr(model_obj, "_make_model"):
@@ -184,12 +184,15 @@ def main(args: argparse.Namespace):
     beaker_env_variables = {k: v for k, v in os.environ.items() if "BEAKER" in k}
     predict_step = PredictAndCalculateMetricsStep(cache_results=False)
     for task_dict in task_dicts:
-        task_name = task["name"]
+        task_name = task_dict["name"]
         logger.info(f"Processing task: {task_name}")
         output = predict_step.run(
             model_obj, task_dict, **filter_dict_keys(task_dict, valid_model_args)
         )
         output = ProcessOutputs().run(output)
+        output["model"] = args_dict.get("model", "NA")
+        if args_dict.get("model_path"):
+            output["model_path"] = args_dict["model_path"]
         if beaker_env_variables:
             output["beaker_info"] = beaker_env_variables
         logger.info(
