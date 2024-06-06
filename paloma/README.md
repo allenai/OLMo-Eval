@@ -34,7 +34,7 @@ tango --settings tango.yml run configs/example_paloma_config.jsonnet --workspace
 ```
 
 ## Pretraining your model
-If you are pretraining from scratch, we recomend you adopt several experimental controls that will allow the greatest level of comparability for your results. In this section we detail how you can accomplish these experimental controls.
+If you are pretraining from scratch, we recommend you adopt several experimental controls that will allow the greatest level of comparability for your results. In this section we detail how you can accomplish these experimental controls.
 
 ### Decontaminating your pretraining data
 Our decontamination approach is implemented in the Dolma Tooling repo. This will allow you to remove any document from any your pretraining data that is contaminated with respect to the Paloma.
@@ -45,7 +45,7 @@ To do this please follow the instructions [here](https://github.com/allenai/dolm
 Our approach for fixing the training data order requires the use of [the same OLMo training code](https://github.com/allenai/OLMo/tree/1f2f02052d2a5ecba82ff45bbfc731651b1e7d29) that we employ to train our 1B parameter baselines. Contemporary LMs train on instances that are maximum sequence length concatenations of training documents, so we must fix the order of concatenated instances. We do this by fixing the tokenization, maximum sequence length, and random seed, as well as providing dataloading code where order is invariant to number of devices.
 
 ### Fixing the vocabulary
-We ask that submissions that do not investigate changes in vocabulary opt in to our standardized vocabulary to enable the greatest level of comprability. That vocabulary is available from the tokenizer hosted on HuggingFace hub as `allenai/gpt-neox-olmo-dolma-v1_5`. 
+If you do not investigate changes in vocabulary we recommend standardized vocabulary to enable the greatest level of comparability. The vocabulary we employ in our baseline models is available from the tokenizer hosted on HuggingFace hub as `allenai/gpt-neox-olmo-dolma-v1_5`. 
 
 ## Citation
 
