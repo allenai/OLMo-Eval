@@ -1,13 +1,45 @@
 # OLMES-v0.1 LLM Evaluation Standard
 
-This directory contains the data for the OLMES-v0.1 evaluation standard.
+## Introduction
+
+This directory contains the data for the OLMES-v0.1 evaluation standard. 
+
+The OLMES-v0.1 standard is a set principles, and associated tasks, for evaluating large language models (LLMs). 
+It includes:
+
+   * Standardized formatting of dataset instances
+   * Curated, few-shot in-context examples for each task
+   * Evaluate both multiple-choice (MCF) and cloze-form (CF) formulations and use maximum score
+   * Standardized probability normalization schemes for CF
+   * Prescribed implementations details:
+       * Sampling of 1000 instances for each task if more than 1500
+       * Use test split if labels are available, otherwise use validation split
+       * For MMLU use macro average over tasks
+       * Restrict to maximum 2048 tokens per input
+
+The full list of tasks in the v0.1 standard is as follows:
+
+   * ARC Challenge
+   * ARC Easy
+   * BoolQ
+   * CommonsenseQA
+   * HellaSwag
+   * MMLU
+   * OpenBookQA
+   * PIQA
+   * Social IQa
+   * WinoGrande
+
+with details for each task provided in the [`task_specs_std.jsonl`](task_specs_std.jsonl) file. Each task has an
+associated source file following the v0.3 format in 
+the [EleutherAI LM Evaluation Harness](https://github.com/EleutherAI/lm-evaluation-harness) to facilitate
+straightforward integration in other evaluation code bases.
 
 All the curated fewshot in-context examples (other than the existing standard MMLU ones) can be found
 in the [`std_fewshots.py`](std_fewshot.py) file.
 
-Each task is following the syntax as in v0.3 of 
-the [Eleuther LM Evaluation Harness](https://github.com/EleutherAI/lm-evaluation-harness), and
-can easily be adopted to the v0.4 syntax as well.
+
+## Sampling details
 
 For tasks which sample 1000 instances from the dataset, the sampling is done
 using a random seed of 1234 using the standard Python random library:
@@ -16,7 +48,8 @@ using a random seed of 1234 using the standard Python random library:
 Random(1234).sample(all_instances, 1000)
 ```
 
-The full list of tasks is listed in the [`task_specs_std.jsonl`](task_specs_std.jsonl) file.
+
+## Example usage
 
 To run the full evaluation using catwalk, for a model from the Hugging Face Hub (e.g., Pythia-1B), use the 
 following command:
@@ -53,4 +86,10 @@ socialiqa    : 46.4  (CF)
 winogrande   : 52.7  (CF)
 --------------------------
 average      : 49.0
+```
+
+## Cite as
+
+```
+Coming soon
 ```
