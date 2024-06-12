@@ -1,11 +1,12 @@
-# OLMES-v0.1 LLM Evaluation Standard
+# OLMES LLM Evaluation Standard (v0.1)
 
 ## Introduction
 
-This directory contains the data for the OLMES-v0.1 evaluation standard. 
+This directory contains the data for OLMES (v0.1).
 
-The OLMES-v0.1 standard is a set principles, and associated tasks, for evaluating large language models (LLMs). 
-It includes:
+OLMES (Open Language Model Evaluation Standard) is a set of principles and associated tasks, 
+for evaluating large language models (LLMs). 
+The current version includes:
 
    * Standardized formatting of dataset instances
    * Curated, few-shot in-context examples for each task
@@ -17,10 +18,11 @@ It includes:
        * For MMLU use macro average over tasks
        * Restrict to maximum 2048 tokens per input
 
-The full list of tasks in the v0.1 standard is as follows:
 
-   * ARC Challenge
-   * ARC Easy
+The full list of tasks in the v0.1 standard is as follows (more tasks, including generative CoT, to come):
+
+   * ARC-Challenge
+   * ARC-Easy
    * BoolQ
    * CommonsenseQA
    * HellaSwag
@@ -88,7 +90,7 @@ winogrande   : 52.7  (CF)
 average      : 49.0
 ```
 
-## Cite as
+## Citation
 
 ```
 Coming soon
