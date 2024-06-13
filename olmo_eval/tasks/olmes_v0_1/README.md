@@ -2,10 +2,9 @@
 
 ## Introduction
 
-This directory contains the data for OLMES (v0.1).
-
 OLMES (Open Language Model Evaluation Standard) is a set of principles and associated tasks, 
-for evaluating large language models (LLMs). 
+for evaluating large language models (LLMs). See our paper [OLMES: A Standard for Language Model Evaluations (Gu et al, 2024)](https://www.semanticscholar.org/paper/OLMES%3A-A-Standard-for-Language-Model-Evaluations-Gu-Tafjord/c689c37c5367abe4790bff402c1d54944ae73b2a) for more details.
+
 The current version includes:
 
    * Standardized formatting of dataset instances
@@ -90,8 +89,14 @@ winogrande   : 52.7  (CF)
 average      : 49.0
 ```
 
-## Citation
+## [Citation](https://arxiv.org/abs/2406.08446)
 
 ```
-Coming soon
+@misc{gu2024olmes,
+      title={OLMES: A Standard for Language Model Evaluations}, 
+      author={Yuling Gu and Oyvind Tafjord and Bailey Kuehl and Dany Haddad and Jesse Dodge and Hannaneh Hajishirzi},
+      year={2024},
+      eprint={2406.08446},
+      archivePrefix={arXiv}
+}
 ```
