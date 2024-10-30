@@ -1,0 +1,17 @@
+{
+	"folders": [
+		{
+			"path": ".."
+		},
+		{
+			"path": "../../wimbd"
+		},
+		{
+			"path": "../../catwalk"
+		},
+		{
+			"path": "../../ppl-suite-website"
+		}
+	],
+	"settings": {}
+}

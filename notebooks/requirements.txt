@@ -1,0 +1,4 @@
+smart-open==6.4.0
+pandas[plot, output-formatting]==2.1.2
+jupyter==1.0.0
+tqdm==4.66.1
