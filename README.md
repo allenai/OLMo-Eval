@@ -4,6 +4,12 @@
 OLMo-Eval is a repository for evaluating open language models.
 
 
+## Note of Deprecation
+
+**NOTE:** This repository has been superceded by the OLMES repository, available 
+at https://github.com/allenai/olmes (Open Language Model Evaluation System).
+
+
 ## Overview
 
 The `olmo_eval` framework is a way to run evaluation pipelines for language models on NLP tasks. 
