@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added script that uses the tango steps as functions, and bypasses the tango caching mechanism, for simpler execution
 - minimal example of how to run Paloma from HF hub as well as step to output results in jsonl.gz format
 - Added OLMES-v0.1 evaluation standard
+- Add deprecation note and link to OLMES repo
 
 ### Fixed
 
