@@ -12,6 +12,7 @@ a co-occurrence method fail to answer correctly) and an Easy Set of 5,197 questi
 
 Homepage: https://allenai.org/data/arc
 """
+
 from typing import Optional
 
 from catwalk.dependencies.lm_eval.base import MultipleChoiceTask

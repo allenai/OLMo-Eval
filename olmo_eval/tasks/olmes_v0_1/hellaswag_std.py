@@ -13,6 +13,7 @@ state-of-the-art models.
 
 Homepage: https://rowanzellers.com/hellaswag/
 """
+
 import re
 from typing import Optional
 
