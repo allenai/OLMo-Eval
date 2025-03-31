@@ -1,6 +1,7 @@
 """
 Social IQA
 """
+
 from typing import Optional
 
 from catwalk.dependencies.lm_eval.base import MultipleChoiceTask

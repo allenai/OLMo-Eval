@@ -12,6 +12,7 @@ important shortcomings.
 
 Homepage: https://github.com/hendrycks/test
 """
+
 from typing import Optional
 
 from catwalk.dependencies.lm_eval.base import MultipleChoiceTask

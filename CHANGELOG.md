@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - minimal example of how to run Paloma from HF hub as well as step to output results in jsonl.gz format
 - Added OLMES-v0.1 evaluation standard
 - Add deprecation note and link to OLMES repo
+- Add note on OLMES-v0.1 README to switch to OLMES repo
 
 ### Fixed
 

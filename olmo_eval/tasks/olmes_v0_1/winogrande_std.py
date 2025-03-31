@@ -14,6 +14,7 @@ See: https://arxiv.org/abs/1806.02847
 
 Homepage: https://leaderboard.allenai.org/winogrande/submissions/public
 """
+
 from typing import Optional
 
 import numpy as np

@@ -1,5 +1,19 @@
 # OLMES LLM Evaluation Standard (v0.1)
 
+## [Important Update] New repository! 
+Since the first release of OLMES, we have created a new repository for the standard and associated code, along with expansions to other tasks. The new repository includes code to faithfully reproduce the 
+evaluation results in research papers such as
+   * **OLMo:** Accelerating the Science of Language Models ([Groeneveld et al, 2024](https://www.semanticscholar.org/paper/ac45bbf9940512d9d686cf8cd3a95969bc313570))
+   * **OLMES:** A Standard for Language Model Evaluations ([Gu et al, 2024](https://www.semanticscholar.org/paper/c689c37c5367abe4790bff402c1d54944ae73b2a))
+   * **TÜLU 3:** Pushing Frontiers in Open Language Model Post-Training ([Lambert et al, 2024](https://www.semanticscholar.org/paper/T/%22ULU-3%3A-Pushing-Frontiers-in-Open-Language-Model-Lambert-Morrison/5ca8f14a7e47e887a60e7473f9666e1f7fc52de7))
+   * **OLMo 2:** 2 OLMo 2 Furious ([Team OLMo et al, 2024](https://arxiv.org/abs/2501.00656))
+
+Please try running the OLMES standard from our new repository:
+https://github.com/allenai/olmes !
+
+
+
+
 ## Introduction
 
 OLMES (Open Language Model Evaluation Standard) is a set of principles and associated tasks, 

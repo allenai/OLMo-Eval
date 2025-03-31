@@ -9,6 +9,7 @@ actually learning about the world?
 
 Homepage: https://yonatanbisk.com/piqa/
 """
+
 from typing import Optional
 
 from catwalk.dependencies.lm_eval.base import MultipleChoiceTask
