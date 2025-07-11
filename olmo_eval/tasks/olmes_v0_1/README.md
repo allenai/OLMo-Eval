@@ -112,11 +112,25 @@ average      : 49.0
 ## [Citation](https://arxiv.org/abs/2406.08446)
 
 ```
-@misc{gu2024olmes,
-      title={OLMES: A Standard for Language Model Evaluations}, 
-      author={Yuling Gu and Oyvind Tafjord and Bailey Kuehl and Dany Haddad and Jesse Dodge and Hannaneh Hajishirzi},
-      year={2024},
-      eprint={2406.08446},
-      archivePrefix={arXiv}
+@inproceedings{gu-etal-2025-olmes,
+    title = "{OLMES}: A Standard for Language Model Evaluations",
+    author = "Gu, Yuling  and
+      Tafjord, Oyvind  and
+      Kuehl, Bailey  and
+      Haddad, Dany  and
+      Dodge, Jesse  and
+      Hajishirzi, Hannaneh",
+    editor = "Chiruzzo, Luis  and
+      Ritter, Alan  and
+      Wang, Lu",
+    booktitle = "Findings of the Association for Computational Linguistics: NAACL 2025",
+    month = apr,
+    year = "2025",
+    address = "Albuquerque, New Mexico",
+    publisher = "Association for Computational Linguistics",
+    url = "https://aclanthology.org/2025.findings-naacl.282/",
+    doi = "10.18653/v1/2025.findings-naacl.282",
+    pages = "5005--5033",
+    ISBN = "979-8-89176-195-7",
 }
 ```
