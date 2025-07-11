@@ -11,6 +11,11 @@ evaluation results in research papers such as
 Please try running the OLMES standard from our new repository:
 https://github.com/allenai/olmes !
 
+**More on ongoing efforts:**
+
+OLMES has since been used in supporting evaluation for developing OLMoE (a leading 1B mixture-of-expert model), OLMo 2, TÜLU 3, and is actively used in other Ai2 projects, including research on consistent ranking of models, scaling laws, and building newer open-source models. 
+
+This effort toward an open language model evaluation standard doesn’t just end here. As a community, we can take this evaluation standard further to unify evaluation practices in the field. Since our paper, we have added more tasks to OLMES, covering tasks beyond popular multiple-choice question answering, such as generative and reasoning tasks. We also make efforts toward delineating unseen test suites separate from the development suites, studying various formulations of the generative tasks, standardizing prompt formatting and answer extraction for generative tasks, and experimenting with evaluation setups for instruction-tuned models and the more recent reasoning models (e.g., R1).  The implementations are all openly available in our new repository.
 
 
 
@@ -103,14 +108,29 @@ winogrande   : 52.7  (CF)
 average      : 49.0
 ```
 
-## [Citation](https://arxiv.org/abs/2406.08446)
+
+## [Citation](https://aclanthology.org/2025.findings-naacl.282/)
 
 ```
-@misc{gu2024olmes,
-      title={OLMES: A Standard for Language Model Evaluations}, 
-      author={Yuling Gu and Oyvind Tafjord and Bailey Kuehl and Dany Haddad and Jesse Dodge and Hannaneh Hajishirzi},
-      year={2024},
-      eprint={2406.08446},
-      archivePrefix={arXiv}
+@inproceedings{gu-etal-2025-olmes,
+    title = "{OLMES}: A Standard for Language Model Evaluations",
+    author = "Gu, Yuling  and
+      Tafjord, Oyvind  and
+      Kuehl, Bailey  and
+      Haddad, Dany  and
+      Dodge, Jesse  and
+      Hajishirzi, Hannaneh",
+    editor = "Chiruzzo, Luis  and
+      Ritter, Alan  and
+      Wang, Lu",
+    booktitle = "Findings of the Association for Computational Linguistics: NAACL 2025",
+    month = apr,
+    year = "2025",
+    address = "Albuquerque, New Mexico",
+    publisher = "Association for Computational Linguistics",
+    url = "https://aclanthology.org/2025.findings-naacl.282/",
+    doi = "10.18653/v1/2025.findings-naacl.282",
+    pages = "5005--5033",
+    ISBN = "979-8-89176-195-7",
 }
 ```

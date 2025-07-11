@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added OLMES-v0.1 evaluation standard
 - Add deprecation note and link to OLMES repo
 - Add note on OLMES-v0.1 README to switch to OLMES repo
+- Add note on OLMES-v0.1 README regarding recent OLMES repo developments and update citation
 
 ### Fixed
 
