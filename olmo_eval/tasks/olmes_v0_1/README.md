@@ -109,7 +109,7 @@ average      : 49.0
 ```
 
 
-## [Citation](https://arxiv.org/abs/2406.08446)
+## [Citation](https://aclanthology.org/2025.findings-naacl.282/)
 
 ```
 @inproceedings{gu-etal-2025-olmes,
