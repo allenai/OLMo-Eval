@@ -11,6 +11,11 @@ evaluation results in research papers such as
 Please try running the OLMES standard from our new repository:
 https://github.com/allenai/olmes !
 
+**More on ongoing efforts:**
+
+OLMES has since been used in supporting evaluation for developing OLMoE (a leading 1B mixture-of-expert model), OLMo 2, TÜLU 3, and is actively used in other Ai2 projects, including research on consistent ranking of models, scaling laws, and building newer open-source models. 
+
+This effort toward an open language model evaluation standard doesn’t just end here. As a community, we can take this evaluation standard further to unify evaluation practices in the field. Since our paper, we have added more tasks to OLMES, covering tasks beyond popular multiple-choice question answering, such as generative and reasoning tasks. We also make efforts toward delineating unseen test suites separate from the development suites, studying various formulations of the generative tasks, standardizing prompt formatting and answer extraction for generative tasks, and experimenting with evaluation setups for instruction-tuned models and the more recent reasoning models (e.g., R1).  The implementations are all openly available in our new repository.
 
 
 
@@ -102,6 +107,7 @@ winogrande   : 52.7  (CF)
 --------------------------
 average      : 49.0
 ```
+
 
 ## [Citation](https://arxiv.org/abs/2406.08446)
 
