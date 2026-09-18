@@ -446,6 +446,130 @@ class TestStripThinking:
 
 
 @pytest.mark.anyio
+class TestStripUnclosedThinking:
+    """Tests for TaskConfig.strip_unclosed_thinking (applied via strip_thinking_traces)."""
+
+    def _make_response(self, texts: list[str]) -> Response:
+        return Response(
+            instance=Instance(question="What is 2+2?", gold_answer="4"),
+            request=LMRequest(request_type=RequestType.COMPLETION, prompt="What is 2+2?"),
+            outputs=[LMOutput(text=text) for text in texts],
+        )
+
+    def _task(self, **flags: bool) -> ConcreteTask:
+        return ConcreteTask(TaskConfig(name="test", data_source="test/dataset", **flags))
+
+    def test_unclosed_trace_is_emptied_when_enabled(self):
+        task = self._task(strip_unclosed_thinking=True)
+        response = self._make_response(["<think>still thinking, maybe (B) or 4"])
+
+        task.strip_thinking_traces([response])
+
+        output = response.outputs[0]
+        assert output.text == ""
+        assert output.metadata["original_text"] == "<think>still thinking, maybe (B) or 4"
+        assert output.metadata["unclosed_thinking"] is True
+
+    def test_unclosed_trace_is_emptied_with_strip_thinking_too(self):
+        task = self._task(strip_thinking=True, strip_unclosed_thinking=True)
+        response = self._make_response(["<think>still thinking about 4"])
+
+        task.strip_thinking_traces([response])
+
+        output = response.outputs[0]
+        assert output.text == ""
+        assert output.metadata["original_text"] == "<think>still thinking about 4"
+        assert output.metadata["unclosed_thinking"] is True
+
+    async def test_unclosed_trace_scores_zero_when_enabled(self):
+        metric = AccuracyMetric(scorer=ExactMatchScorer)
+        config = TaskConfig(
+            name="test",
+            data_source="test/dataset",
+            metrics=(metric,),
+            strip_thinking=True,
+            strip_unclosed_thinking=True,
+        )
+        task = ConcreteTask(config)
+        response = self._make_response(["<think>the answer is 4"])
+
+        task.strip_thinking_traces([response])
+        scored = await task.score_responses([response])
+
+        assert scored[0].outputs[0].text == ""
+        assert scored[0].scores["exact_match"] == 0.0
+
+    def test_unclosed_trace_is_kept_when_disabled(self):
+        task = self._task(strip_thinking=True)
+        response = self._make_response(["<think>still thinking about 4"])
+
+        task.strip_thinking_traces([response])
+
+        output = response.outputs[0]
+        assert output.text == "<think>still thinking about 4"
+        assert "original_text" not in output.metadata
+        assert "unclosed_thinking" not in output.metadata
+
+    def test_closed_trace_is_stripped_with_both_flags(self):
+        task = self._task(strip_thinking=True, strip_unclosed_thinking=True)
+        response = self._make_response(["<think>Maybe 5? No, 4.</think>\n\n4"])
+
+        task.strip_thinking_traces([response])
+
+        output = response.outputs[0]
+        assert output.text == "\n\n4"
+        assert output.metadata["original_text"] == "<think>Maybe 5? No, 4.</think>\n\n4"
+        assert "unclosed_thinking" not in output.metadata
+
+    def test_closed_trace_is_kept_without_strip_thinking(self):
+        """strip_unclosed_thinking alone never touches a closed trace."""
+        task = self._task(strip_unclosed_thinking=True)
+        response = self._make_response(["<think>reasoning</think>4"])
+
+        task.strip_thinking_traces([response])
+
+        output = response.outputs[0]
+        assert output.text == "<think>reasoning</think>4"
+        assert "original_text" not in output.metadata
+        assert "unclosed_thinking" not in output.metadata
+
+    def test_output_without_trace_is_unchanged(self):
+        task = self._task(strip_thinking=True, strip_unclosed_thinking=True)
+        response = self._make_response(["4"])
+
+        task.strip_thinking_traces([response])
+
+        assert response.outputs[0].text == "4"
+        assert "original_text" not in response.outputs[0].metadata
+        assert "unclosed_thinking" not in response.outputs[0].metadata
+
+    def test_second_pass_is_a_no_op(self):
+        task = self._task(strip_thinking=True, strip_unclosed_thinking=True)
+        response = self._make_response(["<think>a</think> draft <think>b"])
+
+        task.strip_thinking_traces([response])
+        first_pass = (response.outputs[0].text, dict(response.outputs[0].metadata))
+        task.strip_thinking_traces([response])
+
+        assert first_pass == (
+            "",
+            {"original_text": "<think>a</think> draft <think>b", "unclosed_thinking": True},
+        )
+        assert (response.outputs[0].text, dict(response.outputs[0].metadata)) == first_pass
+
+    def test_to_dict_includes_strip_unclosed_thinking(self):
+        config = TaskConfig(name="test", data_source="test/dataset", strip_unclosed_thinking=True)
+        assert config.to_dict()["strip_unclosed_thinking"] is True
+
+    def test_to_dict_omits_strip_unclosed_thinking_when_off(self):
+        """Task hashes of runs that never used the option must not change."""
+        config = TaskConfig(name="test", data_source="test/dataset")
+        assert "strip_unclosed_thinking" not in config.to_dict()
+        config = TaskConfig(name="test", data_source="test/dataset", strip_thinking=True)
+        assert "strip_unclosed_thinking" not in config.to_dict()
+
+
+@pytest.mark.anyio
 class TestProcessScoring:
     """Tests for process-backed scorer execution."""
 

@@ -168,6 +168,11 @@ class TaskConfig:
     #: Drop ``<think>...</think>`` traces before scoring; see :meth:`Task.strip_thinking_traces`.
     strip_thinking: bool = False
 
+    #: Treat an unterminated ``<think>`` trace as no answer: the output text is
+    #: emptied before scoring. Off by default so scoring matches the reference
+    #: harness, which scores the raw trace.
+    strip_unclosed_thinking: bool = False
+
     #: Runtime dependencies to install for this task (package specs like "pkg==1.0" or git URLs)
     dependencies: list[str] | None = None
 
@@ -329,6 +334,8 @@ class TaskConfig:
             serialized["system_prompt_style"] = self.system_prompt_style
         if self.strip_thinking:
             serialized["strip_thinking"] = True
+        if self.strip_unclosed_thinking:
+            serialized["strip_unclosed_thinking"] = True
         if any(
             value is not None
             for value in (
@@ -661,29 +668,48 @@ class Task(ABC):
     def strip_thinking_traces(self, responses: Sequence[Response]) -> None:
         """Drop ``<think>...</think>`` traces so scorers see only the final answer.
 
-        No-op unless ``config.strip_thinking`` is set. Runners call this before
-        ``score_responses`` (which tasks may override). Idempotent: a stripped
-        output has no ``</think>`` left, so a second pass leaves it alone.
+        No-op unless ``config.strip_thinking`` or ``config.strip_unclosed_thinking``
+        is set. Runners call this before ``score_responses`` (which tasks may
+        override). Idempotent: a stripped output has no ``<think>`` left, so a
+        second pass leaves it alone.
 
-        Mirrors the reference harness's ``r1_style`` processing: everything
-        through the *last* ``</think>`` goes, the text after it is kept
-        byte-for-byte, and an unterminated trace is left as-is. Whitespace
-        matters — the IFEval loose variants drop the response's first line, and
-        paragraph checks index on blank-line splits — so nothing is trimmed.
+        With ``strip_thinking``, this mirrors the reference harness's ``r1_style``
+        processing: everything through the *last* ``</think>`` goes, the text
+        after it is kept byte-for-byte, and an unterminated trace is left as-is.
+        Whitespace matters (the IFEval loose variants drop the response's first
+        line, and paragraph checks index on blank-line splits), so nothing is
+        trimmed.
+
+        With ``strip_unclosed_thinking``, an unterminated trace (``<think>`` with
+        no ``</think>``) is treated as no answer: the text becomes empty and
+        ``metadata["unclosed_thinking"]`` is set. This stops answer extractors
+        from crediting stray matches inside a trace that ran to the token cap.
+
         Only ``outputs[*].text`` is touched; trajectories and request traces
-        keep the trace.
+        keep the trace. The raw text is kept in ``metadata["original_text"]``.
         """
-        if not self.config.strip_thinking:
+        strip_closed = self.config.strip_thinking
+        strip_unclosed = self.config.strip_unclosed_thinking
+        if not (strip_closed or strip_unclosed):
             return
         from olmo_eval.evals.extract import extract_think_answer
 
         for response in responses:
             for output in response.outputs:
                 text = output.text or ""
-                if "</think>" not in text:
+                if "<think>" not in text and "</think>" not in text:
                     continue
-                output.metadata.setdefault("original_text", text)
-                output.text = extract_think_answer(text) or ""
+                closed = "</think>" in text
+                if closed and not strip_closed:
+                    continue
+                stripped = (extract_think_answer(text) or "") if closed else text
+                if strip_unclosed and "<think>" in stripped:
+                    output.metadata.setdefault("original_text", text)
+                    output.metadata["unclosed_thinking"] = True
+                    output.text = ""
+                elif closed:
+                    output.metadata.setdefault("original_text", text)
+                    output.text = stripped
 
     def _extract_answers(self, responses: Sequence[Response]) -> None:
         """Extract answers from outputs. Override for complex multi-output logic."""

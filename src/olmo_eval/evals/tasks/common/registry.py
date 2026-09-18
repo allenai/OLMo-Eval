@@ -103,6 +103,16 @@ def register_variant(task_name: str, variant: str, **overrides: Any) -> None:
     _variants.setdefault(task_name, {})[variant] = overrides
 
 
+def _parse_bool(value_str: str, key: str) -> bool:
+    """Coerce an override value to a bool (true/false/1/0, case-insensitive)."""
+    normalized = value_str.strip().lower()
+    if normalized in {"true", "1"}:
+        return True
+    if normalized in {"false", "0"}:
+        return False
+    raise ValueError(f"Invalid boolean for {key}: {value_str!r} (expected true/false or 1/0)")
+
+
 def parse_overrides(override_str: str) -> dict[str, Any]:
     """Parse 'key=value,key=value' into dict with type coercion.
 
@@ -172,6 +182,8 @@ def parse_overrides(override_str: str) -> dict[str, Any]:
                 value = int(value_str)
             elif key in {"temperature", "top_p"}:
                 value = float(value_str)
+            elif key in {"strip_thinking", "strip_unclosed_thinking"}:
+                value = _parse_bool(value_str, key)
             elif key == "dependencies":
                 # Dependencies should be parsed as JSON list
                 import json as json_module
