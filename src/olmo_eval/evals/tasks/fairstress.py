@@ -815,16 +815,11 @@ class FairStress(Task):
     # actually practical through this harness as it stands today.
     #
     # Both PardisSzah/fairstress and PardisSzah/fairstress-core are AI2
-    # internal artifacts and are hosted PRIVATE pending an official AI2
-    # release (see each dataset's card) — an authenticated token is required
-    # to read them. Set HF_TOKEN (or HUGGING_FACE_HUB_TOKEN) to a token with
-    # read access before running this task; `required_secrets` below follows
-    # this repo's own convention for tasks needing a runtime secret (see
-    # TaskConfig.required_secrets — the beaker launcher mounts it as the
-    # user-scoped secret `{user}_HF_TOKEN`).
+    # internal artifacts hosted temporarily under a personal account (see
+    # each dataset's card) pending an official AI2 release, but are PUBLIC —
+    # no token or `required_secrets` entry is needed to read them.
     data_source = DataSource(path="PardisSzah/fairstress-core", split="train")
     split = Split.TRAIN
-    required_secrets = ("HF_TOKEN",)
     formatter = MCQAChatFormatter()
     answer_extractor = extract_fairstress_answer
     # Each metric below shares the FairStressScorer class, and
