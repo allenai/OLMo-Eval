@@ -430,3 +430,35 @@ class TestFragGapAndTieShiftBaselineMatching:
         metric = FairStressTieShiftMetric(name="any__any")
         # Only the to-minority direction has data -> insufficient for a gap.
         assert metric.compute([baseline, pressured]) == -1.0
+
+
+class TestMetricNamesDontCollide:
+    """Regression test for a real bug: Task.compute_metrics() nests results
+    as result[metric.name][scorer_name]. All 5 FairStress metric types share
+    the same scorer (FairStressScorer), so if two of them ever share the same
+    `name` for a given subset, one silently overwrites the other in that
+    dict and the harness reports one value where five were expected — this
+    happened for every subset until each metric's default name gained a
+    distinct type suffix (accgap/tielean/fraggap/tieshift/refusal). Unit
+    tests that call `.compute()` directly (as every other test in this file
+    does) can't catch this, since the collision only happens inside the
+    harness's own result-dict construction — so this test builds that same
+    (name, scorer_name) key space directly instead.
+    """
+
+    def test_default_names_are_unique_per_scorer_across_all_five_metrics(self):
+        from olmo_eval.evals.tasks.common import get_task
+        from olmo_eval.evals.tasks.fairstress import _fairstress_metrics
+
+        task = get_task("fairstress:answer")
+        keys = [(m.name, m.scorer().name) for m in task.config.metrics]
+        assert len(keys) == len(set(keys)), (
+            "duplicate (metric.name, scorer_name) key found — two metrics "
+            "would overwrite each other in Task.compute_metrics()"
+        )
+        # Every default/registered-variant metrics tuple should hold this
+        # invariant, not just the "answer" variant checked above.
+        default_keys = [(m.name, m.scorer().name) for m in get_task("fairstress").config.metrics]
+        assert len(default_keys) == len(set(default_keys))
+        variant_keys = [(m.name, m.scorer().name) for m in _fairstress_metrics()]
+        assert len(variant_keys) == len(set(variant_keys))
