@@ -532,9 +532,20 @@ _FAIRSTRESS_REASONING_FORMAT = (
 class FairStress(Task):
     """FairStress: bias in the answer vs. bias in the defense of the answer."""
 
-    # Full FairStress corpus (13,032,104 items), published and public — no
-    # token needed to read it. See https://huggingface.co/datasets/PardisSzah/fairstress
-    data_source = DataSource(path="PardisSzah/fairstress", split="train")
+    # FairStress-Core (49,920 items) is the default data source. The full
+    # 13,425,456-item corpus (PardisSzah/fairstress, public) exists and is
+    # correctly wired into this same task via the "full" variant below, but
+    # is NOT the default: olmo-eval's async runner materializes every
+    # instance (running process_doc() on the whole corpus) *before* applying
+    # `limit` (runners/asynq/preparation.py, `instances = list(task.instances)`
+    # ahead of the limit slice) — confirmed directly by running fairstress:answer
+    # with limit=20 against the full corpus, which took 10+ minutes and 18GB+
+    # RAM just to build the instance list before any inference started. Core
+    # is a stratified sample of the full corpus (not the paper's own
+    # IRT-selected FairStressCore — see PardisSzah/fairstress-core's dataset
+    # card for exactly what it is and isn't), sized so routine evaluation is
+    # actually practical through this harness as it stands today.
+    data_source = DataSource(path="PardisSzah/fairstress-core", split="train")
     split = Split.TRAIN
     formatter = MCQAChatFormatter()
     answer_extractor = extract_fairstress_answer
@@ -711,9 +722,15 @@ register_variant(
     strip_thinking=True,
 )
 
-# NOTE: no "core"/"full" data-source variants for now — only the full
-# 13,032,104-item corpus (PardisSzah/fairstress, the class-level default
-# above) is published. A lighter IRT-selected core subset, sized for
-# routine per-model evaluation the way the full corpus isn't, may follow as
-# a "fairstress:core" variant pointing at a separate dataset repo once one
-# is published.
+# "full" points at the complete 13,425,456-item corpus. Correctly wired
+# (schema, corrections, and metrics all validated against it directly) —
+# but be aware the async runner's `instances = list(task.instances)` (see
+# the comment on the class-level data_source above) means invoking this
+# variant, at any `limit`, pays the cost of running process_doc() on all
+# 13.4M rows before any inference starts. Use "fairstress"/"fairstress:answer"
+# (FairStress-Core) for routine evaluation instead.
+register_variant(
+    "fairstress",
+    "full",
+    data_source=DataSource(path="PardisSzah/fairstress", split="train"),
+)

@@ -35,7 +35,7 @@ class TestFairStressRegistration:
         task = get_task("fairstress")
         assert task.config.name == "fairstress"
 
-    @pytest.mark.parametrize("variant", ["answer", "reasoning"])
+    @pytest.mark.parametrize("variant", ["answer", "reasoning", "full"])
     def test_variants_registered(self, variant):
         task = get_task(f"fairstress:{variant}")
         assert task is not None
@@ -48,11 +48,20 @@ class TestFairStressRegistration:
         task = get_task("fairstress:answer")
         assert task.config.strip_thinking is False
 
-    def test_default_data_source_is_the_published_full_corpus(self):
+    def test_default_data_source_is_the_practically_sized_core_subset(self):
+        # Not the full 13.4M-item corpus — see the class-level data_source
+        # comment in fairstress.py for why (the async runner materializes
+        # every instance before applying `limit`, confirmed by an actual
+        # 10+ minute / 18GB+ run against the full corpus at limit=20).
         task = get_task("fairstress")
         assert isinstance(task.config.data_source, DataSource)
-        assert task.config.data_source.path == "PardisSzah/fairstress"
+        assert task.config.data_source.path == "PardisSzah/fairstress-core"
         assert task.config.get_data_source().split == "train"
+
+    def test_full_variant_points_at_the_complete_corpus(self):
+        task = get_task("fairstress:full")
+        assert isinstance(task.config.data_source, DataSource)
+        assert task.config.data_source.path == "PardisSzah/fairstress"
 
 
 def _sample_doc(**overrides):
