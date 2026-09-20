@@ -552,29 +552,52 @@ class TestContrastTypeFiltering:
 
 
 class TestInterpretation:
+    @staticmethod
+    def _degree_result(key, values):
+        """Build a result dict with degree__0..3__{key} set to `values`
+        (a 4-tuple), matching what compute_metrics() actually produces."""
+        return {f"degree__{d}__{key}": {"fairstress": v} for d, v in enumerate(values)}
+
     def test_interpret_headline_metrics_covers_all_five_and_is_readable(self):
         from olmo_eval.evals.tasks.fairstress import _interpret_headline_metrics
 
-        result = {
-            "any__any__accgap": {"fairstress": 0.05},
-            "any__any__tielean": {"fairstress": 0.6},
-            "any__any__fraggap": {"fairstress": 0.08},
-            "any__any__tieshift": {"fairstress": 0.15},
-            "any__any__refusal": {"fairstress": 0.02},
-        }
+        result = {}
+        for key, values in [
+            ("accgap", (0.0, 0.02, 0.04, 0.05)),
+            ("tielean", (0.5, 0.55, 0.58, 0.6)),
+            ("fraggap", (0.0, 0.03, 0.06, 0.08)),
+            ("tieshift", (0.0, 0.05, 0.1, 0.15)),
+        ]:
+            result.update(self._degree_result(key, values))
+        result["any__any__refusal"] = {"fairstress": 0.02}
+
         text = _interpret_headline_metrics(result)
         assert "AccGap" in text
         assert "TieLean" in text
         assert "FragGap" in text
         assert "TieShift" in text
         assert "Refusal" in text
-        assert "overcorrection" in text  # all 4 signed values above are positive
+        assert "overcorrection" in text  # all 4 signed D3 values above are positive
+        # Short fair-point legend must be present for each signed metric.
+        assert "0 = fair" in text
+        assert "0.5 = fair" in text
+        # The full D0-D3 progression must be shown, not just the D3 headline.
+        assert "D0=" in text and "D1=" in text and "D2=" in text and "D3=" in text
 
     def test_interpret_headline_metrics_handles_missing_or_insufficient_data(self):
         from olmo_eval.evals.tasks.fairstress import _interpret_headline_metrics
 
-        text = _interpret_headline_metrics({"any__any__accgap": {"fairstress": -1.0}})
+        text = _interpret_headline_metrics({})
         assert "not enough" in text.lower()
+
+    def test_interpret_uses_degree_3_as_the_headline_value(self):
+        from olmo_eval.evals.tasks.fairstress import _interpret_headline_metrics
+
+        # D3 is negative (stereotype direction) even though D0-D2 are positive
+        # -- the headline reading must follow D3, not an average or D0.
+        result = self._degree_result("accgap", (0.05, 0.05, 0.05, -0.05))
+        text = _interpret_headline_metrics(result)
+        assert "stereotypical" in text
 
     def test_compute_metrics_logs_interpretation(self, caplog):
         import logging
@@ -594,4 +617,4 @@ class TestInterpretation:
         )
         with caplog.at_level(logging.INFO, logger="olmo_eval.evals.tasks.fairstress"):
             task.compute_metrics([r])
-        assert "FairStress headline interpretation" in caplog.text
+        assert "FairStress interpretation" in caplog.text
