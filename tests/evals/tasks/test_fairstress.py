@@ -35,7 +35,7 @@ class TestFairStressRegistration:
         task = get_task("fairstress")
         assert task.config.name == "fairstress"
 
-    @pytest.mark.parametrize("variant", ["answer", "reasoning", "core", "full"])
+    @pytest.mark.parametrize("variant", ["answer", "reasoning"])
     def test_variants_registered(self, variant):
         task = get_task(f"fairstress:{variant}")
         assert task is not None
@@ -48,15 +48,22 @@ class TestFairStressRegistration:
         task = get_task("fairstress:answer")
         assert task.config.strip_thinking is False
 
-    def test_full_variant_uses_full_corpus_source(self):
-        task = get_task("fairstress:full")
+    def test_default_data_source_is_the_published_full_corpus(self):
+        task = get_task("fairstress")
         assert isinstance(task.config.data_source, DataSource)
-        assert task.config.data_source.path == "allenai/fairstress-full"
+        assert task.config.data_source.path == "PardisSzah/fairstress"
+        assert task.config.get_data_source().split == "train"
 
 
 def _sample_doc(**overrides):
+    # Matches the real released schema exactly (verified against a live row
+    # of firm_top300_full.jsonl): nested `injection`, `expected_correct` as
+    # the full candidate label (not a bare letter), `prompt` (not `question`),
+    # no separate `choices` field.
     doc = {
-        "item_id": "hiring_employment__a_pharmacist__blackM_whiteM__lvl3__F1_authority_01a",
+        "item_id": (
+            "hiring_employment__a_pharmacist__GT__AP1__blackM_whiteM__J1__lvl3__F1_authority_01a"
+        ),
         "domain": "hiring_employment",
         "scenario_id": "hiring_employment__a_pharmacist",
         "condition": "GT",
@@ -67,16 +74,18 @@ def _sample_doc(**overrides):
         "majority_group": "white_male",
         "minority_slot": "A",
         "favored_group_truth": "white_male",
-        "expected_correct": "B",
-        "question": (
+        "expected_correct": "Candidate B",
+        "prompt": (
             "Candidate A: ...\nCandidate B: ...\nWhich candidate should be selected? "
             'Answer with only "Candidate A" or "Candidate B".'
         ),
-        "choices": ("Candidate A", "Candidate B"),
         "has_injection": True,
-        "injection_id": "F1_authority_01a",
-        "injection_family": "F1_authority",
-        "injection_class": "directional",
+        "injection": {
+            "id": "F1_authority_01a",
+            "family": "F1_authority",
+            "class": "directional",
+            "direction": "pro_B",
+        },
         "injection_resolved": "pro_majority",
         "injection_targets": "weaker",
     }
@@ -96,10 +105,54 @@ class TestFairStressProcessDoc:
         assert instance.metadata["contrast_category"] == "race"
         assert instance.metadata["excluded"] is False
 
-    def test_rejects_doc_missing_question_or_choices(self):
+    def test_unnests_injection_fields(self):
         task = get_task("fairstress")
-        assert task.process_doc(_sample_doc(question=None), index=0) is None
-        assert task.process_doc(_sample_doc(choices=None), index=0) is None
+        instance = task.process_doc(_sample_doc(), index=0)
+
+        assert instance.metadata["injection_id"] == "F1_authority_01a"
+        assert instance.metadata["injection_family"] == "F1_authority"
+        assert instance.metadata["injection_class"] == "directional"
+
+    def test_null_injection_yields_none_fields(self):
+        task = get_task("fairstress")
+        instance = task.process_doc(
+            _sample_doc(has_injection=False, injection=None, injection_resolved="neutral"),
+            index=0,
+        )
+
+        assert instance.metadata["injection_id"] is None
+        assert instance.metadata["injection_family"] is None
+        assert instance.metadata["injection_class"] is None
+
+    def test_extracts_choices_from_prompt_closing_sentence(self):
+        task = get_task("fairstress")
+        instance = task.process_doc(
+            _sample_doc(
+                prompt=(
+                    'Employee A: ...\nEmployee B: ...\nAnswer with only "Employee A" '
+                    'or "Employee B".'
+                )
+            ),
+            index=0,
+        )
+        assert instance.choices == ("Employee A", "Employee B")
+
+    def test_amb_item_has_no_gold_answer(self):
+        task = get_task("fairstress")
+        instance = task.process_doc(
+            _sample_doc(condition="AMB", favored_group_truth="none", expected_correct=None),
+            index=0,
+        )
+        assert instance.gold_answer is None
+
+    def test_rejects_doc_missing_prompt_or_item_id(self):
+        task = get_task("fairstress")
+        assert task.process_doc(_sample_doc(prompt=None), index=0) is None
+        assert task.process_doc(_sample_doc(item_id=None), index=0) is None
+
+    def test_rejects_doc_whose_prompt_has_no_parseable_choice_labels(self):
+        task = get_task("fairstress")
+        assert task.process_doc(_sample_doc(prompt="No answer instruction here."), index=0) is None
 
 
 class TestPolarityCorrection:

@@ -101,7 +101,7 @@ from typing import Any
 from olmo_eval.common.formatters import MCQAChatFormatter
 from olmo_eval.common.metrics import Metric
 from olmo_eval.common.scorers import Scorer
-from olmo_eval.common.types import Instance, LMOutput, LMRequest, Response, SamplingParams
+from olmo_eval.common.types import Instance, LMOutput, LMRequest, Response, SamplingParams, Split
 from olmo_eval.data import DataSource
 from olmo_eval.evals.tasks.common import Task, register, register_variant
 
@@ -161,14 +161,25 @@ def corrected_expected_correct(metadata: dict[str, Any]) -> str | None:
 # =============================================================================
 
 # FairStress prompts always end: 'Answer with only "Applicant A" or "Applicant B"'
-# (the noun varies by scenario: Applicant/Candidate/Individual/Patient/Resident/...).
+# (the noun varies by scenario: Applicant/Candidate/Employee/Patient/Resident/...).
 # This matches the paper's own answer-parsing convention: the letter is what's
-# scored, the noun is decoration. Falls back to a bare letter if the model
-# drops the noun despite instructions.
-_ANSWER_PATTERN = re.compile(
-    r"\b(?:[A-Za-z]+\s+)?([AB])\b(?!\w)(?!.*\b(?:[A-Za-z]+\s+)?[AB]\b(?!\w))", re.DOTALL
-)
+# scored, the noun is decoration.
 _BARE_LETTER_FALLBACK = re.compile(r"\b([AB])\b")
+
+# Parses the two candidate labels straight out of a rendered prompt's own
+# closing instruction, e.g. 'Answer with only "Employee A" or "Employee B".'
+# — robust to the noun varying by scenario without needing a separate
+# `choices` field in the raw data.
+_CHOICE_LABEL_PATTERN = re.compile(r'"(\w+ A)"\s+or\s+"(\w+ B)"')
+
+
+def _extract_slot_letter(label: str | None) -> str | None:
+    """ "Applicant B" -> "B"; None -> None. Raw `expected_correct` carries the
+    full candidate label, not a bare letter."""
+    if not label:
+        return None
+    stripped = label.strip()
+    return stripped[-1].upper() if stripped and stripped[-1].upper() in ("A", "B") else None
 
 
 def extract_fairstress_answer(text: str) -> str | None:
@@ -521,12 +532,10 @@ _FAIRSTRESS_REASONING_FORMAT = (
 class FairStress(Task):
     """FairStress: bias in the answer vs. bias in the defense of the answer."""
 
-    # NOTE: replace with the actual published dataset path once the release
-    # decision is made (see the paper's authors re: public vs. gated release
-    # timing to avoid eval-set contamination before publication). A gated/
-    # private HF dataset is loaded the same way once ``HF_TOKEN`` is set in
-    # the environment — no code change needed, only this path.
-    data_source = DataSource(path="allenai/fairstress-core", split="test")
+    # Full FairStress corpus (13,032,104 items), published and public — no
+    # token needed to read it. See https://huggingface.co/datasets/PardisSzah/fairstress
+    data_source = DataSource(path="PardisSzah/fairstress", split="train")
+    split = Split.TRAIN
     formatter = MCQAChatFormatter()
     answer_extractor = extract_fairstress_answer
     metrics = (
@@ -541,29 +550,39 @@ class FairStress(Task):
     fewshot_sample: bool = False
 
     def process_doc(self, doc: dict[str, Any], index: int = 0) -> Instance | None:
-        """Convert a FairStress/FairStressCore dataset row to an Instance.
+        """Convert a FairStress dataset row to an Instance.
 
-        Expected raw-document schema (see ``fairCore.jsonl`` /
-        ``top300_scenarios.json``-derived release format): ``item_id``,
-        ``question`` (fully rendered prompt text, including the pressure
-        sentence if any), ``domain``, ``scenario_id``, ``condition``
-        ("GT"/"AMB"), ``signaling_level`` (0-3), ``contrast_id``,
-        ``contrast_category``, ``minority_group``, ``majority_group``,
-        ``minority_slot`` ("A"/"B"), ``favored_group_truth`` (GT only),
-        ``expected_correct`` ("A"/"B", GT only, pre-correction), ``choices``
-        (2-tuple of candidate labels as they appear in the prompt, e.g.
-        ("Applicant A", "Applicant B")), ``has_injection``, ``injection_id``,
-        ``injection_family``, ``injection_class``, ``injection_resolved``,
-        ``injection_targets``.
+        Raw-document schema, as released (one row per rendered item):
+        ``item_id``, ``domain``, ``scenario_id``, ``condition`` ("GT"/"AMB"),
+        ``signaling_level`` (0-3), ``contrast_id``, ``contrast_category``,
+        ``minority_group``, ``majority_group``, ``minority_slot`` ("A"/"B"),
+        ``favored_group_truth`` (GT only; the string ``"none"`` on AMB rows),
+        ``expected_correct`` (GT only: the full candidate label as it appears
+        in the prompt, e.g. ``"Applicant B"`` — the letter is extracted here),
+        ``has_injection``, ``injection`` (nested dict: ``id``, ``family``,
+        ``class``, ``direction`` — ``None`` when ``has_injection`` is false),
+        ``injection_resolved``, ``injection_targets``, ``prompt`` (the fully
+        rendered question text, pressure sentence included when present).
+        There is no separate ``choices`` field; the two candidate labels
+        (e.g. ``"Applicant A"``/``"Applicant B"``) are parsed from the
+        prompt's own closing instruction sentence, since the candidate noun
+        varies by scenario (Applicant/Candidate/Employee/Patient/...).
         """
-        question = doc.get("question")
-        choices = doc.get("choices")
-        if not question or not choices or len(choices) != 2:
+        prompt = doc.get("prompt")
+        item_id = doc.get("item_id")
+        if not prompt or not item_id:
             return None
 
+        choice_match = _CHOICE_LABEL_PATTERN.search(prompt)
+        if choice_match is None:
+            return None
+        choices = (choice_match.group(1), choice_match.group(2))
+
+        injection = doc.get("injection") or {}
+
         metadata = {
-            "id": doc["item_id"],
-            "item_id": doc["item_id"],
+            "id": item_id,
+            "item_id": item_id,
             "index": index,
             "domain": doc.get("domain"),
             "scenario_id": doc.get("scenario_id"),
@@ -575,11 +594,11 @@ class FairStress(Task):
             "majority_group": doc.get("majority_group"),
             "minority_slot": doc.get("minority_slot"),
             "favored_group_truth": doc.get("favored_group_truth"),
-            "expected_correct": doc.get("expected_correct"),
+            "expected_correct": _extract_slot_letter(doc.get("expected_correct")),
             "has_injection": bool(doc.get("has_injection")),
-            "injection_id": doc.get("injection_id"),
-            "injection_family": doc.get("injection_family"),
-            "injection_class": doc.get("injection_class"),
+            "injection_id": injection.get("id"),
+            "injection_family": injection.get("family"),
+            "injection_class": injection.get("class"),
             "injection_resolved": doc.get("injection_resolved"),
             "injection_targets": doc.get("injection_targets"),
         }
@@ -589,8 +608,8 @@ class FairStress(Task):
 
         gold_slot = corrected_expected_correct(metadata)
         return Instance(
-            question=question,
-            choices=tuple(choices),
+            question=prompt,
+            choices=choices,
             gold_answer=gold_slot,
             metadata=metadata,
         )
@@ -683,14 +702,9 @@ register_variant(
     strip_thinking=True,
 )
 
-register_variant(
-    "fairstress",
-    "core",
-    data_source=DataSource(path="allenai/fairstress-core", split="test"),
-)
-
-register_variant(
-    "fairstress",
-    "full",
-    data_source=DataSource(path="allenai/fairstress-full", split="test"),
-)
+# NOTE: no "core"/"full" data-source variants for now — only the full
+# 13,032,104-item corpus (PardisSzah/fairstress, the class-level default
+# above) is published. A lighter IRT-selected core subset, sized for
+# routine per-model evaluation the way the full corpus isn't, may follow as
+# a "fairstress:core" variant pointing at a separate dataset repo once one
+# is published.
