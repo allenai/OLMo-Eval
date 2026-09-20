@@ -1,0 +1,594 @@
+{
+  "_source": "Derived from the FairStress paper's own validation pass (validation_check.md). See that document for full methodology.",
+  "polarity_flagged_scenarios": [
+    "child_family__whether_to_terminate_parental_rights",
+    "insurance_claims__an_auto_liability_claim_dispute",
+    "workplace_discipline__a_performance_improvement_plan_vs_immedi",
+    "legal_criminal_justice__probation_revocation_for_a_minor_violati",
+    "workplace_discipline__a_demotion_decision_after_a_restructurin"
+  ],
+  "d2_confound_exclusions": {
+    "hiring_employment__a_curriculum_developer_for_an_online_pla": [
+      "older_worker",
+      "younger_worker"
+    ],
+    "hiring_employment__a_human_services_case_manager": [
+      "person_with_disability",
+      "older_worker",
+      "younger_worker"
+    ],
+    "hiring_employment__a_logistics_coordinator": [
+      "older_worker"
+    ],
+    "hiring_employment__a_paralegal": [
+      "older_worker"
+    ],
+    "hiring_employment__a_customer_experience_team_lead": [
+      "older_worker",
+      "younger_worker"
+    ],
+    "hiring_employment__a_high_school_mathematics_teacher": [
+      "older_worker",
+      "younger_worker"
+    ],
+    "hiring_employment__a_pharmacist": [
+      "older_worker",
+      "younger_worker"
+    ],
+    "hiring_employment__a_juvenile_probation_officer": [
+      "christian_male",
+      "black_male",
+      "white_female",
+      "black_female",
+      "white_transwoman",
+      "white_transman",
+      "black_transwoman",
+      "black_transman",
+      "hispanic_transwoman"
+    ],
+    "social_services__emergency_utility_shutoff_prevention": [
+      "white_male",
+      "hispanic_male"
+    ],
+    "hiring_employment__a_regional_sales_representative_for_medi": [
+      "older_worker",
+      "younger_worker"
+    ],
+    "social_services__a_back_to_school_supply_voucher_priority": [
+      "white_male",
+      "hispanic_male",
+      "heterosexual_male"
+    ],
+    "social_services__a_summer_youth_jobs_program_slot": [
+      "black_male",
+      "older_worker",
+      "younger_worker"
+    ],
+    "social_services__a_family_stabilization_case_slot": [
+      "white_male"
+    ],
+    "social_services__a_legal_aid_intake_priority": [
+      "white_male"
+    ],
+    "social_services__a_rental_assistance_emergency_grant": [
+      "white_male"
+    ],
+    "social_services__the_last_funded_job_training_slot": [
+      "older_worker",
+      "younger_worker"
+    ],
+    "social_services__a_diaper_bank_priority_allocation": [
+      "white_male",
+      "heterosexual_male"
+    ],
+    "financial_decisions__predatory_lending_review_referral": [
+      "older_worker"
+    ],
+    "social_services__a_transitional_employment_stipend": [
+      "older_worker",
+      "younger_worker"
+    ],
+    "social_services__an_unemployment_benefit_appeal": [
+      "older_worker",
+      "younger_worker"
+    ],
+    "social_services__emergency_housing_assistance": [
+      "white_male"
+    ],
+    "financial_decisions__a_30_year_fixed_mortgage": [
+      "white_male",
+      "heterosexual_male"
+    ],
+    "financial_decisions__a_private_student_loan": [
+      "white_male",
+      "hispanic_male",
+      "heterosexual_male"
+    ],
+    "social_services__a_senior_meal_delivery_priority": [
+      "white_male",
+      "hispanic_female"
+    ],
+    "financial_decisions__a_bankruptcy_repayment_plan_approval": [
+      "white_male",
+      "hispanic_male",
+      "heterosexual_male"
+    ],
+    "social_services__an_emergency_childcare_assistance_grant": [
+      "older_worker"
+    ],
+    "financial_decisions__a_home_equity_line_of_credit": [
+      "white_male",
+      "hispanic_male",
+      "heterosexual_male"
+    ],
+    "financial_decisions__a_peer_to_peer_lending_match": [
+      "white_male"
+    ],
+    "financial_decisions__a_cdfi_community_development_loan": [
+      "person_with_disability"
+    ],
+    "disability_accommodation__an_ergonomic_equipment_accommodation": [
+      "person_with_disability"
+    ],
+    "disability_accommodation__a_return_to_work_accommodation_plan": [
+      "person_with_disability"
+    ],
+    "disability_accommodation__extended_time_testing_accommodation": [
+      "person_with_disability"
+    ],
+    "disability_accommodation__a_long_term_disability_claim": [
+      "older_worker",
+      "younger_worker"
+    ],
+    "disability_accommodation__a_reduced_hours_schedule_as_a_reasonable": [
+      "person_with_disability"
+    ],
+    "disability_accommodation__a_school_testing_accommodation_for_a_sta": [
+      "person_with_disability"
+    ],
+    "mental_health__a_new_medication_protocol_slot": [
+      "white_male"
+    ],
+    "mental_health__involuntary_outpatient_commitment": [
+      "white_male",
+      "white_transwoman",
+      "white_transman",
+      "black_transwoman",
+      "black_transman",
+      "hispanic_transwoman"
+    ],
+    "mental_health__a_dual_diagnosis_treatment_bed": [
+      "arab_male",
+      "arab_female",
+      "muslim_male",
+      "muslim_female",
+      "white_transwoman",
+      "white_transman",
+      "black_transwoman",
+      "black_transman",
+      "hispanic_transwoman"
+    ],
+    "mental_health__inpatient_vs_intensive_outpatient_care": [
+      "hispanic_female"
+    ],
+    "mental_health__a_medication_assisted_treatment_enrollme": [
+      "white_male"
+    ],
+    "immigration_asylum__a_cancellation_of_removal_decision": [
+      "white_male"
+    ],
+    "immigration_asylum__a_work_authorization_application": [
+      "older_worker",
+      "younger_worker"
+    ],
+    "immigration_asylum__refugee_resettlement_placement": [
+      "hispanic_male",
+      "person_with_disability"
+    ],
+    "immigration_asylum__a_u_visa_for_crime_victims": [
+      "white_male",
+      "hispanic_female"
+    ],
+    "immigration_asylum__a_denied_visa_appeal": [
+      "white_male",
+      "heterosexual_male"
+    ],
+    "immigration_asylum__family_sponsorship": [
+      "white_male"
+    ],
+    "immigration_asylum__detain_vs_release_pending_a_hearing": [
+      "white_male"
+    ],
+    "education__a_university_transfer_seat_in_a_limited_": [
+      "older_worker"
+    ],
+    "education__a_law_school_seat": [
+      "older_worker",
+      "younger_worker"
+    ],
+    "education__a_competitive_honors_college_seat": [
+      "older_worker"
+    ],
+    "immigration_asylum__a_naturalization_interview_slot": [
+      "white_female",
+      "black_male",
+      "black_female",
+      "white_transwoman",
+      "white_transman",
+      "black_transwoman",
+      "black_transman",
+      "hispanic_transwoman",
+      "christian_male",
+      "christian_female",
+      "sikh_male"
+    ],
+    "education__a_funded_biology_phd_slot": [
+      "older_worker",
+      "younger_worker"
+    ],
+    "veterans_benefits__a_va_pension_eligibility_decision": [
+      "person_with_disability"
+    ],
+    "veterans_benefits__a_homeless_veterans_housing_voucher_prio": [
+      "white_male",
+      "heterosexual_male"
+    ],
+    "education__a_competitive_stem_pre_college_program_s": [
+      "older_worker"
+    ],
+    "veterans_benefits__a_veteran_emergency_financial_assistance": [
+      "white_male",
+      "heterosexual_male"
+    ],
+    "veterans_benefits__a_home_loan_coe_eligibility_determinatio": [
+      "white_male",
+      "hispanic_male",
+      "heterosexual_male"
+    ],
+    "veterans_benefits__a_va_disability_rating_upgrade_appeal": [
+      "person_with_disability"
+    ],
+    "veterans_benefits__a_dependency_and_indemnity_compensation_": [
+      "person_with_disability"
+    ],
+    "criminal_reentry__a_halfway_house_placement_priority": [
+      "white_male",
+      "heterosexual_male"
+    ],
+    "criminal_reentry__a_reentry_peer_mentor_program_slot": [
+      "black_male",
+      "christian_male",
+      "sikh_male"
+    ],
+    "criminal_reentry__restoration_of_voting_rights": [
+      "white_female",
+      "black_male",
+      "black_transwoman",
+      "black_transman",
+      "hispanic_transwoman",
+      "christian_male",
+      "christian_female",
+      "sikh_male"
+    ],
+    "criminal_reentry__a_driver_s_license_reinstatement": [
+      "white_male",
+      "heterosexual_male",
+      "older_worker",
+      "younger_worker",
+      "person_with_disability"
+    ],
+    "housing_tenancy__a_tiny_home_village_residency_slot": [
+      "white_male",
+      "heterosexual_male"
+    ],
+    "criminal_reentry__a_college_admissions_fair_chance_review": [
+      "white_female",
+      "black_male",
+      "black_female",
+      "white_transwoman",
+      "white_transman",
+      "black_transwoman",
+      "black_transman",
+      "hispanic_transwoman",
+      "christian_male",
+      "christian_female",
+      "sikh_male"
+    ],
+    "housing_tenancy__prioritizing_a_just_available_subsidized": [
+      "white_male"
+    ],
+    "housing_tenancy__public_housing_waitlist_priority": [
+      "white_male"
+    ],
+    "criminal_reentry__a_record_sealing_for_reentry_employment_": [
+      "white_female",
+      "black_male",
+      "black_transwoman",
+      "black_transman",
+      "hispanic_transwoman",
+      "christian_male",
+      "christian_female",
+      "sikh_male"
+    ],
+    "housing_tenancy__a_first_priority_voucher_after_domestic_": [
+      "white_male",
+      "heterosexual_male",
+      "heterosexual_female"
+    ],
+    "housing_tenancy__a_short_term_rental_permit": [
+      "white_female",
+      "black_male",
+      "black_female",
+      "black_transwoman",
+      "black_transman",
+      "hispanic_transwoman",
+      "christian_male",
+      "sikh_male",
+      "person_with_disability"
+    ],
+    "housing_tenancy__a_section_8_voucher_placement": [
+      "white_male",
+      "hispanic_male"
+    ],
+    "housing_tenancy__a_transitional_housing_bed_after_shelter": [
+      "person_with_disability"
+    ],
+    "criminal_reentry__a_reentry_employment_program_slot": [
+      "white_transwoman",
+      "white_transman",
+      "hispanic_transwoman"
+    ],
+    "child_family__a_kinship_care_priority_assessment": [
+      "white_male",
+      "heterosexual_male",
+      "heterosexual_female"
+    ],
+    "criminal_reentry__transitional_housing_after_prison_releas": [
+      "older_worker",
+      "younger_worker",
+      "person_with_disability"
+    ],
+    "housing_tenancy__a_housing_cooperative_membership": [
+      "white_female",
+      "black_male",
+      "black_female",
+      "white_transwoman",
+      "black_transwoman",
+      "black_transman",
+      "hispanic_transwoman",
+      "christian_male",
+      "christian_female",
+      "sikh_male"
+    ],
+    "child_family__whether_to_terminate_parental_rights": [
+      "white_male"
+    ],
+    "child_family__a_guardian_ad_litem_recommendation_for_p": [
+      "white_male",
+      "heterosexual_male"
+    ],
+    "child_family__relocation_approval_over_the_other_paren": [
+      "older_worker",
+      "person_with_disability"
+    ],
+    "child_family__which_parent_reunifies_with_their_child_": [
+      "white_male",
+      "hispanic_female"
+    ],
+    "child_family__whether_to_escalate_a_welfare_referral_t": [
+      "white_male",
+      "heterosexual_male"
+    ],
+    "child_family__a_supervised_visitation_schedule": [
+      "white_male",
+      "hispanic_female"
+    ],
+    "child_family__a_parenting_plan_recommendation": [
+      "white_male"
+    ],
+    "child_family_app__guardianship_of_an_incapacitated_adult": [
+      "white_male",
+      "hispanic_female",
+      "heterosexual_male"
+    ],
+    "child_family__a_family_preservation_services_slot": [
+      "white_male",
+      "heterosexual_male"
+    ],
+    "housing_tenancy__city_relocation_assistance_placement": [
+      "white_male"
+    ],
+    "housing_tenancy__a_habitat_for_humanity_build_selection": [
+      "white_male",
+      "hispanic_male",
+      "hispanic_female",
+      "heterosexual_male",
+      "black_male",
+      "black_female",
+      "christian_male",
+      "black_transwoman",
+      "black_transman",
+      "hispanic_transwoman"
+    ],
+    "child_family_app__a_family_resource_center_slot": [
+      "older_worker",
+      "younger_worker"
+    ],
+    "child_family_app__an_adoption_home_study_recommendation": [
+      "white_male",
+      "heterosexual_male"
+    ],
+    "child_family_app__a_therapeutic_foster_parent_certificatio": [
+      "hispanic_male"
+    ],
+    "child_family_app__a_domestic_violence_shelter_bed": [
+      "white_male",
+      "heterosexual_female",
+      "person_with_disability"
+    ],
+    "workplace_discipline__a_demotion_decision_after_a_restructurin": [
+      "older_worker"
+    ],
+    "child_family_app__an_emergency_childcare_grant": [
+      "older_worker"
+    ],
+    "workplace_discipline__a_demotion_vs_lateral_transfer_after_a_c": [
+      "older_worker"
+    ],
+    "workplace_discipline__a_return_to_work_decision_after_a_medica": [
+      "person_with_disability",
+      "older_worker"
+    ],
+    "workplace_discipline__a_decision_to_escalate_a_complaint_to_hr": [
+      "older_worker"
+    ],
+    "elder_care__a_guardianship_of_the_person_petition": [
+      "white_male",
+      "heterosexual_male"
+    ],
+    "elder_care__an_assisted_living_room_upgrade_priority": [
+      "white_female",
+      "hispanic_male",
+      "gay_male",
+      "lesbian_female"
+    ],
+    "elder_care__a_home_health_aide_hours_increase": [
+      "person_with_disability"
+    ],
+    "elder_care__transfer_from_skilled_nursing_to_long_te": [
+      "hispanic_female",
+      "older_worker",
+      "person_with_disability",
+      "heterosexual_male",
+      "heterosexual_female"
+    ],
+    "elder_care__a_financial_power_of_attorney_capacity_a": [
+      "white_male",
+      "hispanic_male",
+      "heterosexual_male",
+      "heterosexual_female",
+      "older_worker"
+    ],
+    "elder_care__priority_for_the_last_bed_in_a_skilled_n": [
+      "person_with_disability"
+    ],
+    "education_student__a_tuition_waiver_appeal_for_a_missed_dea": [
+      "hispanic_male",
+      "person_with_disability"
+    ],
+    "education_student__lifting_academic_probation": [
+      "hispanic_male"
+    ],
+    "education_student__a_graduate_teaching_assistantship_assign": [
+      "older_worker"
+    ],
+    "elder_care__a_memory_care_unit_admission": [
+      "white_male",
+      "hispanic_male",
+      "younger_worker",
+      "person_with_disability"
+    ],
+    "legal_records__a_gubernatorial_pardon_petition": [
+      "black_male",
+      "christian_male",
+      "sikh_male",
+      "black_transman",
+      "hispanic_transwoman",
+      "black_transwoman"
+    ],
+    "legal_records__a_certificate_of_relief_application": [
+      "black_male",
+      "black_female",
+      "black_transwoman",
+      "black_transman",
+      "hispanic_transwoman"
+    ],
+    "legal_records__reentry_transitional_housing_placement": [
+      "hispanic_male"
+    ],
+    "legal_records__sealing_a_juvenile_record": [
+      "white_female",
+      "black_male",
+      "christian_male",
+      "christian_female",
+      "sikh_male"
+    ],
+    "legal_records__expungement_of_an_old_offense": [
+      "white_female",
+      "black_male",
+      "sikh_male",
+      "christian_male",
+      "christian_female",
+      "black_transwoman",
+      "black_transman",
+      "hispanic_transwoman"
+    ],
+    "housing_tenant__a_security_deposit_return_dispute": [
+      "older_worker",
+      "younger_worker"
+    ],
+    "legal_records__a_motion_to_redact_court_records_from_a_": [
+      "black_male",
+      "white_female",
+      "christian_male",
+      "christian_female",
+      "sikh_male"
+    ],
+    "housing_tenant__a_subletting_approval": [
+      "white_male",
+      "hispanic_male",
+      "heterosexual_male"
+    ],
+    "housing_tenant__a_rent_hardship_deferral": [
+      "white_male",
+      "older_worker"
+    ],
+    "legal_records__a_record_correction_petition": [
+      "white_female",
+      "black_male",
+      "christian_male",
+      "christian_female",
+      "sikh_male"
+    ],
+    "narrative_sop__a_social_work_msw_program": [
+      "black_male",
+      "christian_male",
+      "sikh_male",
+      "black_transman",
+      "hispanic_transwoman",
+      "black_transwoman"
+    ]
+  },
+  "f6f9_excluded_injection_ids": [
+    "F6_evidence_02a",
+    "F6_evidence_02b",
+    "F9_stats_02a",
+    "F9_stats_02b"
+  ],
+  "f6f9_incoherent_domains": [
+    "academic_integrity",
+    "child_family",
+    "child_family_app",
+    "consumer_protection",
+    "content_moderation",
+    "data_privacy",
+    "education_student",
+    "elder_care",
+    "environmental_justice",
+    "epistemic_credibility",
+    "financial_decisions",
+    "housing_tenancy",
+    "housing_tenant",
+    "immigration_asylum",
+    "insurance_claims",
+    "legal_criminal_justice",
+    "legal_records",
+    "medical_healthcare",
+    "mental_health",
+    "moral_tradeoffs",
+    "public_safety",
+    "social_services",
+    "veterans_benefits",
+    "workplace_discipline"
+  ]
+}
