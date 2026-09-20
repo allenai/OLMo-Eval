@@ -11,6 +11,8 @@ from olmo_eval.evals.tasks.fairstress import (
     F6F9_EXCLUDED_INJECTION_IDS,
     F6F9_INCOHERENT_DOMAINS,
     POLARITY_FLAGGED_SCENARIOS,
+    TYPE1_CONTRASTS,
+    TYPE23_CONTRASTS,
     FairStressAccGapMetric,
     FairStressFragGapMetric,
     FairStressScorer,
@@ -256,6 +258,11 @@ class TestD2AndF6F9Exclusion:
 
 
 def _response(metadata, extracted_answer, text="the answer is A"):
+    # Default to a real Type-1 contrast so tests that don't care about
+    # contrast-type filtering aren't silently dropped by it (contrast_type
+    # defaults to "type1" on every metric) — tests exercising Type-2/3
+    # filtering specifically pass their own contrast_id to override this.
+    metadata = {"contrast_id": "blackM_whiteM", **metadata}
     instance = Instance(question="q", gold_answer=None, choices=("A", "B"), metadata=dict(metadata))
     output = LMOutput(text=text, extracted_answer=extracted_answer)
     request = LMRequest(request_type="chat", messages=())
@@ -471,3 +478,120 @@ class TestMetricNamesDontCollide:
         assert len(default_keys) == len(set(default_keys))
         variant_keys = [(m.name, m.scorer().name) for m in _fairstress_metrics()]
         assert len(variant_keys) == len(set(variant_keys))
+
+
+class TestContrastTypeFiltering:
+    """The paper restricts signed headline metrics to the 26 Type-1
+    contrasts ("on the other seven a signed number has no stereotype
+    direction," main text) — every metric defaults to contrast_type="type1"
+    and a parallel type23 set exists for the other 7 contrasts."""
+
+    def test_type1_and_type23_contrast_lists_match_the_papers_33_contrasts(self):
+        assert len(TYPE1_CONTRASTS) == 26
+        assert len(TYPE23_CONTRASTS) == 7
+        assert TYPE1_CONTRASTS.isdisjoint(TYPE23_CONTRASTS)
+
+    @staticmethod
+    def _both_slots(contrast_id):
+        # TieLean needs an item in each physical slot arrangement to avoid
+        # its own "insufficient data" sentinel — using two items here (not
+        # one, as an earlier draft of this test did) means a -1.0 result
+        # can only be explained by the contrast-type filter, not conflated
+        # with the separate missing-slot-coverage sentinel.
+        return [
+            _response(
+                {
+                    "contrast_id": contrast_id,
+                    "condition": "AMB",
+                    "has_injection": False,
+                    "minority_slot": "A",
+                    "scenario_id": "x",
+                    "excluded": False,
+                },
+                extracted_answer="A",
+            ),
+            _response(
+                {
+                    "contrast_id": contrast_id,
+                    "condition": "AMB",
+                    "has_injection": False,
+                    "minority_slot": "B",
+                    "scenario_id": "x",
+                    "excluded": False,
+                },
+                extracted_answer="A",
+            ),
+        ]
+
+    def test_type1_item_counted_by_default_metric(self):
+        metric = FairStressTieLeanMetric(name="any__any")  # contrast_type="type1" default
+        assert metric.compute(self._both_slots("blackM_whiteM")) != -1.0  # Type-1
+
+    def test_type23_item_is_dropped_by_default_type1_metric(self):
+        metric = FairStressTieLeanMetric(name="any__any")
+        assert metric.compute(self._both_slots("arabF_blackF")) == -1.0  # Type-2/3
+
+    def test_type23_item_counted_by_type23_metric(self):
+        metric = FairStressTieLeanMetric(name="any__any", contrast_type="type23")
+        assert metric.compute(self._both_slots("arabF_blackF")) != -1.0
+
+    def test_type1_item_is_dropped_by_type23_metric(self):
+        metric = FairStressTieLeanMetric(name="any__any", contrast_type="type23")
+        assert metric.compute(self._both_slots("blackM_whiteM")) == -1.0
+
+    def test_registered_variant_includes_both_type1_and_type23_metrics(self):
+        from olmo_eval.evals.tasks.fairstress import _fairstress_metrics
+
+        names = [m.name for m in _fairstress_metrics()]
+        assert "any__any__accgap" in names
+        assert "any__any__accgap_t23" in names
+        # Type-23 metrics carry contrast_type="type23"; Type-1 ones don't.
+        by_name = {m.name: m for m in _fairstress_metrics()}
+        assert by_name["any__any__accgap"].contrast_type == "type1"
+        assert by_name["any__any__accgap_t23"].contrast_type == "type23"
+
+
+class TestInterpretation:
+    def test_interpret_headline_metrics_covers_all_five_and_is_readable(self):
+        from olmo_eval.evals.tasks.fairstress import _interpret_headline_metrics
+
+        result = {
+            "any__any__accgap": {"fairstress": 0.05},
+            "any__any__tielean": {"fairstress": 0.6},
+            "any__any__fraggap": {"fairstress": 0.08},
+            "any__any__tieshift": {"fairstress": 0.15},
+            "any__any__refusal": {"fairstress": 0.02},
+        }
+        text = _interpret_headline_metrics(result)
+        assert "AccGap" in text
+        assert "TieLean" in text
+        assert "FragGap" in text
+        assert "TieShift" in text
+        assert "Refusal" in text
+        assert "overcorrection" in text  # all 4 signed values above are positive
+
+    def test_interpret_headline_metrics_handles_missing_or_insufficient_data(self):
+        from olmo_eval.evals.tasks.fairstress import _interpret_headline_metrics
+
+        text = _interpret_headline_metrics({"any__any__accgap": {"fairstress": -1.0}})
+        assert "not enough" in text.lower()
+
+    def test_compute_metrics_logs_interpretation(self, caplog):
+        import logging
+
+        task = get_task("fairstress")
+        r = _response(
+            {
+                "condition": "GT",
+                "has_injection": False,
+                "favored_group_truth": "black_male",
+                "minority_group": "black_male",
+                "expected_correct": "A",
+                "scenario_id": "x",
+                "excluded": False,
+            },
+            extracted_answer="A",
+        )
+        with caplog.at_level(logging.INFO, logger="olmo_eval.evals.tasks.fairstress"):
+            task.compute_metrics([r])
+        assert "FairStress headline interpretation" in caplog.text
