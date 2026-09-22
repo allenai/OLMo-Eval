@@ -34,7 +34,7 @@ never as one mean against another.
 from __future__ import annotations
 
 from olmo_eval.evals.suites.registry import AggregationStrategy, Suite, register
-from olmo_eval.evals.tasks.ctc_suite import ROSTER, RUNG_TOKENS, CTCClass
+from olmo_eval.evals.tasks.ctc_suite import OOD_ROSTER, ROSTER, RUNG_TOKENS, CTCClass
 
 _DISPLAY = AggregationStrategy.DISPLAY_ONLY
 
@@ -122,6 +122,49 @@ for _cls, (_blurb, _notation) in _CLASS_BLURB.items():
                 description=f"The {len(_rows)} {_notation} CTC rows over the {_label}.",
             )
         )
+
+#: The held-out rows, selectable on their own and by length. They are deliberately NOT folded into
+#: ``ctc``/``ctc:figure``/``ctc:low``/``ctc:high``: those names select the frozen 22-row roster, and
+#: quietly widening them would change what an already-published "figure ladder" number refers to.
+#: Ask for OOD explicitly.
+register(
+    Suite(
+        name="ctc:ood",
+        tasks=tuple(f"{name}:{rung}" for name, row in OOD_ROSTER.items() for rung in row.rungs),
+        aggregation=_DISPLAY,
+        description=(
+            f"The {len(OOD_ROSTER)} held-out CTC rows, every rung -- same graders as their "
+            "in-distribution twins over corpora no SFT mix contains."
+        ),
+    )
+)
+for _span, _rungs, _label in (
+    ("figure", _BASE, "2k-32k figure ladder"),
+    ("xlong", _XLONG, "rungs above 32k"),
+):
+    register(
+        Suite(
+            name=f"ctc:ood:{_span}",
+            tasks=tuple(
+                f"{name}:{rung}"
+                for name, row in OOD_ROSTER.items()
+                for rung in row.rungs
+                if rung in _rungs
+            ),
+            aggregation=_DISPLAY,
+            description=f"The {len(OOD_ROSTER)} held-out CTC rows over the {_label}.",
+        )
+    )
+
+for _name, _row in OOD_ROSTER.items():
+    register(
+        Suite(
+            name=f"ctc:{_name.removeprefix('ctc_')}",
+            tasks=tuple(f"{_name}:{rung}" for rung in _row.rungs),
+            aggregation=_DISPLAY,
+            description=f"The full {_name} ladder ({len(_row.rungs)} rungs).",
+        )
+    )
 
 register(
     Suite(

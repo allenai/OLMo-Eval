@@ -72,6 +72,7 @@ __all__ = [
     "HF_REVISION",
     "UPSTREAM_COMMIT",
     "ROSTER",
+    "OOD_ROSTER",
     "RUNG_TOKENS",
     "CTCClass",
     "CTCScorer",
@@ -410,6 +411,44 @@ ROSTER: dict[str, RosterRow] = {
     ),
 }
 
+#: Held-out rows: same graders as their in-distribution twins, different source corpora, and
+#: deliberately absent from every SFT mix (``build_ctc_sft_mix.py`` refuses them by name). The
+#: results-hub has tracked both for a while as 4-rung probes; these are the full 2k-256k ladders.
+#:
+#: They are kept OUT of :data:`ROSTER` on purpose. ``ROSTER`` is the roster frozen 2026-08-12, and
+#: appending to it would silently redefine what every existing suite name selects -- ``ctc:figure``
+#: would go from 108 to 124 runs, ``ctc:low`` from 12 rows to 13 and ``ctc:high`` from 10 to 11 --
+#: so a number quoted as "the figure ladder" would stop meaning the same thing without anything in
+#: the code saying so. A separate dict plus a ``ctc:ood`` suite adds the rows and moves nothing.
+OOD_ROSTER: dict[str, RosterRow] = {
+    "ctc_contra_fever": RosterRow(
+        ctc_class=CTCClass.HIGH,
+        complexity="O(N^2)",
+        subset="contra_fever",
+        spec="contradiction",
+        rungs=_LADDER_FULL[:8],
+        note="held-out twin of ctc_contradiction: FEVER claim pairs, not PubMed. 599 examples at "
+        "every rung, and the SAME 599 questions at every rung -- only the distractor count varies. "
+        "Grown from the eval bundle's own files by self-corpus injection, which is sound here "
+        "because contradiction gold is pairwise; realized prefill is within +5.2% of every label. "
+        "r256k p90 is 264,294, past the 262,144 position ceiling: it needs a YaRN factor-2 serving "
+        "copy, exactly as the suite's own r256k rungs do",
+    ),
+    "ctc_outlier_review": RosterRow(
+        ctc_class=CTCClass.LOW,
+        complexity="O(N)",
+        subset="outlier_review",
+        spec="outlier",
+        rungs=_LADDER_FULL[:8],
+        eval_size={"r256k": 125},
+        note="held-out twin of ctc_outlier: Amazon reviews on the product-CATEGORY axis, K pinned "
+        "at 3. NOT redundant with ctc_outlier_amzn, whose shipped rungs are a 50/50 blend of this "
+        "construction and a star-RATING one -- a different question over the same corpus. "
+        "Regenerated natively at each rung rather than grown, because outlier gold is structural "
+        "and an injected document would satisfy it without being labelled",
+    ),
+}
+
 #: Which rung a bare task name (no variant) evaluates: the top of the 2k-32k figure ladder.
 DEFAULT_RUNG = "r32k"
 
@@ -672,7 +711,7 @@ class CTCSuiteTask(Task):
         super().__init_subclass__(**kwargs)
         if not cls.row_name:
             return
-        row = ROSTER[cls.row_name]
+        row = ROSTER.get(cls.row_name) or OOD_ROSTER[cls.row_name]
         spec = _resolve_spec(row.spec)
         metrics: list[Metric] = [
             CTCMeanMetric(
@@ -873,8 +912,21 @@ class CTCScifact(CTCSuiteTask):
     row_name = "ctc_scifact"
 
 
+# The held-out rows (OOD_ROSTER): same factory, kept out of ROSTER so no existing suite name moves.
+
+
+@register("ctc_contra_fever")
+class CTCContraFever(CTCSuiteTask):
+    row_name = "ctc_contra_fever"
+
+
+@register("ctc_outlier_review")
+class CTCOutlierReview(CTCSuiteTask):
+    row_name = "ctc_outlier_review"
+
+
 # One variant per rung with data. The base name evaluates DEFAULT_RUNG; a variant only changes the
 # data source, since every other setting is a property of the row and not of the rung.
-for _name, _row in ROSTER.items():
+for _name, _row in (*ROSTER.items(), *OOD_ROSTER.items()):
     for _rung in _row.rungs:
         register_variant(_name, _rung, data_source=_data_source(_row, _rung))
