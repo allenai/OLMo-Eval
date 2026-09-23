@@ -34,35 +34,8 @@ uv run olmo-eval run -m <model> -t ctc              # all 177 task x rung combin
 
 ## Running the whole suite on Beaker
 
-`scripts/ctc_suite/launch_ctc_suite.py` evaluates one olmo-core checkpoint on every row in one
-command -- full attention or compressive landmark -- and pools the results:
-
-```bash
-# plan (cells, shards, jobs, estimated GPU-hours) without submitting
-python scripts/ctc_suite/launch_ctc_suite.py --ckpt <weka step dir> --arm compressive \
-    --run-name <name> --dry-run
-python scripts/ctc_suite/launch_ctc_suite.py --ckpt <weka step dir> --arm full --run-name <name>
-# after the jobs finish: one table (eval_size + binomial SE; sub-500 cells flagged)
-python scripts/ctc_suite/launch_ctc_suite.py --run-name <name> --collect
-```
-
-- **Scope** (`--rows`): `all` (default) = the 22 rows + the 2 held-out OOD rows (`ctc:ood`);
-  `roster` = the 22; `setA` = the 12 rows the setA SFT data is IID with, + OOD.
-- **Eval sizes** (`--policy`, default `r2k-r32k:300,r64k:100,r128k:100,r256k:100`, plus
-  `--row-limit` caps; grouping and reorder default to 100 per rung, since their answers list every
-  document). 300 is below the 500 floor: quote those cells with their size and SE.
-- **Packing.** Each (row, rung) is costed from measured throughput (compressive-landmark
-  Qwen3.5-4B, H100: prefill per rung + ~30 ms per decoded token at bs=1, times the row's measured
-  answer length), cells over the per-job budget are split into exact shards, and everything is
-  packed into single-GPU jobs that fit `--budget-hours` (default 1.5). The planner has run ~35%
-  above measured wall-clock.
-- **Backend.** olmo-eval's native `olmo_core` provider (no HF/vLLM export), batch size 1 for
-  compressive landmark (blocks are tied to absolute position), `--full-batch-size` at <=32k for
-  full attention. The job installs this checkout's pushed commit and OLMo-core from
-  `--olmo-core-ref`, which must carry the FLA autotune fix -- without it every new prompt length
-  re-tunes Triton kernels for ~25 s, which was ~95% of eval wall-clock on Qwen3.5.
-- **Truncation.** Qwen3.5 has 262,144 positions; some r256k rows of hpqa / outlier / qdmatch_nq /
-  rerank are longer and are left-truncated. The planner prints which cells.
+One command per checkpoint (full attention or compressive landmark), with packing into single-GPU
+jobs and a pooled results table: see [`scripts/ctc_suite/README.md`](../../../../../scripts/ctc_suite/README.md).
 
 ## Knobs (environment variables)
 
