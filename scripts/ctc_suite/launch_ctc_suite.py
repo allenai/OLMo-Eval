@@ -6,15 +6,16 @@ landmark -- and collect the results into one table.
     python scripts/ctc_suite/launch_ctc_suite.py --ckpt <weka step dir> --arm compressive \\
         --run-name q35-4b-setA-cl --dry-run
     # submit
-    python scripts/ctc_suite/launch_ctc_suite.py --ckpt <weka step dir> --arm full --run-name q35-4b-setA-full
+    python scripts/ctc_suite/launch_ctc_suite.py --ckpt <weka step dir> --arm full \\
+        --run-name q35-4b-setA-full
     # after the jobs finish: pool every job (and shard) into one table
     python scripts/ctc_suite/launch_ctc_suite.py --run-name q35-4b-setA-full --collect
 
 What it runs. Every roster row (the 12 in-distribution SFT tasks + the 2 held-out OOD rows by
 default, or ``--rows all``) at every rung up to 256k, with eval sizes from ``--policy`` (default
-300 per rung at 2k-32k, 100 at 64k/128k/256k), through olmo-eval's native ``olmo_core`` provider with
-``CTC_SUITE_PROMPT_FORMAT=chat`` -- the prompt body byte-identical to the CTC SFT data, inside the
-model's chat template, so the eval is IID with chat-template SFT checkpoints.
+300 per rung at 2k-32k, 100 at 64k/128k/256k), through olmo-eval's native ``olmo_core``
+provider with ``CTC_SUITE_PROMPT_FORMAT=chat`` -- the prompt body byte-identical to the CTC SFT
+data, inside the model's chat template, so the eval is IID with chat-template SFT checkpoints.
 
 How it packs. Each (row, rung) cell is costed from measured throughput (fast-compressive-landmark
 Qwen3.5-4B on one H100: prefill GPU-seconds per rung + ~30 ms per decoded token at batch size 1,
@@ -93,7 +94,7 @@ ANSWER_TOKENS = {
     "ctc_grouping": [61, 143, 245, 647, 1384],
 }
 OOD_TWIN = {"ctc_contra_fever": "ctc_contradiction", "ctc_outlier_review": "ctc_outlier"}
-#: rerank is scored on its first 10 distinct ids; 160 tokens hold them (opt-in cap, score-identical).
+#: rerank is scored on its first 10 distinct ids; 160 tokens hold them (score-identical cap).
 RERANK_DECODE_TOKENS = 160
 LONG_RUNG_ROWS = 125  # rows shipped at r256k and above
 OVERFLOW_256K = {"ctc_hpqa", "ctc_outlier", "ctc_qdmatch_nq", "ctc_rerank"}
@@ -285,7 +286,8 @@ def submit(args, bins: list[list[Cell]]) -> None:
     }
     if not args.dry_run:
         os.makedirs(root, exist_ok=True)
-        json.dump(manifest, open(os.path.join(root, "launch_manifest.json"), "w"), indent=1)
+        with open(os.path.join(root, "launch_manifest.json"), "w") as f:
+            json.dump(manifest, f, indent=1)
     print(f"\n{len(bins)} jobs {'planned' if args.dry_run else 'submitted'} -> {root}")
 
 
@@ -294,7 +296,9 @@ def collect(run_name: str) -> None:
     root = os.path.join(WEKA_OUT, run_name)
     acc: dict[str, dict] = {}
     for path in sorted(glob.glob(os.path.join(root, "job*", "metrics.json"))):
-        for t in json.load(open(path)).get("tasks", []):
+        with open(path) as f:
+            tasks = json.load(f).get("tasks", [])
+        for t in tasks:
             name, scorer = t["primary_metric"].split(":")
             val, n = t["metrics"][name][scorer], t["num_instances"]
             a = acc.setdefault(t["task"], {"metric": t["primary_metric"], "sum": 0.0, "n": 0})
@@ -316,7 +320,8 @@ def collect(run_name: str) -> None:
             }
         )
     out = os.path.join(root, "results.json")
-    json.dump(rows, open(out, "w"), indent=1)
+    with open(out, "w") as f:
+        json.dump(rows, f, indent=1)
     for r in rows:
         flag = (
             f"  ⚠ eval_size={r['eval_size']} only (±{r['se']:.3f})" if r["eval_size"] < 500 else ""
