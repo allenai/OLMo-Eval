@@ -777,3 +777,28 @@ def test_chat_prompt_format_is_the_sft_rendering(tmp_path, monkeypatch, task_nam
     monkeypatch.setenv(PROMPT_FORMAT_ENV, "nonsense")
     with pytest.raises(ValueError):
         task.format_request(instance)
+
+
+def test_rerank_decode_cap_is_opt_in_and_score_preserving(monkeypatch) -> None:
+    from olmo_eval.common.types import compute_task_hash
+    from olmo_eval.evals.tasks.ctc_suite import RERANK_DECODE_ENV, _resolve_spec
+
+    monkeypatch.delenv(RERANK_DECODE_ENV, raising=False)
+    task = get_task("ctc_rerank:r2k")
+    assert task.get_sampling_params(None).max_tokens == 512
+    monkeypatch.setenv(RERANK_DECODE_ENV, "160")
+    capped = get_task("ctc_rerank:r2k")  # resolved at construction, into the hashed config
+    assert capped.get_sampling_params(None).max_tokens == 160
+    assert compute_task_hash(capped.config.to_dict()) != compute_task_hash(task.config.to_dict())
+    assert get_task("ctc_nq:r2k").get_sampling_params(None).max_tokens != 160  # rerank only
+
+    # the score only reads the first 10 distinct ids, so a ranking cut after them scores the same
+    spec = _resolve_spec("rerank")
+    example = {
+        "gold_doc_indices": [2],
+        "ce_scores": [5.0, None, 3.0] + [-9.0] * 27,
+        "documents": [{"text": str(i)} for i in range(30)],
+    }
+    full = ", ".join(f"[{i}]" for i in [3, 1, 7, 9, 11, 2, 4, 5, 6, 8, 10, 12, 13, 14, 15])
+    cut = ", ".join(f"[{i}]" for i in [3, 1, 7, 9, 11, 2, 4, 5, 6, 8])
+    assert spec.score(spec.parse(full, 30), example) == spec.score(spec.parse(cut, 30), example)

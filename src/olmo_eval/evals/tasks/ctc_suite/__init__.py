@@ -103,6 +103,14 @@ DATA_ROOT_ENV = "CTC_SUITE_DATA_ROOT"
 #: (qdmatch, grouping, outlier) ignore this, and declare so via ``honors_query_position``.
 QUERY_POSITION = "both"
 
+#: Env var capping rerank's decode budget (tokens). Unset keeps the spec's 512. Resolved into the
+#: config at construction (like the data root), so a capped run has its own task hash. rerank is
+#: scored on the first 10 DISTINCT in-range ids only (``parsed[:10]``), and an id costs ~7 tokens
+#: (``[2726], `` -- Qwen tokenizes digits singly), so a cap of ~160 is score-identical whenever
+#: those 10 ids fit, while cutting the task's decode time several-fold. Opt-in: a model that
+#: prefixes its ranking with prose, or repeats ids, can be truncated before its tenth id.
+RERANK_DECODE_ENV = "CTC_SUITE_RERANK_DECODE_TOKENS"
+
 #: Env var choosing how a prompt is wrapped. ``alpaca`` (default) is the setting every published
 #: rung was graded with: the Alpaca preamble, sent as a raw completion. ``chat`` renders exactly
 #: what the CTC SFT data trains on -- the same body without the Alpaca preamble, sent as a single
@@ -777,6 +785,16 @@ class CTCSuiteTask(Task):
         source = config.data_source
         if root and isinstance(source, DataSource) and source.path == HF_DATASET:
             config = replace(config, data_source=_local_data_source(self.row, source.split, root))
+        # CTC_SUITE_RERANK_DECODE_TOKENS: same reasoning -- into the config, so the budget that is
+        # sent is the one stored and hashed. rerank is graded on the first TOP_K distinct ids only,
+        # but a trained model writes the whole ranking (up to the 512-token budget) -- most of the
+        # task's decode time.
+        cap = os.environ.get(RERANK_DECODE_ENV)
+        params = config.sampling_params
+        if cap and self.row.spec == "rerank" and params is not None and params.max_tokens:
+            config = replace(
+                config, sampling_params=replace(params, max_tokens=min(params.max_tokens, int(cap)))
+            )
         super().__init__(config)
 
     @property
