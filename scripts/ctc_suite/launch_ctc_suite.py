@@ -110,6 +110,9 @@ RERANK_DECODE_TOKENS = 160
 LONG_RUNG_ROWS = 125  # rows shipped at r256k and above
 OVERFLOW_256K = {"ctc_hpqa", "ctc_outlier", "ctc_qdmatch_nq", "ctc_rerank"}
 DEFAULT_POLICY = "r2k-r32k:300,r64k:100,r128k:100,r256k:100"
+#: Per-row caps on top of the policy, for the rows whose answers list every document (grouping) or
+#: every passage (reorder): hundreds to ~1,400 decoded tokens each at bs=1, the bulk of the cost.
+DEFAULT_ROW_LIMITS = {"ctc_grouping": 100, "ctc_reorder": 100}
 
 
 @dataclass
@@ -140,7 +143,13 @@ def parse_policy(policy: str) -> dict[str, int]:
     return out
 
 
-def plan(rows: list[str], policy: dict[str, int], arm: str, full_bs: int) -> list[Cell]:
+def plan(
+    rows: list[str],
+    policy: dict[str, int],
+    arm: str,
+    full_bs: int,
+    row_limits: dict[str, int] | None = None,
+) -> list[Cell]:
     from olmo_eval.evals.tasks.ctc_suite import OOD_ROSTER, ROSTER
 
     cells = []
@@ -151,7 +160,7 @@ def plan(rows: list[str], policy: dict[str, int], arm: str, full_bs: int) -> lis
             if rung not in policy:
                 continue
             available = row.eval_size.get(rung, LONG_RUNG_ROWS if rung == "r256k" else 500)
-            limit = min(policy[rung], available)
+            limit = min(policy[rung], available, (row_limits or {}).get(name, 10**9))
             i = RUNG_ORDER.index(rung)
             ans = answers[min(i, len(answers) - 1)]
             if name == "ctc_rerank":
@@ -358,6 +367,14 @@ def main() -> None:
         "only), 'setA' (the 12 rows the setA SFT data is IID with + the 2 OOD rows), or a list",
     )
     ap.add_argument("--policy", default=DEFAULT_POLICY)
+    ap.add_argument(
+        "--row-limit",
+        action="append",
+        default=[],
+        metavar="ROW=N",
+        help="cap one row's eval size at every rung (repeatable; ROW=0 clears a default). "
+        "Defaults: ctc_grouping=100, ctc_reorder=100",
+    )
     ap.add_argument("--budget-hours", type=float, default=1.5, help="wall-clock per job")
     ap.add_argument("--setup-minutes", type=float, default=8.0, help="install + model load")
     ap.add_argument("--full-batch-size", type=int, default=8)
@@ -385,10 +402,21 @@ def main() -> None:
     else:
         rows = [r.strip() for r in args.rows.split(",") if r.strip()]
 
+    row_limits = dict(DEFAULT_ROW_LIMITS)
+    for kv in args.row_limit:
+        k, v = kv.split("=")
+        if int(v) <= 0:
+            row_limits.pop(k, None)
+        else:
+            row_limits[k] = int(v)
     budget_s = args.budget_hours * 3600 - args.setup_minutes * 60
-    bins = pack(plan(rows, parse_policy(args.policy), args.arm, args.full_batch_size), budget_s)
+    cells = plan(rows, parse_policy(args.policy), args.arm, args.full_batch_size, row_limits)
+    bins = pack(cells, budget_s)
     total = sum(c.cost_s for b in bins for c in b)
-    print(f"{args.run_name}: arm={args.arm} rows={len(rows)} policy={args.policy}")
+    print(
+        f"{args.run_name}: arm={args.arm} rows={len(rows)} policy={args.policy} "
+        f"row caps={row_limits}"
+    )
     print(
         f"{len(bins)} single-GPU jobs, ~{total / 3600:.1f} GPU-h (planner is conservative), "
         f"longest {max(sum(c.cost_s for c in b) for b in bins) / 60:.0f} min + setup"
