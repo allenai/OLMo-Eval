@@ -76,8 +76,12 @@ Planned cost for `--rows all` with the defaults: **compressive ~40 GPU-h in 30 j
 in 26 jobs** (planner estimates; real has been ~35% lower). The 256k rung is the largest single
 item (~15 GPU-h across 16 rows) and its per-example cost is still extrapolated.
 
-⚠ The `full` arm's batched decode is **not yet validated** against bs=1 on a Qwen3.5 hybrid; its
-cost assumes batching works.
+**Full-arm batching, validated 2026-09-23** on a dense Qwen3.5-4B (32 rows each at r8k): scores
+match (nq f1 0.3750 vs 0.3750; grouping pairwise_f1 0.2016 at bs=1 vs 0.1992 at bs=8) and
+generations share their first 84% (nq) / 62% (grouping) of text before diverging -- bf16
+batch-shape numerics, not a padding bug (that would corrupt outputs from the first token). Not
+bitwise-identical, so `--full-batch-size 1` if you need bitwise determinism; bs=8 was ~2-5x faster
+(440 s vs 1,378 s wall, the latter including a cold model load).
 
 ## Requirements
 
