@@ -14,13 +14,31 @@ import pytest
 from olmo_eval.common.types import LMOutput
 from olmo_eval.evals.suites import get_suite
 from olmo_eval.evals.tasks.common.registry import get_task, list_tasks, list_variants
-from olmo_eval.evals.tasks.ctc_suite import ROSTER, RUNG_TOKENS, CTCClass
+from olmo_eval.evals.tasks.ctc_suite import OOD_ROSTER, ROSTER, RUNG_TOKENS, CTCClass
 
 
 def test_all_22_rows_register() -> None:
     names = {n for n in list_tasks() if n.startswith("ctc_")}
-    assert names == set(ROSTER)
-    assert len(names) == 22
+    # the 22 in-distribution rows, plus the held-out OOD rows that register alongside them
+    assert names == set(ROSTER) | set(OOD_ROSTER)
+    assert len(ROSTER) == 22
+    assert not set(ROSTER) & set(OOD_ROSTER)
+
+
+def test_every_roster_spec_is_registered() -> None:
+    # ctc_grouping named a spec that was never vendored, so the row could not be graded at all
+    from olmo_eval.evals.tasks.ctc_suite import _resolve_spec
+
+    for row in (*ROSTER.values(), *OOD_ROSTER.values()):
+        _resolve_spec(row.spec)
+
+
+def test_grouping_all_singleton_partition_scores_one() -> None:
+    from olmo_eval.evals.tasks.ctc_suite import _resolve_spec
+
+    spec = _resolve_spec("grouping")
+    assert spec.score([[1], [2], [3]], [[0], [1], [2]])["pairwise_f1"] == 1.0
+    assert spec.score([[1], [2], [3]], [[0, 1], [2]])["pairwise_f1"] == 0.0
 
 
 def test_every_row_has_its_rung_variants() -> None:
@@ -721,3 +739,41 @@ def test_an_all_singleton_grouping_scores_one_through_the_task(tmp_path, monkeyp
     assert scorer.score(inst, LMOutput(text=perfect)) == 1.0
     one_cluster = '{"groups": [{"doc_ids": [1, 2, 3, 4]}]}'
     assert scorer.score(inst, LMOutput(text=one_cluster)) == 0.0
+
+
+@pytest.mark.parametrize(
+    ("task_name", "example"),
+    [
+        ("ctc_nq", RETRIEVAL_EXAMPLE),
+        ("ctc_contradiction", PAIR_EXAMPLE),
+        ("ctc_qdmatch_nq", QDMATCH_EXAMPLE),
+    ],
+)
+def test_chat_prompt_format_is_the_sft_rendering(tmp_path, monkeypatch, task_name, example) -> None:
+    from olmo_eval.common.types import RequestType
+    from olmo_eval.evals.tasks.ctc_suite import PROMPT_FORMAT_ENV, QUERY_POSITION
+
+    row = ROSTER[task_name]
+    rung = row.rungs[0]
+    _write_ladder(tmp_path, row.subset, row.rung_alias.get(rung, RUNG_TOKENS[rung]), example)
+    monkeypatch.setenv("CTC_SUITE_DATA_ROOT", str(tmp_path))
+    task = get_task(f"{task_name}:{rung}")
+    instance = list(task.instances)[0]
+
+    default = task.format_request(instance)  # unset -> alpaca, the published setting
+    assert default.request_type == RequestType.COMPLETION
+    assert default.prompt.startswith("Below is an instruction")
+
+    monkeypatch.setenv(PROMPT_FORMAT_ENV, "chat")
+    chat = task.format_request(instance)
+    assert chat.request_type == RequestType.CHAT
+    assert len(chat.messages) == 1 and chat.messages[0]["role"] == "user"
+    body = chat.messages[0]["content"]
+    assert "Below is an instruction" not in body and "### Instruction" not in body
+    assert body == task.spec.build_prompt(example, query_position=QUERY_POSITION, use_alpaca=False)
+    for doc in example["documents"]:
+        assert doc["text"] in body
+
+    monkeypatch.setenv(PROMPT_FORMAT_ENV, "nonsense")
+    with pytest.raises(ValueError):
+        task.format_request(instance)
