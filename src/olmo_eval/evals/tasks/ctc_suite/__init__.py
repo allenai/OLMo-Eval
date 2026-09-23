@@ -821,7 +821,9 @@ class CTCSuiteTask(Task):
 
     @property
     def row(self) -> RosterRow:
-        return ROSTER[self.row_name]
+        # OOD rows register through the same factory but live in OOD_ROSTER; looking only in
+        # ROSTER made every ctc_contra_fever / ctc_outlier_review task raise KeyError on use.
+        return ROSTER.get(self.row_name) or OOD_ROSTER[self.row_name]
 
     @property
     def _rung(self) -> str | None:

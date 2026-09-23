@@ -839,3 +839,14 @@ def test_shards_partition_the_limited_sample(tmp_path, monkeypatch) -> None:
     parts = [questions(f"{i}/3") for i in range(3)]
     assert sum(len(p) for p in parts) == 10
     assert set().union(*map(set, parts)) == full
+
+
+def test_ood_rows_resolve_and_format(tmp_path, monkeypatch) -> None:
+    row = OOD_ROSTER["ctc_contra_fever"]
+    rung = row.rungs[0]
+    _write_ladder(tmp_path, row.subset, row.rung_alias.get(rung, RUNG_TOKENS[rung]), PAIR_EXAMPLE)
+    monkeypatch.setenv("CTC_SUITE_DATA_ROOT", str(tmp_path))
+    task = get_task(f"ctc_contra_fever:{rung}")
+    assert task.row is row
+    instance = list(task.instances)[0]
+    assert "the sky is blue" in task.format_request(instance).prompt
