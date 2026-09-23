@@ -802,3 +802,40 @@ def test_rerank_decode_cap_is_opt_in_and_score_preserving(monkeypatch) -> None:
     full = ", ".join(f"[{i}]" for i in [3, 1, 7, 9, 11, 2, 4, 5, 6, 8, 10, 12, 13, 14, 15])
     cut = ", ".join(f"[{i}]" for i in [3, 1, 7, 9, 11, 2, 4, 5, 6, 8])
     assert spec.score(spec.parse(full, 30), example) == spec.score(spec.parse(cut, 30), example)
+
+
+def test_shards_partition_the_limited_sample(tmp_path, monkeypatch) -> None:
+    from dataclasses import replace as dc_replace
+
+    from olmo_eval.evals.tasks.ctc_suite import SHARDS_ENV
+
+    row = ROSTER["ctc_nq"]
+    rung = row.rungs[0]
+    d = tmp_path / row.subset
+    d.mkdir(parents=True)
+    rows = [dict(RETRIEVAL_EXAMPLE, queries=[f"q{i}"]) for i in range(40)]
+    (d / f"rung_{RUNG_TOKENS[rung]}.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in rows) + "\n"
+    )
+    monkeypatch.setenv("CTC_SUITE_DATA_ROOT", str(tmp_path))
+
+    def questions(shard):
+        if shard:
+            monkeypatch.setenv(SHARDS_ENV, json.dumps({f"{row.subset}:{rung}": shard}))
+        else:
+            monkeypatch.delenv(SHARDS_ENV, raising=False)
+        task = get_task(f"ctc_nq:{rung}")
+        task.config = dc_replace(task.config, limit=10)
+        got = [i.question for i in task.instances]
+        if not shard:  # the runner's own sampling, as preparation.py does it
+            import random
+
+            got = [
+                i.question for i in random.Random(task.config.seed).sample(list(task.instances), 10)
+            ]
+        return got
+
+    full = set(questions(None))
+    parts = [questions(f"{i}/3") for i in range(3)]
+    assert sum(len(p) for p in parts) == 10
+    assert set().union(*map(set, parts)) == full

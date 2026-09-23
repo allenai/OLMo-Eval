@@ -47,7 +47,9 @@ own task hash rather than being stored under the published data's.
 
 from __future__ import annotations
 
+import json
 import os
+import random
 from collections.abc import Iterator
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
@@ -110,6 +112,26 @@ QUERY_POSITION = "both"
 #: those 10 ids fit, while cutting the task's decode time several-fold. Opt-in: a model that
 #: prefixes its ranking with prose, or repeats ids, can be truncated before its tenth id.
 RERANK_DECODE_ENV = "CTC_SUITE_RERANK_DECODE_TOKENS"
+
+#: Env var splitting one (subset, rung) cell across several jobs: a JSON map
+#: ``{"<subset>:<rung>": "<index>/<count>"}``. Each shard grades a disjoint slice of the exact rows
+#: an unsharded run with the same ``limit``/``seed`` grades, so shard metrics pool back to the
+#: unsharded number (weighting by instance count). Unset or unnamed cells are not sharded.
+SHARDS_ENV = "CTC_SUITE_SHARDS"
+
+
+def _shard_for(subset: str, rung: str | None) -> tuple[int, int] | None:
+    raw = os.environ.get(SHARDS_ENV)
+    if not raw or rung is None:
+        return None
+    spec = json.loads(raw).get(f"{subset}:{rung}")
+    if spec is None:
+        return None
+    index, count = (int(x) for x in str(spec).split("/"))
+    if not 0 <= index < count:
+        raise ValueError(f"{SHARDS_ENV}: bad shard {spec!r} for {subset}:{rung}")
+    return index, count
+
 
 #: Env var choosing how a prompt is wrapped. ``alpaca`` (default) is the setting every published
 #: rung was graded with: the Alpaca preamble, sent as a raw completion. ``chat`` renders exactly
@@ -802,12 +824,39 @@ class CTCSuiteTask(Task):
         return ROSTER[self.row_name]
 
     @property
+    def _rung(self) -> str | None:
+        """The rung label this task reads. The published source's split IS the label; a
+        ``CTC_SUITE_DATA_ROOT`` source is a bare ``rung_<tokens>.jsonl`` with split ``train``, so
+        the label is recovered from the file name (honouring ``rung_alias``)."""
+        source = self.config.data_source
+        if not isinstance(source, DataSource):
+            return None
+        if source.path == HF_DATASET:
+            return source.split
+        by_tokens = {self.row.rung_alias.get(r, RUNG_TOKENS[r]): r for r in self.row.rungs}
+        stem = os.path.basename(source.path).removesuffix(".jsonl")
+        tokens = stem.removeprefix("rung_")
+        return by_tokens.get(int(tokens)) if tokens.isdigit() else None
+
+    @property
     def spec(self):
         return _resolve_spec(self.row.spec)
 
     @property
     def instances(self) -> Iterator[Instance]:
-        yield from self._load_instances_cached()
+        items = list(self._load_instances_cached())
+        shard = _shard_for(self.row.subset, self._rung)
+        if shard is None:
+            yield from items
+            return
+        index, count = shard
+        # Draw the `limit` sample exactly as the runner would (runners/asynq/preparation.py:
+        # random.Random(seed).sample), THEN take every count-th row. The shards of one cell are
+        # therefore a partition of the very rows an unsharded run grades, and each shard is at or
+        # under the limit, so the runner does not sample again.
+        if self.config.limit and len(items) > self.config.limit:
+            items = random.Random(self.config.seed).sample(items, self.config.limit)
+        yield from items[index::count]
 
     def _load_instances(self, split: str | None = None) -> Iterator[Instance]:
         """Same as the base loader, except the variant's :class:`DataSource` is used AS-IS.
