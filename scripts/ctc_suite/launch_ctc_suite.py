@@ -11,8 +11,9 @@ landmark -- and collect the results into one table.
     # after the jobs finish: pool every job (and shard) into one table
     python scripts/ctc_suite/launch_ctc_suite.py --run-name q35-4b-setA-full --collect
 
-What it runs. Every roster row (the 12 in-distribution SFT tasks + the 2 held-out OOD rows by
-default, or ``--rows all``) at every rung up to 256k, with eval sizes from ``--policy`` (default
+What it runs. Every CTC suite row -- the 22-row roster plus the 2 held-out OOD rows by default
+(``--rows roster`` for the 22 only, ``--rows setA`` for the 12 the setA SFT data is IID with + OOD)
+-- at every rung up to 256k, with eval sizes from ``--policy`` (default
 300 per rung at 2k-32k, 100 at 64k/128k/256k), through olmo-eval's native ``olmo_core``
 provider with ``CTC_SUITE_PROMPT_FORMAT=chat`` -- the prompt body byte-identical to the CTC SFT
 data, inside the model's chat template, so the eval is IID with chat-template SFT checkpoints.
@@ -92,6 +93,16 @@ ANSWER_TOKENS = {
     "ctc_strmatch": [24, 26, 28, 30, 31],
     "ctc_textgroups": [21, 23, 25, 26, 29],
     "ctc_grouping": [61, 143, 245, 647, 1384],
+    "ctc_fiqa": [8, 8, 9, 9, 10],
+    "ctc_qdmatch_fiqa": [21, 24, 25, 27, 29],
+    "ctc_qdmatch_hpqa": [44, 48, 50, 55, 60],
+    "ctc_outlier_amzn": [19, 20, 21, 22, 24],
+    "ctc_outlier_fixedm": [15, 16, 17, 17, 19],
+    "ctc_absence": [16, 17, 18, 19],
+    "ctc_msmarco": [6, 6, 6, 7, 7],
+    "ctc_obliq": [25, 26, 26, 30, 32],
+    "ctc_niah": [6, 6, 6, 7, 7],
+    "ctc_scifact": [5, 5, 6, 6, 6],
 }
 OOD_TWIN = {"ctc_contra_fever": "ctc_contradiction", "ctc_outlier_review": "ctc_outlier"}
 #: rerank is scored on its first 10 distinct ids; 160 tokens hold them (score-identical cap).
@@ -221,8 +232,11 @@ def submit(args, bins: list[list[Cell]]) -> None:
         ["git", "-C", repo, "branch", "--show-current"], capture_output=True, text=True
     ).stdout.strip()
     # gantry clones THIS repo at its current (pushed) commit; OLMo-core comes from --olmo-core-ref
+    # the base image ships an old ai2-olmo-eval that shadows an editable install: remove it and
+    # install this checkout non-editably
     install = (
-        "pip install -e . 'transformers==5.7.0' 'huggingface_hub==1.12.2' && "
+        "pip uninstall -y ai2-olmo-eval olmo-eval; pip install . 'transformers==5.7.0' "
+        "'huggingface_hub==1.12.2' && "
         f"pip install 'ai2-olmo-core[fla] @ git+https://github.com/allenai/OLMo-core.git@"
         f"{args.olmo_core_ref}' dataclass-extensions"
     )
@@ -337,7 +351,12 @@ def main() -> None:
     ap.add_argument("--ckpt", help="olmo-core step dir on weka")
     ap.add_argument("--run-name", required=True)
     ap.add_argument("--arm", choices=["full", "compressive"], default="compressive")
-    ap.add_argument("--rows", default="setA", help="'setA' (12 IID + 2 OOD), 'all', or a list")
+    ap.add_argument(
+        "--rows",
+        default="all",
+        help="'all' (the 22-row CTC suite + the 2 held-out OOD rows; default), 'roster' (the 22 "
+        "only), 'setA' (the 12 rows the setA SFT data is IID with + the 2 OOD rows), or a list",
+    )
     ap.add_argument("--policy", default=DEFAULT_POLICY)
     ap.add_argument("--budget-hours", type=float, default=1.5, help="wall-clock per job")
     ap.add_argument("--setup-minutes", type=float, default=8.0, help="install + model load")
@@ -359,10 +378,10 @@ def main() -> None:
         ap.error("--ckpt is required unless --collect")
     if args.rows == "setA":
         rows = IID_ROWS + OOD_ROWS
-    elif args.rows == "all":
+    elif args.rows in ("all", "roster"):
         from olmo_eval.evals.tasks.ctc_suite import OOD_ROSTER, ROSTER
 
-        rows = list(ROSTER) + list(OOD_ROSTER)
+        rows = list(ROSTER) + (list(OOD_ROSTER) if args.rows == "all" else [])
     else:
         rows = [r.strip() for r in args.rows.split(",") if r.strip()]
 
