@@ -32,6 +32,47 @@ uv run olmo-eval run -m <model> -t ctc:low:xlong    # the two axes compose (47 r
 uv run olmo-eval run -m <model> -t ctc              # all 177 task x rung combinations
 ```
 
+## Running the whole suite on Beaker
+
+`scripts/ctc_suite/launch_ctc_suite.py` evaluates one olmo-core checkpoint on every row in one
+command -- full attention or compressive landmark -- and pools the results:
+
+```bash
+# plan (cells, shards, jobs, estimated GPU-hours) without submitting
+python scripts/ctc_suite/launch_ctc_suite.py --ckpt <weka step dir> --arm compressive \
+    --run-name <name> --dry-run
+python scripts/ctc_suite/launch_ctc_suite.py --ckpt <weka step dir> --arm full --run-name <name>
+# after the jobs finish: one table (eval_size + binomial SE; sub-500 cells flagged)
+python scripts/ctc_suite/launch_ctc_suite.py --run-name <name> --collect
+```
+
+- **Scope** (`--rows`): `all` (default) = the 22 rows + the 2 held-out OOD rows (`ctc:ood`);
+  `roster` = the 22; `setA` = the 12 rows the setA SFT data is IID with, + OOD.
+- **Eval sizes** (`--policy`, default `r2k-r32k:300,r64k:100,r128k:100,r256k:100`, plus
+  `--row-limit` caps; grouping and reorder default to 100 per rung, since their answers list every
+  document). 300 is below the 500 floor: quote those cells with their size and SE.
+- **Packing.** Each (row, rung) is costed from measured throughput (compressive-landmark
+  Qwen3.5-4B, H100: prefill per rung + ~30 ms per decoded token at bs=1, times the row's measured
+  answer length), cells over the per-job budget are split into exact shards, and everything is
+  packed into single-GPU jobs that fit `--budget-hours` (default 1.5). The planner has run ~35%
+  above measured wall-clock.
+- **Backend.** olmo-eval's native `olmo_core` provider (no HF/vLLM export), batch size 1 for
+  compressive landmark (blocks are tied to absolute position), `--full-batch-size` at <=32k for
+  full attention. The job installs this checkout's pushed commit and OLMo-core from
+  `--olmo-core-ref`, which must carry the FLA autotune fix -- without it every new prompt length
+  re-tunes Triton kernels for ~25 s, which was ~95% of eval wall-clock on Qwen3.5.
+- **Truncation.** Qwen3.5 has 262,144 positions; some r256k rows of hpqa / outlier / qdmatch_nq /
+  rerank are longer and are left-truncated. The planner prints which cells.
+
+## Knobs (environment variables)
+
+| Variable | Default | Effect |
+|---|---|---|
+| `CTC_SUITE_PROMPT_FORMAT` | `alpaca` | `alpaca`: Alpaca preamble as a raw completion (every published number). `chat`: the same body without the preamble, sent as one user turn so the model's chat template applies -- byte-identical to the CTC SFT data, i.e. IID with chat-template SFT checkpoints. The launcher sets `chat`. Scores under the two are not comparable. |
+| `CTC_SUITE_RERANK_DECODE_TOKENS` | unset (512) | Cap rerank's decode budget. rerank is scored on its first 10 distinct ids, so a cap that holds them (160) is score-identical and cuts its decode time several-fold. |
+| `CTC_SUITE_SHARDS` | unset | JSON `{"<subset>:<rung>": "<i>/<n>"}`: grade shard i of n of the `limit`-sampled rows. The shards partition the rows an unsharded run grades, so they pool back exactly. |
+| `CTC_SUITE_DATA_ROOT` | unset | Local `<subset>/rung_<tokens>.jsonl` tree instead of the HF dataset. |
+
 ## low-CTC vs high-CTC
 
 `ctc:low` is the 12 rows where an answer-bearing document exists and the work is finding it --
@@ -129,6 +170,10 @@ cap is documented on its RosterRow.
   "Combination N: ... Invalid" verbatim until the budget ends it. Raising the budget 200 -> 1024
   was tried and reverted; 8/10 still hit the larger cap. That row is repetition-gated, not
   truncation-gated.
+- **Two rows carry a length/overlap shortcut in their own construction.** `ctc_textgroups`: the
+  SHORTEST document is gold in 0.52-0.59 of rows at 8k-32k (chance 0.228 -> 0.056; 1-based gold).
+  `ctc_strmatch`: the only pairs sharing words are the gold pairs (overlap_pair_is_gold 1.000 vs
+  0.004). Both are solvable in part without the task; read their numbers with that caveat.
 - Contexts ≥256k exceed most models' native windows; the serving side (YaRN etc.) is the caller's
   responsibility and belongs next to any reported number.
 - **`--save-requests` (on by default) writes each corpus twice.** The raw example travels whole in
