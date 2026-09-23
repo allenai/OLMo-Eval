@@ -252,7 +252,8 @@ def job_script(ckpt: str, cells: list[Cell], out_dir: str, tokenizer: str) -> tu
     return cmd, env
 
 
-def submit(args, bins: list[list[Cell]]) -> None:
+def submit(args, bins: list[list[Cell]], only: set[int] | None = None) -> None:
+    """Submit one job per bin (``only``: just those bin indices, e.g. after a preemption)."""
     here = os.path.dirname(os.path.abspath(__file__))
     repo = os.path.abspath(os.path.join(here, os.pardir, os.pardir))
     branch = subprocess.run(
@@ -269,6 +270,8 @@ def submit(args, bins: list[list[Cell]]) -> None:
     )
     root = os.path.join(args.out_root, args.run_name)
     for i, cells in enumerate(bins):
+        if only is not None and i not in only:
+            continue
         cmd, env = job_script(args.ckpt, cells, f"{root}/job{i:02d}", args.tokenizer)
         argv = [
             "gantry",
@@ -316,15 +319,25 @@ def submit(args, bins: list[list[Cell]]) -> None:
             stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
-    manifest = {
-        "ckpt": args.ckpt,
-        "arm": args.arm,
-        "policy": args.policy,
-        "rows": args.rows,
-        "olmo_core_ref": args.olmo_core_ref,
-        "olmo_eval_branch": branch,
-        "jobs": [[c.__dict__ for c in b] for b in bins],
-    }
+    if only is not None:
+        print(f"\nresubmitted {len(only)} job(s): {sorted(only)} -> {root}")
+        return
+    keep = (
+        "ckpt",
+        "arm",
+        "policy",
+        "rows",
+        "row_limit",
+        "tokenizer",
+        "olmo_core_ref",
+        "cluster",
+        "workspace",
+        "budget",
+        "priority",
+        "image",
+    )
+    manifest = {k: getattr(args, k) for k in keep}
+    manifest.update(olmo_eval_branch=branch, jobs=[[c.__dict__ for c in b] for b in bins])
     if not args.dry_run:
         os.makedirs(root, exist_ok=True)
         with open(os.path.join(root, "launch_manifest.json"), "w") as f:
@@ -360,6 +373,12 @@ def collect(run_name: str, out_root: str) -> None:
                 "se": round(se, 4),
             }
         )
+    missing = missing_jobs(root)
+    if missing:
+        print(
+            f"⚠ {len(missing)} job(s) have no metrics.json yet (running, failed or preempted): "
+            f"{missing} -- rerun with --resubmit once they are no longer running"
+        )
     out = os.path.join(root, "results.json")
     with open(out, "w") as f:
         json.dump(rows, f, indent=1)
@@ -369,6 +388,38 @@ def collect(run_name: str, out_root: str) -> None:
         )
         print(f"{r['row']:<20}{r['rung']:>6}  {r['metric']:<22}{r['value']:.4f}{flag}")
     print(f"\n{len(rows)} cells -> {out}")
+
+
+def missing_jobs(root: str) -> list[int]:
+    """Bin indices from the launch manifest whose job directory has no metrics.json."""
+    path = os.path.join(root, "launch_manifest.json")
+    if not os.path.exists(path):
+        return []
+    with open(path) as f:
+        n = len(json.load(f)["jobs"])
+    return [
+        i for i in range(n) if not os.path.exists(os.path.join(root, f"job{i:02d}", "metrics.json"))
+    ]
+
+
+def resubmit(args) -> None:
+    """Resubmit exactly the bins that produced no metrics.json, with the original settings."""
+    root = os.path.join(args.out_root, args.run_name)
+    with open(os.path.join(root, "launch_manifest.json")) as f:
+        manifest = json.load(f)
+    for k, v in manifest.items():
+        if k not in ("jobs", "olmo_eval_branch"):
+            setattr(args, k, v)
+    bins = [
+        [Cell(**{**c, "shard": tuple(c["shard"]) if c["shard"] else None}) for c in b]
+        for b in manifest["jobs"]
+    ]
+    missing = missing_jobs(root)
+    if not missing:
+        print(f"every job in {root} has results; nothing to resubmit")
+        return
+    print(f"resubmitting {missing}: check first that none of them is still running")
+    submit(args, bins, only=set(missing))
 
 
 def main() -> None:
@@ -409,12 +460,20 @@ def main() -> None:
         help="results root on weka (default: <weka checkpoints>/<your Beaker user>/_olmoeval_ctc)",
     )
     ap.add_argument("--collect", action="store_true", help="pool finished results, submit nothing")
+    ap.add_argument(
+        "--resubmit",
+        action="store_true",
+        help="resubmit the jobs of --run-name that have no metrics.json (e.g. preempted), with "
+        "the settings recorded in its launch manifest",
+    )
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
     args.out_root = args.out_root or default_out_root()
 
     if args.collect:
         return collect(args.run_name, args.out_root)
+    if args.resubmit:
+        return resubmit(args)
     if not args.ckpt:
         ap.error("--ckpt is required unless --collect")
     if args.rows == "setA":

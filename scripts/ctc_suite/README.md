@@ -16,6 +16,10 @@ python scripts/ctc_suite/launch_ctc_suite.py --ckpt <weka step dir> --arm full  
 
 # 3. after the jobs finish: one table (eval_size + binomial SE, sub-500 cells flagged)
 python scripts/ctc_suite/launch_ctc_suite.py --run-name <name> --collect
+
+# jobs are unallocated, so allocated work can preempt them: collect lists jobs with no results,
+# and this resubmits exactly those with the settings in the launch manifest
+python scripts/ctc_suite/launch_ctc_suite.py --run-name <name> --resubmit
 ```
 
 ## What gets evaluated
@@ -106,4 +110,5 @@ cost assumes batching works.
 | `cannot import name 'silent_tqdm'` | `huggingface_hub` too old; the launcher pins `transformers==5.7.0` / `huggingface_hub==1.12.2` |
 | `Invalid OLMo-core checkpoint ... dataset.tokenizer` | pass `validate_checkpoint=false` + `allow_tokenizer_fallback=true` (the launcher does) |
 | every example takes ~10-25 s regardless of length | `--olmo-core-ref` lacks the FLA autotune fix |
+| a job exits 143 with "preempted by ... allocated workloads are scheduled ahead of unallocated ones" | expected for unallocated jobs; `--resubmit` reruns just the missing ones |
 | a score of ~0.4 vs ~0.7 on 25 examples | eval_size 25 is ±0.1; outlier@8k agreed to 0.01 between this path (0.597) and the native OLMo-core driver (0.587) at 500 |
