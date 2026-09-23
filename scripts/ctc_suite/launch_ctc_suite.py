@@ -47,7 +47,25 @@ import subprocess
 import sys
 from dataclasses import dataclass
 
-WEKA_OUT = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/_olmoeval_ctc"
+WEKA_CKPTS = "/weka/oe-training-default/ai2-llm/checkpoints"
+
+
+def default_out_root() -> str:
+    """``<weka checkpoints>/<your Beaker user>/_olmoeval_ctc`` (``$USER`` without beaker)."""
+    user = os.environ.get("USER", "unknown")
+    try:
+        who = subprocess.run(
+            ["beaker", "account", "whoami", "--format", "json"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        data = json.loads(who.stdout)
+        user = (data[0] if isinstance(data, list) else data).get("name") or user
+    except Exception:
+        pass
+    return os.path.join(WEKA_CKPTS, user, "_olmoeval_ctc")
+
 
 IID_ROWS = [
     "ctc_nq",
@@ -249,7 +267,7 @@ def submit(args, bins: list[list[Cell]]) -> None:
         f"pip install 'ai2-olmo-core[fla] @ git+https://github.com/allenai/OLMo-core.git@"
         f"{args.olmo_core_ref}' dataclass-extensions"
     )
-    root = os.path.join(WEKA_OUT, args.run_name)
+    root = os.path.join(args.out_root, args.run_name)
     for i, cells in enumerate(bins):
         cmd, env = job_script(args.ckpt, cells, f"{root}/job{i:02d}", args.tokenizer)
         argv = [
@@ -314,9 +332,9 @@ def submit(args, bins: list[list[Cell]]) -> None:
     print(f"\n{len(bins)} jobs {'planned' if args.dry_run else 'submitted'} -> {root}")
 
 
-def collect(run_name: str) -> None:
+def collect(run_name: str, out_root: str) -> None:
     """Pool every job's metrics.json (shards weighted by instance count) into one table."""
-    root = os.path.join(WEKA_OUT, run_name)
+    root = os.path.join(out_root, run_name)
     acc: dict[str, dict] = {}
     for path in sorted(glob.glob(os.path.join(root, "job*", "metrics.json"))):
         with open(path) as f:
@@ -385,12 +403,18 @@ def main() -> None:
     ap.add_argument("--budget", default="ai2/oe-other")
     ap.add_argument("--priority", default="urgent")
     ap.add_argument("--image", default="tylerr/olmo-core-tch291cu128-2025-11-25")
+    ap.add_argument(
+        "--out-root",
+        default=None,
+        help="results root on weka (default: <weka checkpoints>/<your Beaker user>/_olmoeval_ctc)",
+    )
     ap.add_argument("--collect", action="store_true", help="pool finished results, submit nothing")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
+    args.out_root = args.out_root or default_out_root()
 
     if args.collect:
-        return collect(args.run_name)
+        return collect(args.run_name, args.out_root)
     if not args.ckpt:
         ap.error("--ckpt is required unless --collect")
     if args.rows == "setA":

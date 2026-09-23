@@ -55,9 +55,10 @@ next to its value; carry both wherever the number goes (±0.026 at 300, ±0.046 
      default `alpaca` numbers);
    - `CTC_SUITE_RERANK_DECODE_TOKENS=160`: rerank is scored on its first 10 distinct ids only, so
      the cap is score-identical;
-   - outputs to `/weka/oe-training-default/ai2-llm/checkpoints/prasanns/_olmoeval_ctc/<run-name>/jobNN/`,
-     plus `launch_manifest.json` with the full plan.
-5. **Collect** reads every `jobNN/metrics.json`, pools shards by instance count, and writes
+   - outputs to `<--out-root>/<run-name>/jobNN/` -- by default
+     `/weka/oe-training-default/ai2-llm/checkpoints/<your Beaker user>/_olmoeval_ctc/` -- plus
+     `launch_manifest.json` with the full plan.
+5. **Collect** (run where weka is mounted, with the same `--out-root`) reads every `jobNN/metrics.json`, pools shards by instance count, and writes
    `results.json` (row, rung, metric, value, eval_size, se).
 
 ## Arms
@@ -76,6 +77,8 @@ cost assumes batching works.
 
 ## Requirements
 
+- **A local olmo-eval environment on this branch** (the planner imports the suite roster):
+  `git checkout prasann/ctc-suite-launcher && uv sync`, then prefix commands with `uv run`.
 - **Checkpoint:** an olmo-core step dir (`config.json` + `model_and_optim/`) on weka. Its config
   does not need a `dataset.tokenizer`; the launcher passes the tokenizer
   (`--tokenizer`, default `Qwen/Qwen3.5-0.8B`), EOS 248046 and pad 248044 explicitly.
