@@ -230,12 +230,16 @@ def pack(cells: list[Cell], budget_s: float) -> list[list[Cell]]:
     return bins
 
 
-def job_script(ckpt: str, cells: list[Cell], out_dir: str, tokenizer: str) -> tuple[str, dict]:
+def job_script(
+    ckpt: str, cells: list[Cell], out_dir: str, tokenizer: str, doc_markers: bool = False
+) -> tuple[str, dict]:
     shards = {f"{c.subset}:{c.rung}": f"{c.shard[0]}/{c.shard[1]}" for c in cells if c.shard}
     env = {
         "CTC_SUITE_PROMPT_FORMAT": "chat",
         "CTC_SUITE_RERANK_DECODE_TOKENS": str(RERANK_DECODE_TOKENS),
     }
+    if doc_markers:
+        env["CTC_SUITE_DOC_MARKERS"] = "1"
     if shards:
         env["CTC_SUITE_SHARDS"] = json.dumps(shards)
     tasks = " ".join(f"-t {c.task} -o limit={c.limit}" for c in cells)
@@ -272,7 +276,9 @@ def submit(args, bins: list[list[Cell]], only: set[int] | None = None) -> None:
     for i, cells in enumerate(bins):
         if only is not None and i not in only:
             continue
-        cmd, env = job_script(args.ckpt, cells, f"{root}/job{i:02d}", args.tokenizer)
+        cmd, env = job_script(
+            args.ckpt, cells, f"{root}/job{i:02d}", args.tokenizer, args.doc_markers
+        )
         argv = [
             "gantry",
             "run",
@@ -329,6 +335,7 @@ def submit(args, bins: list[list[Cell]], only: set[int] | None = None) -> None:
         "rows",
         "row_limit",
         "tokenizer",
+        "doc_markers",
         "olmo_core_ref",
         "cluster",
         "workspace",
@@ -448,6 +455,13 @@ def main() -> None:
     ap.add_argument("--setup-minutes", type=float, default=8.0, help="install + model load")
     ap.add_argument("--full-batch-size", type=int, default=8)
     ap.add_argument("--tokenizer", default="Qwen/Qwen3.5-0.8B")
+    ap.add_argument(
+        "--doc-markers",
+        action="store_true",
+        help="wrap each document in <|box_start|>/<|box_end|> (CTC_SUITE_DOC_MARKERS=1), as the "
+        "CTC SFT converter's default shards do. Use for checkpoints trained on marker-wrapped "
+        "shards (e.g. setA shards_qwen35_256k); leave off for marker-free training data.",
+    )
     ap.add_argument("--olmo-core-ref", default="prasann/landmark")
     ap.add_argument("--cluster", default="ai2/jupiter-cirrascale-2")
     ap.add_argument("--workspace", default="ai2/flex2")

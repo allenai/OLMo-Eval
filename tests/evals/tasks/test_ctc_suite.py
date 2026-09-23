@@ -779,6 +779,54 @@ def test_chat_prompt_format_is_the_sft_rendering(tmp_path, monkeypatch, task_nam
         task.format_request(instance)
 
 
+@pytest.mark.parametrize(
+    ("task_name", "example"),
+    [("ctc_nq", RETRIEVAL_EXAMPLE), ("ctc_contradiction", PAIR_EXAMPLE)],
+)
+def test_doc_markers_wrap_every_document_chat_only(tmp_path, monkeypatch, task_name, example):
+    """``CTC_SUITE_DOC_MARKERS=1`` = the SFT converter's marker-wrapped body (token-level parity
+    with OLMo-core's converter is checked on real rows by its check_doc_marker_parity.py)."""
+    from olmo_eval.evals.tasks.ctc_suite import PROMPT_FORMAT_ENV, QUERY_POSITION
+    from olmo_eval.evals.tasks.ctc_suite.doc_markers import (
+        DOC_END_STR,
+        DOC_MARKERS_ENV,
+        DOC_START_STR,
+    )
+
+    row = ROSTER[task_name]
+    rung = row.rungs[0]
+    _write_ladder(tmp_path, row.subset, row.rung_alias.get(rung, RUNG_TOKENS[rung]), example)
+    monkeypatch.setenv("CTC_SUITE_DATA_ROOT", str(tmp_path))
+    task = get_task(f"{task_name}:{rung}")
+    instance = list(task.instances)[0]
+    plain = task.spec.build_prompt(example, query_position=QUERY_POSITION, use_alpaca=False)
+
+    monkeypatch.setenv(PROMPT_FORMAT_ENV, "chat")
+    monkeypatch.setenv(DOC_MARKERS_ENV, "1")
+    body = task.format_request(instance).messages[0]["content"]
+    n = sum(1 for d in example["documents"] if str(d.get("text", "")).strip())
+    assert body.count(DOC_START_STR) == n and body.count(DOC_END_STR) == n
+    # markers are the only change, and every document body sits inside one chunk
+    assert body.replace(DOC_START_STR, "").replace(DOC_END_STR, "") == plain
+    for doc in example["documents"]:
+        i = body.index(doc["text"])
+        assert body.rfind(DOC_START_STR, 0, i) > body.rfind(DOC_END_STR, 0, i)
+
+    monkeypatch.setenv(PROMPT_FORMAT_ENV, "alpaca")  # no training data wraps the Alpaca prompt
+    with pytest.raises(ValueError):
+        task.format_request(instance)
+
+
+def test_doc_markers_wrap_oolong_item_lines() -> None:
+    from olmo_eval.evals.tasks.ctc_suite.doc_markers import add_doc_markers
+
+    body = "Intro line\n\nDate: 1 || a\nDate: 2 || b\n\nQuestion?"
+    assert add_doc_markers(body, {}, "oolong") == (
+        "Intro line\n\n<|box_start|>Date: 1 || a<|box_end|><|box_start|>\nDate: 2 || b<|box_end|>"
+        "\n\nQuestion?"
+    )
+
+
 def test_rerank_decode_cap_is_opt_in_and_score_preserving(monkeypatch) -> None:
     from olmo_eval.common.types import compute_task_hash
     from olmo_eval.evals.tasks.ctc_suite import RERANK_DECODE_ENV, _resolve_spec

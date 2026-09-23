@@ -42,6 +42,7 @@ jobs and a pooled results table: see [`scripts/ctc_suite/README.md`](../../../..
 | Variable | Default | Effect |
 |---|---|---|
 | `CTC_SUITE_PROMPT_FORMAT` | `alpaca` | `alpaca`: Alpaca preamble as a raw completion (every published number). `chat`: the same body without the preamble, sent as one user turn so the model's chat template applies -- byte-identical to the CTC SFT data, i.e. IID with chat-template SFT checkpoints. The launcher sets `chat`. Scores under the two are not comparable. |
+| `CTC_SUITE_DOC_MARKERS` | unset | `1` (with `chat` only): wrap each document in `<|box_start|>`/`<|box_end|>` exactly as the OLMo-core CTC SFT converter's default (marker-wrapped) shards do: contiguous per-document chunks, oolong per `||` item line. Token-identical to those shards on real eval rows of all 11 setA tasks (OLMo-core `debug/ctc_sft_setA/check_doc_marker_parity.py`). Use it for checkpoints trained on marker-wrapped shards; the launcher's `--doc-markers` sets it. |
 | `CTC_SUITE_RERANK_DECODE_TOKENS` | unset (512) | Cap rerank's decode budget. rerank is scored on its first 10 distinct ids, so a cap that holds them (160) is score-identical and cuts its decode time several-fold. |
 | `CTC_SUITE_SHARDS` | unset | JSON `{"<subset>:<rung>": "<i>/<n>"}`: grade shard i of n of the `limit`-sampled rows. The shards partition the rows an unsharded run grades, so they pool back exactly. |
 | `CTC_SUITE_DATA_ROOT` | unset | Local `<subset>/rung_<tokens>.jsonl` tree instead of the HF dataset. |

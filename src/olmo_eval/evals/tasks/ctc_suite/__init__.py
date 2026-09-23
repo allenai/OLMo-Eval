@@ -68,6 +68,7 @@ from ._vendor.ctc.format import registry as _ctc_registry
 from ._vendor.ctc.format.prompts import GROUPING_INSTRUCTION
 from ._vendor.ctc.tasks import load_all as _load_all_specs
 from ._vendor.ctc.tasks._grouping import make_grouping_spec
+from .doc_markers import DOC_MARKERS_ENV, add_doc_markers, doc_markers_enabled
 
 __all__ = [
     "HF_DATASET",
@@ -889,8 +890,15 @@ class CTCSuiteTask(Task):
         example = instance.metadata["example"]
         if prompt_format() == "chat":
             body = self.spec.build_prompt(example, query_position=QUERY_POSITION, use_alpaca=False)
+            if doc_markers_enabled():
+                body = add_doc_markers(body, example, self.spec.name)
             return LMRequest(
                 request_type=RequestType.CHAT, messages=({"role": "user", "content": body},)
+            )
+        if doc_markers_enabled():
+            raise ValueError(
+                f"{DOC_MARKERS_ENV}=1 needs {PROMPT_FORMAT_ENV}=chat: the markers wrap the chat "
+                "body as the CTC SFT converter does; no training data wraps the Alpaca prompt"
             )
         prompt = self.spec.build_prompt(example, query_position=QUERY_POSITION)
         return LMRequest(request_type=RequestType.COMPLETION, prompt=prompt)

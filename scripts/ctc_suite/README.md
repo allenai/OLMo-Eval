@@ -57,6 +57,10 @@ next to its value; carry both wherever the number goes (±0.026 at 300, ±0.046 
    - `CTC_SUITE_PROMPT_FORMAT=chat`: the prompt body byte-identical to the CTC SFT data, in the
      model's chat template (IID with chat-template SFT checkpoints; not comparable with the
      default `alpaca` numbers);
+   - `--doc-markers` adds `CTC_SUITE_DOC_MARKERS=1`: each document wrapped in
+     `<|box_start|>`/`<|box_end|>` exactly as the CTC SFT converter's default shards do (token-identical).
+     Pass it for checkpoints trained on marker-wrapped shards (e.g. setA `shards_qwen35_256k`, the
+     `prasann/ctc-setA-sft` runs); leave it off for marker-free training data;
    - `CTC_SUITE_RERANK_DECODE_TOKENS=160`: rerank is scored on its first 10 distinct ids only, so
      the cap is score-identical;
    - outputs to `<--out-root>/<run-name>/jobNN/` -- by default
