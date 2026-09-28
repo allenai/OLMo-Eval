@@ -328,6 +328,8 @@ def submit(args, bins: list[list[Cell]], only: set[int] | None = None) -> None:
         ]
         if branch:
             argv += ["--branch", branch]
+        for host in args.hostname:
+            argv += ["--hostname", host]
         for k, v in env.items():
             argv += ["--env", f"{k}={v}"]
         argv += ["--", "bash", "-c", cmd]
@@ -464,12 +466,18 @@ def resubmit(args) -> None:
     with open(manifest_path(root)) as f:
         manifest = json.load(f)
     for k, v in manifest.items():
-        if k not in ("jobs", "olmo_eval_branch"):
+        # --hostname is a property of this resubmission (e.g. steering around a bad node)
+        if k not in ("jobs", "olmo_eval_branch", "hostname"):
             setattr(args, k, v)
     bins = [
         [Cell(**{**c, "shard": tuple(c["shard"]) if c["shard"] else None}) for c in b]
         for b in manifest["jobs"]
     ]
+    if args.batch_size:
+        # e.g. a bs=8 bin that OOMs at r32k: rerun it smaller (bs=1 bins stay bs=1)
+        for b in bins:
+            for c in b:
+                c.batch_size = min(c.batch_size, args.batch_size)
     if args.jobs:
         missing = sorted(int(j) for j in args.jobs.split(","))
         print(f"resubmitting the named jobs {missing}: check first that none of them is running")
@@ -545,6 +553,19 @@ def main() -> None:
         default="",
         help="with --resubmit: resubmit exactly these job indices (e.g. 0,3,7) instead of the ones "
         "with no metrics.json -- for jobs that never submitted, or when weka is not mounted here",
+    )
+    ap.add_argument(
+        "--batch-size",
+        type=int,
+        default=0,
+        help="with --resubmit: cap every resubmitted bin's batch size (e.g. 4 after a bs=8 OOM)",
+    )
+    ap.add_argument(
+        "--hostname",
+        action="append",
+        default=[],
+        help="restrict jobs to these Beaker hostnames (repeatable; gantry --hostname) -- how to "
+        "keep jobs off a bad node, since gantry has no exclude",
     )
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
