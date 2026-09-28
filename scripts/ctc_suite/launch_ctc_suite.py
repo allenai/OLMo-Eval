@@ -305,8 +305,6 @@ def submit(args, bins: list[list[Cell]], only: set[int] | None = None) -> None:
             args.workspace,
             "-b",
             args.budget,
-            "--cluster",
-            args.cluster,
             "--gpus",
             "1",
             "--priority",
@@ -328,8 +326,12 @@ def submit(args, bins: list[list[Cell]], only: set[int] | None = None) -> None:
         ]
         if branch:
             argv += ["--branch", branch]
-        for host in args.hostname:
-            argv += ["--hostname", host]
+        # gantry refuses --hostname together with --cluster; the hosts already pin the cluster
+        if args.hostname:
+            for host in args.hostname:
+                argv += ["--hostname", host]
+        else:
+            argv += ["--cluster", args.cluster]
         for k, v in env.items():
             argv += ["--env", f"{k}={v}"]
         argv += ["--", "bash", "-c", cmd]
