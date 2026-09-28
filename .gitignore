@@ -91,3 +91,6 @@ src/olmo_eval/evals/tasks/data/litsearch_rerank_pools.jsonl
 # Telegraf is a licensed font and this repo is public. CI downloads it from a private bucket.
 dashboard/ui/public/fonts/
 *.otf
+
+# CTC suite launcher: local manifest fallback when the results root is not writable
+scripts/ctc_suite/launches/

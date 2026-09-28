@@ -1,23 +1,25 @@
 """
-Pre-flight for one CTC suite eval job: run inside the job, after the install, before ``olmo-eval run``.
-Prints the checkpoint directory to evaluate as its last stdout line; exits non-zero (so the job stops
-before loading the model) if the eval would not see the model the way training did.
+Pre-flight for one CTC suite eval job: run inside the job, after the install, before
+``olmo-eval run``. Prints the checkpoint directory to evaluate as its last stdout line; exits
+non-zero (so the job stops before loading the model) if the eval would not see the model the way
+training did.
 
-1. **Checkpoint config vs the installed OLMo-core.** A checkpoint trained on another OLMo-core branch
-   can carry config fields this one does not define (e.g. the setA SFT runs, trained on
+1. **Checkpoint config vs the installed OLMo-core.** A checkpoint trained on another OLMo-core
+   branch can carry config fields this one does not define (e.g. the setA SFT runs, trained on
    ``prasann/ctc-setA-sft``, serialize ``AttentionConfig.vec_dim`` / ``n_summary_tokens`` / ... as
-   ``null``), and ``TransformerConfig.from_dict`` rejects any unknown field. An unknown field that is
-   ``null`` configures nothing, so it is dropped: the config is rewritten into ``--view`` with every
-   other entry of the checkpoint symlinked beside it. An unknown field with a VALUE turns on a feature
-   this OLMo-core lacks -- that is a hard failure, not something to drop.
+   ``null``), and ``TransformerConfig.from_dict`` rejects any unknown field. An unknown field that
+   is ``null`` configures nothing, so it is dropped: the config is rewritten into ``--view`` with
+   every other entry of the checkpoint symlinked beside it. An unknown field with a VALUE turns on
+   a feature this OLMo-core lacks -- that is a hard failure, not something to drop.
 
 2. **Chat-template alignment.** CTC SFT data is rendered as ONE chat-template call over (prompt,
    answer), so the tokens a model saw before its answer are a prefix of that full render. The eval
    renders the prompt alone with ``add_generation_prompt=True``. That is only train-identical if the
    template's generation prompt is a token prefix of its own rendered conversation. Qwen3.5-0.8B's
-   template is (``<think>\\n\\n</think>\\n\\n``); Qwen3.5-4B's is NOT (it opens ``<think>\\n`` for a
-   generation prompt but renders a past answer as ``<think>\\n\\n</think>\\n\\n...``), so passing
-   ``--tokenizer Qwen/Qwen3.5-4B`` would evaluate every prompt out of format. The check fails instead.
+   template is (``<think>\\n\\n</think>\\n\\n``); Qwen3.5-4B's is NOT (it opens ``<think>\\n`` for
+   a generation prompt but renders a past answer as ``<think>\\n\\n</think>\\n\\n...``), so
+   passing ``--tokenizer Qwen/Qwen3.5-4B`` would evaluate every prompt out of format. The check
+   fails instead.
 
     python scripts/ctc_suite/preflight.py --ckpt <step dir> --tokenizer Qwen/Qwen3.5-0.8B \\
         --view /tmp/ckpt_view
@@ -69,8 +71,8 @@ def drop_unknown_null_fields(node, path: str = "model") -> list[str]:
                 if node[key] is not None:
                     raise SystemExit(
                         f"[preflight] {path}.{key}={node[key]!r} is set in the checkpoint config, "
-                        f"but the installed OLMo-core's {cls.__name__} has no such field: install the "
-                        "OLMo-core the checkpoint was trained with (--olmo-core-ref)"
+                        f"but the installed OLMo-core's {cls.__name__} has no such field: install "
+                        "the OLMo-core the checkpoint was trained with (--olmo-core-ref)"
                     )
                 del node[key]
                 dropped.append(f"{path}.{key}")
@@ -117,17 +119,15 @@ def check_chat_prefix(tokenizer: str) -> None:
     tok = AutoTokenizer.from_pretrained(tokenizer)
     user = [{"role": "user", "content": "Documents:\n<|box_start|>[1] a<|box_end|>\nWhich one?"}]
     prompt = tok.apply_chat_template(user, tokenize=False, add_generation_prompt=True)
-    full = tok.apply_chat_template(
-        user + [{"role": "assistant", "content": "[1]"}], tokenize=False
-    )
+    full = tok.apply_chat_template(user + [{"role": "assistant", "content": "[1]"}], tokenize=False)
     p_ids = tok(prompt, add_special_tokens=False)["input_ids"]
     f_ids = tok(full, add_special_tokens=False)["input_ids"]
     if not full.startswith(prompt) or f_ids[: len(p_ids)] != p_ids:
         raise SystemExit(
-            f"[preflight] {tokenizer}'s generation prompt ends {prompt[-24:]!r}, which is not a token "
-            f"prefix of the trained conversation ({full[len(prompt) - 24 :][:48]!r}): every prompt "
-            "would be out of format for SFT data rendered in one call. Use a tokenizer whose "
-            "template closes the empty thinking block (e.g. Qwen/Qwen3.5-0.8B)"
+            f"[preflight] {tokenizer}'s generation prompt ends {prompt[-24:]!r}, which is not a "
+            f"token prefix of the trained conversation ({full[len(prompt) - 24 :][:48]!r}): every "
+            "prompt would be out of format for SFT data rendered in one call. Use a tokenizer "
+            "whose template closes the empty thinking block (e.g. Qwen/Qwen3.5-0.8B)"
         )
     _log(f"chat template OK: generation prompt ends {prompt[-24:]!r}")
 

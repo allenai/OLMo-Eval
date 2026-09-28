@@ -151,6 +151,7 @@ class Cell:
 def rows_without_data(rows: list[str]) -> list[str]:
     """The rows whose subset has no parquet directory in :data:`HF_DATASET`."""
     from huggingface_hub import HfFileSystem
+
     from olmo_eval.evals.tasks.ctc_suite import HF_DATASET, OOD_ROSTER, ROSTER
 
     listed = HfFileSystem().ls(f"datasets/{HF_DATASET}/data", detail=False)
@@ -361,15 +362,27 @@ def submit(args, bins: list[list[Cell]], only: set[int] | None = None) -> None:
     manifest = {k: getattr(args, k) for k in keep}
     manifest.update(olmo_eval_branch=branch, jobs=[[c.__dict__ for c in b] for b in bins])
     if not args.dry_run:
-        os.makedirs(root, exist_ok=True)
-        with open(os.path.join(root, "launch_manifest.json"), "w") as f:
-            json.dump(manifest, f, indent=1)
+        try:
+            os.makedirs(root, exist_ok=True)
+            path = os.path.join(root, "launch_manifest.json")
+            with open(path, "w") as f:
+                json.dump(manifest, f, indent=1)
+        except OSError as e:  # weka not mounted where we launch from; the jobs are already out
+            path = local_manifest_path(args.run_name)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                json.dump(manifest, f, indent=1)
+            print(f"⚠ could not write the manifest under {root} ({e.strerror}); wrote {path}")
     print(f"\n{len(bins)} jobs {'planned' if args.dry_run else 'submitted'} -> {root}")
 
 
 def collect(run_name: str, out_root: str) -> None:
     """Pool every job's metrics.json (shards weighted by instance count) into one table."""
     root = os.path.join(out_root, run_name)
+    if not os.path.isdir(root):
+        raise SystemExit(
+            f"{root} is not visible from here (weka not mounted?): run --collect where it is"
+        )
     acc: dict[str, dict] = {}
     for path in sorted(glob.glob(os.path.join(root, "job*", "metrics.json"))):
         with open(path) as f:
@@ -412,9 +425,21 @@ def collect(run_name: str, out_root: str) -> None:
     print(f"\n{len(rows)} cells -> {out}")
 
 
+def local_manifest_path(run_name: str) -> str:
+    """Where the manifest goes when the results root is not writable from the launching machine."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(here, "launches", run_name, "launch_manifest.json")
+
+
+def manifest_path(root: str) -> str:
+    """The run's manifest: under the results root if it is there, else the local fallback."""
+    path = os.path.join(root, "launch_manifest.json")
+    return path if os.path.exists(path) else local_manifest_path(os.path.basename(root))
+
+
 def missing_jobs(root: str) -> list[int]:
     """Bin indices from the launch manifest whose job directory has no metrics.json."""
-    path = os.path.join(root, "launch_manifest.json")
+    path = manifest_path(root)
     if not os.path.exists(path):
         return []
     with open(path) as f:
@@ -427,7 +452,7 @@ def missing_jobs(root: str) -> list[int]:
 def resubmit(args) -> None:
     """Resubmit exactly the bins that produced no metrics.json, with the original settings."""
     root = os.path.join(args.out_root, args.run_name)
-    with open(os.path.join(root, "launch_manifest.json")) as f:
+    with open(manifest_path(root)) as f:
         manifest = json.load(f)
     for k, v in manifest.items():
         if k not in ("jobs", "olmo_eval_branch"):
@@ -436,6 +461,12 @@ def resubmit(args) -> None:
         [Cell(**{**c, "shard": tuple(c["shard"]) if c["shard"] else None}) for c in b]
         for b in manifest["jobs"]
     ]
+    if not os.path.isdir(args.out_root):
+        # missing_jobs would report EVERY job as missing and this would resubmit the whole run
+        raise SystemExit(
+            f"results root {args.out_root} is not visible from here (weka not mounted?): run "
+            "--resubmit where it is"
+        )
     missing = missing_jobs(root)
     if not missing:
         print(f"every job in {root} has results; nothing to resubmit")
@@ -517,9 +548,9 @@ def main() -> None:
     missing = rows_without_data(rows)
     if missing:
         ap.error(
-            f"no data in the suite's HF dataset for {missing}: their cells would fail at load (and take the "
-            "rest of their job down with them). Upload the ladders, or leave the rows out with an "
-            "explicit --rows list"
+            f"no data in the suite's HF dataset for {missing}: their cells would fail at load (and "
+            "take the rest of their job down with them). Upload the ladders, or leave the rows out "
+            "with an explicit --rows list"
         )
 
     row_limits = dict(DEFAULT_ROW_LIMITS)
