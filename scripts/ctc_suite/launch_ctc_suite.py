@@ -289,6 +289,7 @@ def submit(args, bins: list[list[Cell]], only: set[int] | None = None) -> None:
         f"{args.olmo_core_ref}' dataclass-extensions"
     )
     root = os.path.join(args.out_root, args.run_name)
+    failed: list[int] = []
     for i, cells in enumerate(bins):
         if only is not None and i not in only:
             continue
@@ -334,15 +335,23 @@ def submit(args, bins: list[list[Cell]], only: set[int] | None = None) -> None:
             if i == 0:
                 print("\nfirst job:\n  " + " ".join(argv[:-1]) + f" '<{len(cmd)} char script>'")
             continue
-        subprocess.Popen(
-            argv,
-            cwd=repo,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
+        # One at a time, checked: firing every gantry at once in the background (output discarded)
+        # silently lost 10 of 24 submissions on 2026-09-28.
+        res = subprocess.run(argv, cwd=repo, capture_output=True, text=True)
+        url = next((w for w in res.stdout.split() if "beaker.org/ex/" in w), "")
+        if res.returncode != 0 or not url:
+            failed.append(i)
+            tail = (res.stderr or res.stdout).strip().splitlines()[-3:]
+            print(f"  ⚠ job{i:02d} NOT submitted (rc={res.returncode}): {' | '.join(tail)}")
+        else:
+            print(f"  job{i:02d} {url}")
+    if failed:
+        print(
+            f"\n⚠ {len(failed)} job(s) failed to submit: {failed}. Retry exactly those with "
+            f"--run-name {args.run_name} --resubmit --jobs {','.join(map(str, failed))}"
         )
     if only is not None:
-        print(f"\nresubmitted {len(only)} job(s): {sorted(only)} -> {root}")
+        print(f"\nresubmitted {len(only) - len(failed)} job(s) of {sorted(only)} -> {root}")
         return
     keep = (
         "ckpt",
@@ -461,11 +470,16 @@ def resubmit(args) -> None:
         [Cell(**{**c, "shard": tuple(c["shard"]) if c["shard"] else None}) for c in b]
         for b in manifest["jobs"]
     ]
+    if args.jobs:
+        missing = sorted(int(j) for j in args.jobs.split(","))
+        print(f"resubmitting the named jobs {missing}: check first that none of them is running")
+        submit(args, bins, only=set(missing))
+        return
     if not os.path.isdir(args.out_root):
         # missing_jobs would report EVERY job as missing and this would resubmit the whole run
         raise SystemExit(
             f"results root {args.out_root} is not visible from here (weka not mounted?): run "
-            "--resubmit where it is"
+            "--resubmit where it is, or name the jobs with --jobs"
         )
     missing = missing_jobs(root)
     if not missing:
@@ -525,6 +539,12 @@ def main() -> None:
         action="store_true",
         help="resubmit the jobs of --run-name that have no metrics.json (e.g. preempted), with "
         "the settings recorded in its launch manifest",
+    )
+    ap.add_argument(
+        "--jobs",
+        default="",
+        help="with --resubmit: resubmit exactly these job indices (e.g. 0,3,7) instead of the ones "
+        "with no metrics.json -- for jobs that never submitted, or when weka is not mounted here",
     )
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
