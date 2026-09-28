@@ -94,10 +94,24 @@ bitwise-identical, so `--full-batch-size 1` if you need bitwise determinism; bs=
 - **Checkpoint:** an olmo-core step dir (`config.json` + `model_and_optim/`) on weka. Its config
   does not need a `dataset.tokenizer`; the launcher passes the tokenizer
   (`--tokenizer`, default `Qwen/Qwen3.5-0.8B`), EOS 248046 and pad 248044 explicitly.
+- **The tokenizer's chat template must close the empty thinking block.** CTC SFT data renders
+  (prompt, answer) in ONE chat-template call, so a model trained on it saw
+  `<think> ĊĊ </think> ĊĊ <answer>`. Qwen3.5-0.8B's generation prompt ends `<think>\n\n</think>\n\n`,
+  an exact token prefix of that; **Qwen3.5-4B's ends `<think>\n`** (a token split training never
+  produced), so `--tokenizer Qwen/Qwen3.5-4B` evaluates every prompt out of format even for a 4B
+  checkpoint. The vocabularies are identical. Each job's `preflight.py` refuses such a template.
+- **Every row's data on the HF dataset.** The planner refuses rows with no
+  `data/<subset>/` in `PrasannSinghal/ctc-suite-eval` -- currently both OOD rows
+  (`ctc_contra_fever`, `ctc_outlier_review`), so `--rows all` / `--rows setA` fail until their
+  ladders are uploaded; pass an explicit `--rows` list without them meanwhile.
 - **This branch pushed.** gantry clones the current branch at its pushed commit; unpushed changes
   are not in the job.
 - **`--olmo-core-ref` carrying the FLA autotune fix** (default `prasann/landmark`). Without it every
   new prompt length re-tunes Triton kernels for ~25 s -- ~95% of eval wall-clock on Qwen3.5/GDN.
+  A checkpoint trained on another OLMo-core branch may carry config fields this ref does not define;
+  each job's `preflight.py` drops the ones that are `null` (they configure nothing) and evaluates
+  through a rewritten `config.json` with the weights symlinked, and stops the job if any such field
+  is actually set. (The setA SFT runs, trained on `prasann/ctc-setA-sft`, carry ten null ones.)
 - **Beaker/gantry** set up locally; defaults are workspace `ai2/flex2`, budget `ai2/oe-other`,
   cluster `ai2/jupiter-cirrascale-2`, priority `urgent`, image
   `tylerr/olmo-core-tch291cu128-2025-11-25`.
@@ -119,4 +133,6 @@ bitwise-identical, so `--full-batch-size 1` if you need bitwise determinism; bs=
 | `Invalid OLMo-core checkpoint ... dataset.tokenizer` | pass `validate_checkpoint=false` + `allow_tokenizer_fallback=true` (the launcher does) |
 | every example takes ~10-25 s regardless of length | `--olmo-core-ref` lacks the FLA autotune fix |
 | a job exits 143 with "preempted by ... allocated workloads are scheduled ahead of unallocated ones" | expected for unallocated jobs; `--resubmit` reruns just the missing ones |
+| job stops at `[preflight] ... not a token prefix of the trained conversation` | `--tokenizer` names a template that opens a thinking block (e.g. Qwen3.5-4B); use `Qwen/Qwen3.5-0.8B` |
+| job stops at `[preflight] ... has no such field` | the checkpoint turns on a feature `--olmo-core-ref` lacks; point it at the branch the checkpoint was trained on (it needs the FLA autotune fix too) |
 | a score of ~0.4 vs ~0.7 on 25 examples | eval_size 25 is ±0.1; outlier@8k agreed to 0.01 between this path (0.597) and the native OLMo-core driver (0.587) at 500 |

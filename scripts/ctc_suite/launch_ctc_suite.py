@@ -148,6 +148,16 @@ class Cell:
         return f"{self.row}:{self.rung}"
 
 
+def rows_without_data(rows: list[str]) -> list[str]:
+    """The rows whose subset has no parquet directory in :data:`HF_DATASET`."""
+    from huggingface_hub import HfFileSystem
+    from olmo_eval.evals.tasks.ctc_suite import HF_DATASET, OOD_ROSTER, ROSTER
+
+    listed = HfFileSystem().ls(f"datasets/{HF_DATASET}/data", detail=False)
+    subsets = {path.rstrip("/").split("/")[-1] for path in listed}
+    return [r for r in rows if (ROSTER.get(r) or OOD_ROSTER[r]).subset not in subsets]
+
+
 def parse_policy(policy: str) -> dict[str, int]:
     out: dict[str, int] = {}
     for part in policy.split(","):
@@ -243,8 +253,13 @@ def job_script(
     if shards:
         env["CTC_SUITE_SHARDS"] = json.dumps(shards)
     tasks = " ".join(f"-t {c.task} -o limit={c.limit}" for c in cells)
+    # preflight.py stops the job before the model loads if the installed OLMo-core cannot build the
+    # checkpoint's config (dropping only null fields it does not know) or if the tokenizer's chat
+    # template would render prompts that are not a token prefix of the SFT sequences.
     cmd = (
-        f"set -uo pipefail; olmo-eval run -m {ckpt} {tasks} -H default "
+        f"set -uo pipefail; CKPT=$(python scripts/ctc_suite/preflight.py --ckpt {ckpt} "
+        f"--tokenizer {tokenizer} --view /tmp/ckpt_view | tail -1) || exit 1; "
+        f'olmo-eval run -m "$CKPT" {tasks} -H default '
         f"-o provider.kind=olmo_core -o provider.tokenizer={tokenizer} "
         f"-o provider.max_model_len=262144 -o provider.kwargs.batch_size={cells[0].batch_size} "
         # our checkpoints' config.json has no dataset.tokenizer, so name everything explicitly
@@ -498,6 +513,14 @@ def main() -> None:
         rows = list(ROSTER) + (list(OOD_ROSTER) if args.rows == "all" else [])
     else:
         rows = [r.strip() for r in args.rows.split(",") if r.strip()]
+
+    missing = rows_without_data(rows)
+    if missing:
+        ap.error(
+            f"no data in the suite's HF dataset for {missing}: their cells would fail at load (and take the "
+            "rest of their job down with them). Upload the ladders, or leave the rows out with an "
+            "explicit --rows list"
+        )
 
     row_limits = dict(DEFAULT_ROW_LIMITS)
     for kv in args.row_limit:
