@@ -21,6 +21,11 @@ training did.
    passing ``--tokenizer Qwen/Qwen3.5-4B`` would evaluate every prompt out of format. The check
    fails instead.
 
+3. **Optional YaRN** (``--rope-yarn F``): sets ``YaRNRoPEScalingConfig(factor=F,
+   old_context_len=--yarn-old-len)`` on every RoPE, for rungs whose prompts exceed the trained
+   window (the suite's r256k rows run to ~272k tokens). Same math as HF/vLLM ``rope_type: yarn``:
+   blended inverse frequencies plus sin/cos scaled by ``0.1 ln F + 1`` on the rotated dims.
+
     python scripts/ctc_suite/preflight.py --ckpt <step dir> --tokenizer Qwen/Qwen3.5-0.8B \\
         --view /tmp/ckpt_view
 """
@@ -84,21 +89,72 @@ def drop_unknown_null_fields(node, path: str = "model") -> list[str]:
     return dropped
 
 
-def resolve_checkpoint(ckpt: str, view: str) -> str:
+def apply_rope_yarn(node, factor: float, old_context_len: int) -> int:
     """
-    :returns: ``ckpt`` if the installed OLMo-core builds its model config as-is, else ``view``
-        holding the compatible config (see the module docstring).
+    Set YaRN scaling on every RoPE config in ``node``, in place.
+
+    :param factor: YaRN factor (2.0 doubles the position window).
+    :param old_context_len: The window the model was trained with.
+
+    :returns: How many RoPE configs were changed.
+
+    :raises SystemExit: If a RoPE config already carries a scaling.
+    """
+    n = 0
+    if isinstance(node, dict):
+        if str(node.get(CLASS_FIELD, "")).endswith(".RoPEConfig"):
+            if node.get("scaling") is not None:
+                raise SystemExit(
+                    f"[preflight] RoPE already scaled ({node['scaling']}); not stacking YaRN"
+                )
+            node["scaling"] = {
+                CLASS_FIELD: "olmo_core.nn.rope.YaRNRoPEScalingConfig",
+                "factor": factor,
+                "beta_fast": 32,
+                "beta_slow": 1,
+                "old_context_len": old_context_len,
+            }
+            return 1
+        for value in node.values():
+            n += apply_rope_yarn(value, factor, old_context_len)
+    elif isinstance(node, list):
+        for value in node:
+            n += apply_rope_yarn(value, factor, old_context_len)
+    return n
+
+
+def resolve_checkpoint(
+    ckpt: str, view: str, rope_yarn: float = 0.0, yarn_old_len: int = 262144
+) -> str:
+    """
+    :param rope_yarn: If set, the YaRN factor to apply to every RoPE (always evaluates through
+        ``view``).
+    :param yarn_old_len: The position window the checkpoint was trained with.
+
+    :returns: ``ckpt`` if the installed OLMo-core builds its model config as-is and no YaRN is
+        asked for, else ``view`` holding the rewritten config (see the module docstring).
     """
     from olmo_core.nn.transformer import TransformerConfig
 
     with open(os.path.join(ckpt, "config.json")) as f:
         config = json.load(f)
     dropped = drop_unknown_null_fields(config["model"])
+    changed = []
+    if rope_yarn:
+        n = apply_rope_yarn(config["model"], rope_yarn, yarn_old_len)
+        if not n:
+            raise SystemExit("[preflight] --rope-yarn: no RoPEConfig in the checkpoint config")
+        changed.append(f"YaRN factor {rope_yarn} over {yarn_old_len} on {n} RoPE config(s)")
     TransformerConfig.from_dict(config["model"])  # raises if it still does not build
-    if not dropped:
+    if not dropped and not changed:
         _log(f"checkpoint config builds as-is: {ckpt}")
         return ckpt
-    _log(f"dropped {len(dropped)} null field(s) unknown to this OLMo-core: {', '.join(dropped)}")
+    if dropped:
+        _log(
+            f"dropped {len(dropped)} null field(s) unknown to this OLMo-core: {', '.join(dropped)}"
+        )
+    for c in changed:
+        _log(c)
     os.makedirs(view, exist_ok=True)
     for name in os.listdir(ckpt):
         if name != "config.json" and not os.path.lexists(os.path.join(view, name)):
@@ -139,9 +195,11 @@ def main() -> None:
     ap.add_argument("--ckpt", required=True, help="olmo-core step dir")
     ap.add_argument("--tokenizer", required=True, help="the provider's tokenizer")
     ap.add_argument("--view", required=True, help="where to write a compatible config if needed")
+    ap.add_argument("--rope-yarn", type=float, default=0.0, help="YaRN factor for every RoPE")
+    ap.add_argument("--yarn-old-len", type=int, default=262144, help="trained position window")
     args = ap.parse_args()
     check_chat_prefix(args.tokenizer)
-    print(resolve_checkpoint(args.ckpt, args.view))
+    print(resolve_checkpoint(args.ckpt, args.view, args.rope_yarn, args.yarn_old_len))
 
 
 if __name__ == "__main__":

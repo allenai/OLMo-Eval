@@ -118,9 +118,17 @@ bitwise-identical, so `--full-batch-size 1` if you need bitwise determinism; bs=
 
 ## Caveats
 
-- **Left truncation at 256k.** Some r256k rows of `ctc_hpqa`, `ctc_outlier`, `ctc_qdmatch_nq` and
-  `ctc_rerank` exceed Qwen3.5's 262,144 positions and are left-truncated by the provider. The plan
-  prints the affected cells; quote them with that caveat.
+- **Left truncation at 256k -- most of the rung, not "some rows".** Through the chat + doc-marker
+  prompt path the r256k prompts run to ~272k tokens, and the provider left-truncates anything over
+  `max_model_len - max_tokens`, cutting the chat header and instruction. Measured 2026-09-29 (all 125
+  rows): nq 43%, oolong 50%, hpqa 83%, contradiction 83%, rerank 98%, qdmatch_nq and outlier 100%.
+  A default r256k cell is therefore not a valid measurement. Two fixes, both r256k-only
+  (`--policy r256k:100`):
+  - `--fit-window`: `fit_to_window.py` shortens only the distractor documents' text (0-3%), keeping
+    every document, index and gold document intact, until each prompt fits. Refuses `oolong`.
+  - `--rope-yarn 2 --max-model-len 524288`: YaRN on the checkpoint's RoPE (the suite's historical
+    r256k serving setting), so the full prompt fits -- but the model then runs under a position
+    encoding it was not trained with.
 - **Shortcut rows.** `ctc_textgroups` (the shortest document is gold in ~0.55 of rows at 8k-32k)
   and `ctc_strmatch` (only the gold pairs share words) are partly solvable without the task.
 

@@ -242,7 +242,14 @@ def pack(cells: list[Cell], budget_s: float) -> list[list[Cell]]:
 
 
 def job_script(
-    ckpt: str, cells: list[Cell], out_dir: str, tokenizer: str, doc_markers: bool = False
+    ckpt: str,
+    cells: list[Cell],
+    out_dir: str,
+    tokenizer: str,
+    doc_markers: bool = False,
+    fit_window: bool = False,
+    rope_yarn: float = 0.0,
+    max_model_len: int = 262144,
 ) -> tuple[str, dict]:
     shards = {f"{c.subset}:{c.rung}": f"{c.shard[0]}/{c.shard[1]}" for c in cells if c.shard}
     env = {
@@ -254,20 +261,33 @@ def job_script(
     if shards:
         env["CTC_SUITE_SHARDS"] = json.dumps(shards)
     tasks = " ".join(f"-t {c.task} -o limit={c.limit}" for c in cells)
+    yarn = f"--rope-yarn {rope_yarn} " if rope_yarn else ""
+    # fit_to_window.py writes EVERY cell of this job (rows that already fit unchanged): the data
+    # root it sets applies to all of them
+    fit = (
+        f"python scripts/ctc_suite/fit_to_window.py --cells {' '.join(c.task for c in cells)} "
+        f"--out /tmp/ctc_fitted --tokenizer {tokenizer} --max-model-len {max_model_len} "
+        "|| exit 1; export CTC_SUITE_DATA_ROOT=/tmp/ctc_fitted; "
+        if fit_window
+        else ""
+    )
     # preflight.py stops the job before the model loads if the installed OLMo-core cannot build the
     # checkpoint's config (dropping only null fields it does not know) or if the tokenizer's chat
     # template would render prompts that are not a token prefix of the SFT sequences.
     cmd = (
-        f"set -uo pipefail; CKPT=$(python scripts/ctc_suite/preflight.py --ckpt {ckpt} "
-        f"--tokenizer {tokenizer} --view /tmp/ckpt_view | tail -1) || exit 1; "
+        f"set -uo pipefail; {fit}CKPT=$(python scripts/ctc_suite/preflight.py --ckpt {ckpt} "
+        f"--tokenizer {tokenizer} --view /tmp/ckpt_view {yarn}| tail -1) || exit 1; "
         f'olmo-eval run -m "$CKPT" {tasks} -H default '
         f"-o provider.kind=olmo_core -o provider.tokenizer={tokenizer} "
-        f"-o provider.max_model_len=262144 -o provider.kwargs.batch_size={cells[0].batch_size} "
+        f"-o provider.max_model_len={max_model_len} "
+        f"-o provider.kwargs.batch_size={cells[0].batch_size} "
         # our checkpoints' config.json has no dataset.tokenizer, so name everything explicitly
         f"-o provider.kwargs.eos_token_id=248046 -o provider.kwargs.pad_token_id=248044 "
         f"-o provider.kwargs.validate_checkpoint=false "
         f"-o provider.kwargs.allow_tokenizer_fallback=true -O {out_dir} "
-        f'2>&1 | grep -v Warning | tail -80; echo "=== rc=${{PIPESTATUS[0]}} $(date -u +%T)"'
+        # exit with olmo-eval's status, so Beaker shows a failed job as failed
+        f"2>&1 | grep -v Warning | tail -80; rc=${{PIPESTATUS[0]}}; "
+        f'echo "=== rc=$rc $(date -u +%T)"; exit $rc'
     )
     return cmd, env
 
@@ -294,7 +314,14 @@ def submit(args, bins: list[list[Cell]], only: set[int] | None = None) -> None:
         if only is not None and i not in only:
             continue
         cmd, env = job_script(
-            args.ckpt, cells, f"{root}/job{i:02d}", args.tokenizer, args.doc_markers
+            args.ckpt,
+            cells,
+            f"{root}/job{i:02d}",
+            args.tokenizer,
+            args.doc_markers,
+            args.fit_window,
+            args.rope_yarn,
+            args.max_model_len,
         )
         argv = [
             "gantry",
@@ -365,6 +392,9 @@ def submit(args, bins: list[list[Cell]], only: set[int] | None = None) -> None:
         "row_limit",
         "tokenizer",
         "doc_markers",
+        "fit_window",
+        "rope_yarn",
+        "max_model_len",
         "olmo_core_ref",
         "cluster",
         "workspace",
@@ -532,6 +562,20 @@ def main() -> None:
         "CTC SFT converter's default shards do. Use for checkpoints trained on marker-wrapped "
         "shards (e.g. setA shards_qwen35_256k); leave off for marker-free training data.",
     )
+    ap.add_argument(
+        "--fit-window",
+        action="store_true",
+        help="shorten distractor documents so every prompt fits --max-model-len untruncated "
+        "(fit_to_window.py; refuses oolong). For the r256k rung, whose prompts run to ~272k",
+    )
+    ap.add_argument(
+        "--rope-yarn",
+        type=float,
+        default=0.0,
+        help="YaRN factor applied to the checkpoint's RoPE (preflight.py); pair with a larger "
+        "--max-model-len, e.g. --rope-yarn 2 --max-model-len 524288. Only for rungs that need it",
+    )
+    ap.add_argument("--max-model-len", type=int, default=262144)
     ap.add_argument("--olmo-core-ref", default="prasann/landmark")
     ap.add_argument("--cluster", default="ai2/jupiter-cirrascale-2")
     ap.add_argument("--workspace", default="ai2/flex2")
