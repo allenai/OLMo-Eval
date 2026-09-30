@@ -250,6 +250,7 @@ def job_script(
     fit_window: bool = False,
     rope_yarn: float = 0.0,
     max_model_len: int = 262144,
+    prefill_chunk_size: int = 0,
 ) -> tuple[str, dict]:
     shards = {f"{c.subset}:{c.rung}": f"{c.shard[0]}/{c.shard[1]}" for c in cells if c.shard}
     env = {
@@ -262,6 +263,9 @@ def job_script(
         env["CTC_SUITE_SHARDS"] = json.dumps(shards)
     tasks = " ".join(f"-t {c.task} -o limit={c.limit}" for c in cells)
     yarn = f"--rope-yarn {rope_yarn} " if rope_yarn else ""
+    chunk = (
+        f"-o provider.kwargs.prefill_chunk_size={prefill_chunk_size} " if prefill_chunk_size else ""
+    )
     # fit_to_window.py writes EVERY cell of this job (rows that already fit unchanged): the data
     # root it sets applies to all of them
     fit = (
@@ -280,7 +284,7 @@ def job_script(
         f'olmo-eval run -m "$CKPT" {tasks} -H default '
         f"-o provider.kind=olmo_core -o provider.tokenizer={tokenizer} "
         f"-o provider.max_model_len={max_model_len} "
-        f"-o provider.kwargs.batch_size={cells[0].batch_size} "
+        f"-o provider.kwargs.batch_size={cells[0].batch_size} {chunk}"
         # our checkpoints' config.json has no dataset.tokenizer, so name everything explicitly
         f"-o provider.kwargs.eos_token_id=248046 -o provider.kwargs.pad_token_id=248044 "
         f"-o provider.kwargs.validate_checkpoint=false "
@@ -322,6 +326,7 @@ def submit(args, bins: list[list[Cell]], only: set[int] | None = None) -> None:
             args.fit_window,
             args.rope_yarn,
             args.max_model_len,
+            args.prefill_chunk_size,
         )
         argv = [
             "gantry",
@@ -395,6 +400,7 @@ def submit(args, bins: list[list[Cell]], only: set[int] | None = None) -> None:
         "fit_window",
         "rope_yarn",
         "max_model_len",
+        "prefill_chunk_size",
         "olmo_core_ref",
         "cluster",
         "workspace",
@@ -576,6 +582,15 @@ def main() -> None:
         "--max-model-len, e.g. --rope-yarn 2 --max-model-len 524288. Only for rungs that need it",
     )
     ap.add_argument("--max-model-len", type=int, default=262144)
+    ap.add_argument(
+        "--prefill-chunk-size",
+        type=int,
+        default=0,
+        help="feed prompts to prefill in slices of this many tokens (OLMo-core "
+        "GenerationConfig.prefill_chunk_size; needs an --olmo-core-ref that has it, e.g. "
+        "prasann/landmark-chunked-prefill). Required past 262,144 tokens on Qwen3.5: the GDN "
+        "chunk kernel's one-shot state overflows int32 there",
+    )
     ap.add_argument("--olmo-core-ref", default="prasann/landmark")
     ap.add_argument("--cluster", default="ai2/jupiter-cirrascale-2")
     ap.add_argument("--workspace", default="ai2/flex2")

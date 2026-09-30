@@ -74,6 +74,7 @@ class OlmoCoreProvider(InferenceProvider):
         cache_dir: str | None = None,
         local_files_only: bool = False,
         add_bos_token: bool = False,
+        prefill_chunk_size: int | None = None,
         **kwargs: object,
     ) -> None:
         max_model_len = core_utils._resolve_max_model_len_alias(max_model_len, kwargs)
@@ -163,10 +164,17 @@ class OlmoCoreProvider(InferenceProvider):
             attention_backend=attention_backend_value,
         )
 
+        # prefill_chunk_size (OLMo-core GenerationConfig): feed long prompts to prefill in slices.
+        # Needed past 262,144 tokens on Qwen3.5 GDN layers, whose one-shot chunk kernel overflows
+        # int32 indexing there. Passed only when set, so OLMo-core versions without it still work.
+        chunk_kwargs = (
+            {} if prefill_chunk_size is None else {"prefill_chunk_size": prefill_chunk_size}
+        )
         self.generation_config = imports.GenerationConfig(
             pad_token_id=self.pad_token_id,
             eos_token_id=self.eos_token_id,
             use_cache=use_cache,
+            **chunk_kwargs,
         )
         self._print_olmo_core_config(transformer_config, self.generation_config)
 
