@@ -60,6 +60,20 @@ class TestParseOverrideValue:
     def test_float(self):
         assert _parse_override_value("0.6") == 0.6
 
+    def test_null_clears_field(self):
+        assert _parse_override_value("null") is None
+        assert _parse_override_value("None") is None
+
+    def test_max_tokens_null_reaches_sampling_params(self):
+        from dataclasses import replace
+
+        from olmo_eval.common.types import SamplingParams
+
+        overrides = _apply_dotlist_overrides({}, ["max_tokens=null"])
+        assert overrides == {"max_tokens": None}
+        params = replace(SamplingParams(max_tokens=512), **overrides)
+        assert params.max_tokens is None
+
     def test_string(self):
         assert _parse_override_value("modal") == "modal"
 
