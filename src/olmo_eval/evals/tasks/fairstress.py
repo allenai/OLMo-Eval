@@ -73,7 +73,11 @@ mutating the dataset:
    these scenarios; this implementation negates the correctness check for
    exactly those 5 (by ``scenario_id``), affecting AccGap/FragGap only
    (TieLean/TieShift are computed from AMB items, which carry no
-   ``expected_correct`` label and are unaffected).
+   ``expected_correct`` label and are unaffected). A 6th scenario
+   (severance vs. contested termination) is genuinely ambiguous in which
+   direction its question runs — no product decision has been made on the
+   intended framing — so it is deliberately left unscored by this rule
+   either way, exactly as the paper's own validation treats it.
 2. **D2/F6-F9 case-content exclusion.** At Degree 2 (identity implied via
    an implicit correlate sentence, e.g. "owns a home in the suburbs"),
    some correlate sentences happen to overlap a specific scenario's own
