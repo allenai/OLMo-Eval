@@ -9,10 +9,6 @@ from olmo_eval.common.types import Instance, LMOutput, LMRequest, Response
 from olmo_eval.data import DataSource
 from olmo_eval.evals.tasks.common import get_task, list_tasks
 from olmo_eval.evals.tasks.fairstress import (
-    D2_CONFOUND_EXCLUSIONS,
-    F6F9_EXCLUDED_INJECTION_IDS,
-    F6F9_INCOHERENT_DOMAINS,
-    POLARITY_FLAGGED_SCENARIOS,
     TYPE1_CONTRASTS,
     TYPE23_CONTRASTS,
     FairStressAccGapMetric,
@@ -20,9 +16,7 @@ from olmo_eval.evals.tasks.fairstress import (
     FairStressScorer,
     FairStressTieLeanMetric,
     FairStressTieShiftMetric,
-    corrected_expected_correct,
     extract_fairstress_answer,
-    is_excluded,
 )
 
 
@@ -48,7 +42,7 @@ class TestFairStressRegistration:
         # Variants compose via get_task's colon-chaining (see registry.py) --
         # no separate "full_reasoning" registration needed.
         task = get_task("fairstress:full:reasoning")
-        assert task.config.data_source.path == "PardisSzah/fairstress"
+        assert task.config.data_source.path == "PardisSzah/fairstress-corrected"
         assert task.config.strip_thinking is True
 
     @pytest.mark.parametrize("variant", ["reasoning"])
@@ -77,13 +71,13 @@ class TestFairStressRegistration:
         # 10+ minute / 18GB+ run against the full corpus at limit=20).
         task = get_task("fairstress")
         assert isinstance(task.config.data_source, DataSource)
-        assert task.config.data_source.path == "PardisSzah/fairstress-core"
+        assert task.config.data_source.path == "PardisSzah/fairstress-core-corrected"
         assert task.config.get_data_source().split == "train"
 
     def test_full_variant_points_at_the_complete_corpus(self):
         task = get_task("fairstress:full")
         assert isinstance(task.config.data_source, DataSource)
-        assert task.config.data_source.path == "PardisSzah/fairstress"
+        assert task.config.data_source.path == "PardisSzah/fairstress-corrected"
 
     def test_full_variant_gets_the_same_rich_metrics_as_answer_and_reasoning(self):
         # Regression test: an earlier version of this registration only
@@ -196,95 +190,34 @@ class TestFairStressProcessDoc:
         assert task.process_doc(_sample_doc(prompt="No answer instruction here."), index=0) is None
 
 
-class TestPolarityCorrection:
-    """The 5 negative-outcome scenarios need `expected_correct` negated."""
+class TestDataIsAlreadyCorrected:
+    """The data_source datasets (PardisSzah/*-corrected) already have the
+    question-polarity negation and D2/F6-F9 exclusion baked in (see
+    scripts/internal/build_fairstress_corrected.py) -- process_doc() no
+    longer applies or re-derives either correction, it trusts the data."""
 
-    def test_five_scenarios_are_exactly_the_validated_set(self):
-        assert (
-            frozenset(
-                {
-                    "child_family__whether_to_terminate_parental_rights",
-                    "insurance_claims__an_auto_liability_claim_dispute",
-                    "workplace_discipline__a_performance_improvement_plan_vs_immedi",
-                    "legal_criminal_justice__probation_revocation_for_a_minor_violati",
-                    "workplace_discipline__a_demotion_decision_after_a_restructurin",
-                }
-            )
-            == POLARITY_FLAGGED_SCENARIOS
-        )
+    def test_expected_correct_passes_through_unchanged(self):
+        task = get_task("fairstress")
+        instance = task.process_doc(_sample_doc(expected_correct="Candidate A"), index=0)
+        assert instance.gold_answer == "A"
 
-    def test_unflagged_scenario_is_unchanged(self):
-        meta = {"scenario_id": "hiring_employment__a_pharmacist", "expected_correct": "A"}
-        assert corrected_expected_correct(meta) == "A"
+        instance = task.process_doc(_sample_doc(expected_correct="Candidate B"), index=0)
+        assert instance.gold_answer == "B"
 
-    def test_flagged_scenario_is_negated(self):
-        meta = {
-            "scenario_id": "child_family__whether_to_terminate_parental_rights",
-            "expected_correct": "A",
-        }
-        assert corrected_expected_correct(meta) == "B"
+    def test_excluded_is_always_false(self):
+        task = get_task("fairstress")
+        instance = task.process_doc(_sample_doc(signaling_level=2), index=0)
+        assert instance.metadata["excluded"] is False
 
-        meta["expected_correct"] = "B"
-        assert corrected_expected_correct(meta) == "A"
+        instance = task.process_doc(_sample_doc(signaling_level=3), index=0)
+        assert instance.metadata["excluded"] is False
 
-    def test_amb_items_have_no_expected_correct_and_are_unaffected(self):
-        meta = {
-            "scenario_id": "child_family__whether_to_terminate_parental_rights",
-            "expected_correct": None,
-        }
-        assert corrected_expected_correct(meta) is None
-
-
-class TestD2AndF6F9Exclusion:
-    """Degree-2 correlate-content confound + F6/F9 domain-incoherence exclusion."""
-
-    def test_d2_exclusion_only_applies_at_degree_2(self):
-        # Find a real flagged (scenario, group) pair from the confirmed list.
-        scenario_id, groups = next(iter(D2_CONFOUND_EXCLUSIONS.items()))
-        group = next(iter(groups))
-
-        meta_d2 = {
-            "signaling_level": 2,
-            "scenario_id": scenario_id,
-            "minority_group": group,
-            "majority_group": "someone_else",
-        }
-        assert is_excluded(meta_d2) is True
-
-        meta_d3 = dict(meta_d2, signaling_level=3)
-        assert is_excluded(meta_d3) is False
-
-    def test_d2_exclusion_requires_flagged_group(self):
-        scenario_id = next(iter(D2_CONFOUND_EXCLUSIONS))
-        meta = {
-            "signaling_level": 2,
-            "scenario_id": scenario_id,
-            "minority_group": "not_a_flagged_group_xyz",
-            "majority_group": "also_not_flagged_xyz",
-        }
-        assert is_excluded(meta) is False
-
-    def test_f6f9_exclusion_requires_both_bad_injection_and_incoherent_domain(self):
-        bad_injection = next(iter(F6F9_EXCLUDED_INJECTION_IDS))
-        incoherent_domain = next(iter(F6F9_INCOHERENT_DOMAINS))
-
-        meta = {"injection_id": bad_injection, "domain": incoherent_domain, "signaling_level": 0}
-        assert is_excluded(meta) is True
-
-        # Coherent domain (not in the incoherent set) -> not excluded.
-        meta_coherent = dict(meta, domain="hiring_employment")
-        if "hiring_employment" not in F6F9_INCOHERENT_DOMAINS:
-            assert is_excluded(meta_coherent) is False
-
-        # F6/F9 exclusion is not degree-restricted (unlike D2).
-        meta_d0 = dict(meta, signaling_level=0)
-        meta_d3 = dict(meta, signaling_level=3)
-        assert is_excluded(meta_d0) is True
-        assert is_excluded(meta_d3) is True
-
-    def test_non_f6f9_injection_is_never_excluded_by_that_rule(self):
-        meta = {"injection_id": "F1_authority_01a", "domain": next(iter(F6F9_INCOHERENT_DOMAINS))}
-        assert is_excluded(meta) is False
+    def test_scorer_also_never_marks_excluded(self):
+        task = get_task("fairstress")
+        instance = task.process_doc(_sample_doc(), index=0)
+        output = LMOutput(text="Candidate A", extracted_answer="A")
+        FairStressScorer().score(instance, output)
+        assert instance.metadata["excluded"] is False
 
 
 def _response(metadata, extracted_answer, text="the answer is A"):

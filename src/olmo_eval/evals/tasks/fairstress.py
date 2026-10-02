@@ -58,42 +58,46 @@ CLI's compact results table) is the D3 TieShift for the same reason.
 Every number in that log line is also its own registered metric in
 `metrics.json` — the log only narrates them.
 
-**Data-integrity corrections.** Two corrections, both fully worked out and
-validated by the paper's authors (see ``fairstress_corrections.json`` and
-the paper's own validation appendix), are applied here at scoring time
-rather than baked into the released data, so the correction logic stays
-auditable and versioned alongside the eval code rather than silently
-mutating the dataset:
+**Data-integrity corrections.** The data_source datasets
+(``PardisSzah/fairstress-core-corrected``, ``PardisSzah/fairstress-corrected``)
+are built from the original released data by
+``scripts/internal/build_fairstress_corrected.py`` (same repo, see that
+script and its co-located ``fairstress_corrections.json`` for the exact,
+re-runnable methodology against the originals,
+``PardisSzah/fairstress-core``/``PardisSzah/fairstress``), applying two
+corrections validated by the paper's authors:
 
 1. **Question-polarity negation.** 5 of 300 scenario templates ask a
    *negative*-outcome question (terminate, revoke, demote, hold liable).
    The dataset's ``expected_correct`` field for these 5 was generated
    without checking question direction and is backwards for GT items in
-   these scenarios; this implementation negates the correctness check for
-   exactly those 5 (by ``scenario_id``), affecting AccGap/FragGap only
-   (TieLean/TieShift are computed from AMB items, which carry no
-   ``expected_correct`` label and are unaffected). A 6th scenario
-   (severance vs. contested termination) is genuinely ambiguous in which
-   direction its question runs — no product decision has been made on the
-   intended framing — so it is deliberately left unscored by this rule
-   either way, exactly as the paper's own validation treats it.
+   these scenarios; the build script negates it for exactly those 5 (by
+   ``scenario_id``) — this affects AccGap/FragGap only (TieLean/TieShift
+   are computed from AMB items, which carry no ``expected_correct`` label
+   and are unaffected). A 6th scenario (severance vs. contested
+   termination) is genuinely ambiguous in which direction its question
+   runs — no product decision has been made on the intended framing — so
+   it is deliberately left untouched, exactly as the paper's own
+   validation treats it.
 2. **D2/F6-F9 case-content exclusion.** At Degree 2 (identity implied via
    an implicit correlate sentence, e.g. "owns a home in the suburbs"),
    some correlate sentences happen to overlap a specific scenario's own
    stated decision criteria (e.g. a housing-need scenario), so a subset of
-   316 confirmed (scenario, group) pairs are excluded from every metric
-   at D2 only. Separately, two pressure-sentence variants
-   (``F6_evidence_02{a,b}``, ``F9_stats_02{a,b}``) use hiring-specific
-   language that reads incoherently in 24 of 29 domains, so items using
-   those injection IDs in an incoherent domain are excluded from
-   FragGap/TieShift at every degree.
+   316 confirmed (scenario, group) pairs are dropped at D2 only.
+   Separately, two pressure-sentence variants (``F6_evidence_02{a,b}``,
+   ``F9_stats_02{a,b}``) use hiring-specific language that reads
+   incoherently in 24 of 29 domains, so rows using those injection IDs in
+   an incoherent domain are dropped at every degree.
 
 Both corrections were validated to move pooled headline numbers by roughly
 a tenth of a percentage point while leaving every qualitative finding
 unchanged; see the paper's validation appendix for the full before/after
-accounting. They are applied unconditionally here (there is no "raw"
-variant) because they correct real data-quality issues, not a modeling
-choice.
+accounting. They are baked into the data unconditionally (there is no
+"raw" variant) because they correct real data-quality issues, not a
+modeling choice. Every ``Instance`` this task builds therefore already
+carries a corrected ``expected_correct`` and excludes nothing further —
+``metadata["excluded"]`` stays ``False`` for everything process_doc()
+returns.
 
 Example commands to run:
 
@@ -117,13 +121,11 @@ olmo-eval beaker launch  \
     --cluster h100
 """
 
-import json
 import logging
 import math
 import re
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 from olmo_eval.common.formatters import MCQAChatFormatter
@@ -134,22 +136,6 @@ from olmo_eval.data import DataSource
 from olmo_eval.evals.tasks.common import Task, register, register_variant
 
 logger = logging.getLogger(__name__)
-
-# =============================================================================
-# Data-integrity corrections (see module docstring)
-# =============================================================================
-
-_CORRECTIONS_PATH = Path(__file__).parent / "fairstress_corrections.json"
-with open(_CORRECTIONS_PATH) as _f:
-    _CORRECTIONS = json.load(_f)
-
-POLARITY_FLAGGED_SCENARIOS: frozenset[str] = frozenset(_CORRECTIONS["polarity_flagged_scenarios"])
-D2_CONFOUND_EXCLUSIONS: dict[str, frozenset[str]] = {
-    scenario_id: frozenset(groups)
-    for scenario_id, groups in _CORRECTIONS["d2_confound_exclusions"].items()
-}
-F6F9_EXCLUDED_INJECTION_IDS: frozenset[str] = frozenset(_CORRECTIONS["f6f9_excluded_injection_ids"])
-F6F9_INCOHERENT_DOMAINS: frozenset[str] = frozenset(_CORRECTIONS["f6f9_incoherent_domains"])
 
 # =============================================================================
 # Contrast types (paper's own convention)
@@ -219,38 +205,6 @@ def _passes_contrast_type(metadata: dict[str, Any], contrast_type: str) -> bool:
     if contrast_type == "type23":
         return contrast_id in TYPE23_CONTRASTS
     raise ValueError(f"unknown contrast_type: {contrast_type!r}")
-
-
-def _is_d2_confound_excluded(metadata: dict[str, Any]) -> bool:
-    """Degree-2 items whose implicit correlate overlaps this scenario's own axis."""
-    if metadata.get("signaling_level") != 2:
-        return False
-    flagged = D2_CONFOUND_EXCLUSIONS.get(metadata.get("scenario_id", ""))
-    if not flagged:
-        return False
-    return metadata.get("minority_group") in flagged or metadata.get("majority_group") in flagged
-
-
-def _is_f6f9_domain_excluded(metadata: dict[str, Any]) -> bool:
-    """F6/F9 evidence sentences whose hiring-specific language is incoherent here."""
-    if metadata.get("injection_id") not in F6F9_EXCLUDED_INJECTION_IDS:
-        return False
-    return metadata.get("domain") in F6F9_INCOHERENT_DOMAINS
-
-
-def is_excluded(metadata: dict[str, Any]) -> bool:
-    """True if this item should be dropped from every metric under the validated corrections."""
-    return _is_d2_confound_excluded(metadata) or _is_f6f9_domain_excluded(metadata)
-
-
-def corrected_expected_correct(metadata: dict[str, Any]) -> str | None:
-    """The GT-correct slot ("A"/"B"), negated for the 5 polarity-flagged scenarios."""
-    expected = metadata.get("expected_correct")
-    if expected is None:
-        return None
-    if metadata.get("scenario_id") in POLARITY_FLAGGED_SCENARIOS:
-        return "B" if expected == "A" else "A"
-    return expected
 
 
 # =============================================================================
@@ -335,9 +289,12 @@ class FairStressScorer(Scorer):
 
         meta["chosen_slot"] = chosen
         meta["answered"] = answered
-        meta["excluded"] = is_excluded(meta)
+        # The data_source datasets are pre-corrected (see module docstring) --
+        # no excluded row exists to flag, and `expected_correct` already
+        # points at the right candidate, so there's nothing to recompute here.
+        meta["excluded"] = False
 
-        expected = corrected_expected_correct(meta)
+        expected = meta.get("expected_correct")
         if meta.get("condition") == "GT" and expected is not None and answered:
             meta["is_correct"] = chosen == expected
         else:
@@ -862,20 +819,21 @@ _FAIRSTRESS_METRIC_CLASSES = (
 class FairStress(Task):
     """FairStress: bias in the answer vs. bias in the defense of the answer."""
 
-    # FairStress-Core (49,920 items) is the default data source, not the full
-    # 13,425,456-item corpus (PardisSzah/fairstress, wired in via the "full"
-    # variant below): olmo-eval's async runner materializes every instance
-    # (runs process_doc() on the whole corpus) *before* applying `limit`
+    # FairStress-Core (48,005 items) is the default data source, not the full
+    # corpus (fairstress-corrected, wired in via the "full" variant below):
+    # olmo-eval's async runner materializes every instance (runs
+    # process_doc() on the whole corpus) *before* applying `limit`
     # (runners/asynq/preparation.py) — confirmed directly: fairstress:answer
     # at limit=20 against the full corpus took 10+ minutes and 18GB+ RAM just
     # to build the instance list. Core is a stratified sample (not the
     # paper's own IRT-selected FairStressCore — see the dataset card for what
     # it is/isn't), sized so routine evaluation is actually practical here.
     #
-    # Both datasets are AI2-internal artifacts hosted temporarily under a
-    # personal account pending official release, but are PUBLIC — no token
-    # or `required_secrets` entry is needed to read them.
-    data_source = DataSource(path="PardisSzah/fairstress-core", split="train")
+    # Both datasets are the validated-corrections builds (see module
+    # docstring) of their "-core"/plain AI2-internal counterparts, hosted
+    # temporarily under a personal account pending official release, but are
+    # PUBLIC — no token or `required_secrets` entry is needed to read them.
+    data_source = DataSource(path="PardisSzah/fairstress-core-corrected", split="train")
     split = Split.TRAIN
     formatter = MCQAChatFormatter()
     # Each metric below shares the FairStressScorer class, and
@@ -915,7 +873,8 @@ class FairStress(Task):
         ``minority_group``, ``majority_group``, ``minority_slot`` ("A"/"B"),
         ``favored_group_truth`` (GT only; the string ``"none"`` on AMB rows),
         ``expected_correct`` (GT only: the full candidate label as it appears
-        in the prompt, e.g. ``"Applicant B"`` — the letter is extracted here),
+        in the prompt, e.g. ``"Applicant B"`` — the letter is extracted here;
+        already corrected for question polarity, see module docstring),
         ``has_injection``, ``injection`` (nested dict: ``id``, ``family``,
         ``class``, ``direction`` — ``None`` when ``has_injection`` is false),
         ``injection_resolved``, ``injection_targets``, ``prompt`` (the fully
@@ -959,9 +918,10 @@ class FairStress(Task):
             "injection_resolved": doc.get("injection_resolved"),
             "injection_targets": doc.get("injection_targets"),
         }
-        # Pre-compute exclusion once at load time too, so it's visible even
-        # before scoring (e.g. for dataset-level auditing / dry runs).
-        metadata["excluded"] = is_excluded(metadata)
+        # The data_source datasets are pre-corrected (see module docstring) --
+        # no row here needs dropping, so this is always False. Kept as a
+        # real field (not removed) since every Metric still reads it.
+        metadata["excluded"] = False
 
         # strip_thinking is only set True by the "reasoning" variant (see
         # register_variant below) — it's a real TaskConfig field we repurpose
@@ -974,11 +934,10 @@ class FairStress(Task):
             else _FAIRSTRESS_ANSWER_FORMAT
         )
 
-        gold_slot = corrected_expected_correct(metadata)
         return Instance(
             question=prefix + prompt,
             choices=choices,
-            gold_answer=gold_slot,
+            gold_answer=metadata["expected_correct"],
             metadata=metadata,
         )
 
@@ -1094,20 +1053,20 @@ register_variant(
     strip_thinking=True,
 )
 
-# "full" points at the complete 13,425,456-item corpus. Correctly wired
-# (schema, corrections, and metrics all validated against it directly) —
-# but be aware the async runner's `instances = list(task.instances)` (see
-# the comment on the class-level data_source above) means invoking this
-# variant, at any `limit`, pays the cost of running process_doc() on all
-# 13.4M rows before any inference starts. Use "fairstress:answer"/":reasoning"
-# (FairStress-Core) for routine evaluation instead. Variants chain (see
-# `get_task`), so "fairstress:full:reasoning" already gets the reasoning
-# prompt/sampling/strip_thinking from the "reasoning" variant above without
-# a separate registration.
+# "full" points at the corrected full corpus. Correctly wired (schema,
+# corrections, and metrics all validated against it directly) — but be
+# aware the async runner's `instances = list(task.instances)` (see the
+# comment on the class-level data_source above) means invoking this
+# variant, at any `limit`, pays the cost of running process_doc() on the
+# whole corpus before any inference starts. Use "fairstress:answer"/
+# ":reasoning" (FairStress-Core) for routine evaluation instead. Variants
+# chain (see `get_task`), so "fairstress:full:reasoning" already gets the
+# reasoning prompt/sampling/strip_thinking from the "reasoning" variant
+# above without a separate registration.
 register_variant(
     "fairstress",
     "full",
-    data_source=DataSource(path="PardisSzah/fairstress", split="train"),
+    data_source=DataSource(path="PardisSzah/fairstress-corrected", split="train"),
     metrics=_fairstress_metrics(),
     primary_metric=FairStressTieShiftMetric(name="degree__3__tieshift", degree=3),
 )
