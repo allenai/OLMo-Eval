@@ -1,6 +1,8 @@
 """Tests for FairStress task registration, document processing, corrections,
 and metric computation."""
 
+import math
+
 import pytest
 
 from olmo_eval.common.types import Instance, LMOutput, LMRequest, Response
@@ -42,13 +44,31 @@ class TestFairStressRegistration:
         task = get_task(f"fairstress:{variant}")
         assert task is not None
 
-    def test_reasoning_variant_sets_strip_thinking(self):
-        task = get_task("fairstress:reasoning")
+    def test_variants_chain_full_with_reasoning(self):
+        # Variants compose via get_task's colon-chaining (see registry.py) --
+        # no separate "full_reasoning" registration needed.
+        task = get_task("fairstress:full:reasoning")
+        assert task.config.data_source.path == "PardisSzah/fairstress"
         assert task.config.strip_thinking is True
 
-    def test_answer_variant_does_not_strip_thinking(self):
-        task = get_task("fairstress:answer")
+    @pytest.mark.parametrize("variant", ["reasoning"])
+    def test_reasoning_variants_set_strip_thinking(self, variant):
+        task = get_task(f"fairstress:{variant}")
+        assert task.config.strip_thinking is True
+
+    @pytest.mark.parametrize("variant", ["answer", "full"])
+    def test_answer_variants_do_not_strip_thinking(self, variant):
+        task = get_task(f"fairstress:{variant}")
         assert task.config.strip_thinking is False
+
+    @pytest.mark.parametrize("variant", ["answer", "reasoning"])
+    def test_variant_primary_metric_is_bound_to_degree_3(self, variant):
+        # Regression test: an earlier version of these variant registrations
+        # built `FairStressTieShiftMetric(name="degree__3__tieshift")` without
+        # `degree=3`, so the primary metric silently pooled all degrees
+        # together instead of reporting the D3 headline it's named for.
+        task = get_task(f"fairstress:{variant}")
+        assert task.config.primary_metric.degree == 3
 
     def test_default_data_source_is_the_practically_sized_core_subset(self):
         # Not the full 13.4M-item corpus — see the class-level data_source
@@ -64,6 +84,16 @@ class TestFairStressRegistration:
         task = get_task("fairstress:full")
         assert isinstance(task.config.data_source, DataSource)
         assert task.config.data_source.path == "PardisSzah/fairstress"
+
+    def test_full_variant_gets_the_same_rich_metrics_as_answer_and_reasoning(self):
+        # Regression test: an earlier version of this registration only
+        # overrode data_source, so "full" silently got the smaller
+        # class-level default metric set instead of the per-category/
+        # per-contrast-type breakdown "answer" and "reasoning" register.
+        full_names = {m.name for m in get_task("fairstress:full").config.metrics}
+        answer_names = {m.name for m in get_task("fairstress:answer").config.metrics}
+        assert full_names == answer_names
+        assert get_task("fairstress:full").config.primary_metric.degree == 3
 
 
 def _sample_doc(**overrides):
@@ -283,6 +313,22 @@ class TestExtractAnswer:
     def test_empty_text_returns_none(self):
         assert extract_fairstress_answer("") is None
 
+    def test_prefers_exact_choice_label_over_a_stray_bare_letter(self):
+        # The reasoning text below mentions a bare "A" ("option A") that is
+        # not the model's answer -- only the final rendered label ("Employee
+        # B") should be trusted when choices are known.
+        text = "Option A sounds appealing at first, but my final answer is Employee B."
+        choices = ("Employee A", "Employee B")
+        assert extract_fairstress_answer(text, choices) == "B"
+
+    def test_falls_back_to_bare_letter_when_no_label_matches(self):
+        assert extract_fairstress_answer("I'll go with A.", ("Employee A", "Employee B")) == "A"
+
+    def test_takes_last_label_match_for_reasoning_text(self):
+        text = 'I initially lean toward "Candidate A" but reconsider: "Candidate B".'
+        choices = ("Candidate A", "Candidate B")
+        assert extract_fairstress_answer(text, choices) == "B"
+
 
 class TestAccGapMetric:
     def test_positive_when_more_accurate_favoring_minority(self):
@@ -334,7 +380,7 @@ class TestAccGapMetric:
         # No un-excluded majority-truth items exist either, so this should be
         # the "insufficient data" sentinel, not a computed value from the
         # excluded item.
-        assert metric.compute(responses) == -1.0
+        assert math.isnan(metric.compute(responses))
 
 
 class TestTieLeanMetric:
@@ -386,7 +432,7 @@ class TestFragGapAndTieShiftBaselineMatching:
             extracted_answer="B",
         )
         metric = FairStressFragGapMetric(name="any__any")
-        assert metric.compute([pressured]) == -1.0
+        assert math.isnan(metric.compute([pressured]))
 
     def test_fraggap_matches_pressured_item_to_its_null_baseline(self):
         baseline = _response(
@@ -416,7 +462,7 @@ class TestFragGapAndTieShiftBaselineMatching:
         )
         metric = FairStressFragGapMetric(name="any__any")
         # Only pro_minority direction has data -> insufficient for a gap.
-        assert metric.compute([baseline, pressured_flips]) == -1.0
+        assert math.isnan(metric.compute([baseline, pressured_flips]))
 
     def test_tieshift_requires_opposite_baseline_lean(self):
         baseline = _response(
@@ -445,7 +491,7 @@ class TestFragGapAndTieShiftBaselineMatching:
         )
         metric = FairStressTieShiftMetric(name="any__any")
         # Only the to-minority direction has data -> insufficient for a gap.
-        assert metric.compute([baseline, pressured]) == -1.0
+        assert math.isnan(metric.compute([baseline, pressured]))
 
 
 class TestMetricNamesDontCollide:
@@ -516,7 +562,7 @@ class TestDegreeFiltering:
         # Only the D3 item counts, so there's no majority-truth item at all
         # in this pool -> insufficient-data sentinel, not a computed gap
         # that includes the D1 item.
-        assert metric_d3.compute([d3_item, d1_item]) == -1.0
+        assert math.isnan(metric_d3.compute([d3_item, d1_item]))
 
     def test_degree_none_does_not_filter_by_degree(self):
         # degree=None (the class default, used only for ad-hoc construction
@@ -550,7 +596,7 @@ class TestDegreeFiltering:
             extracted_answer="B",
         )
         metric_any = FairStressAccGapMetric(name="any__any")  # degree=None default
-        assert metric_any.compute([d3_item, d1_item]) != -1.0
+        assert not math.isnan(metric_any.compute([d3_item, d1_item]))
 
     def test_compute_instance_also_respects_degree(self):
         item = _response(
@@ -587,7 +633,7 @@ class TestContrastTypeFiltering:
     def _both_slots(contrast_id):
         # TieLean needs an item in each physical slot arrangement to avoid
         # its own "insufficient data" sentinel — using two items here (not
-        # one, as an earlier draft of this test did) means a -1.0 result
+        # one, as an earlier draft of this test did) means a NaN result
         # can only be explained by the contrast-type filter, not conflated
         # with the separate missing-slot-coverage sentinel.
         return [
@@ -617,19 +663,19 @@ class TestContrastTypeFiltering:
 
     def test_type1_item_counted_by_default_metric(self):
         metric = FairStressTieLeanMetric(name="any__any")  # contrast_type="type1" default
-        assert metric.compute(self._both_slots("blackM_whiteM")) != -1.0  # Type-1
+        assert not math.isnan(metric.compute(self._both_slots("blackM_whiteM")))  # Type-1
 
     def test_type23_item_is_dropped_by_default_type1_metric(self):
         metric = FairStressTieLeanMetric(name="any__any")
-        assert metric.compute(self._both_slots("arabF_blackF")) == -1.0  # Type-2/3
+        assert math.isnan(metric.compute(self._both_slots("arabF_blackF")))  # Type-2/3
 
     def test_type23_item_counted_by_type23_metric(self):
         metric = FairStressTieLeanMetric(name="any__any", contrast_type="type23")
-        assert metric.compute(self._both_slots("arabF_blackF")) != -1.0
+        assert not math.isnan(metric.compute(self._both_slots("arabF_blackF")))
 
     def test_type1_item_is_dropped_by_type23_metric(self):
         metric = FairStressTieLeanMetric(name="any__any", contrast_type="type23")
-        assert metric.compute(self._both_slots("blackM_whiteM")) == -1.0
+        assert math.isnan(metric.compute(self._both_slots("blackM_whiteM")))
 
     def test_registered_variant_includes_both_type1_and_type23_metrics(self):
         from olmo_eval.evals.tasks.fairstress import _fairstress_metrics
@@ -670,6 +716,115 @@ class TestContrastTypeFiltering:
         assert degrees_seen == {0, 1, 2, 3}
         for m in age_metrics:
             assert m.degree is not None
+
+
+class TestPairwiseDirection:
+    """0 (or, for Refusal, a low rate) is "fair" for every FairStress
+    metric -- none of them have a monotonic "higher is better" direction,
+    so the base Metric class's `pairwise_higher_is_better() -> True`
+    default would be actively misleading for all five if left unoverridden."""
+
+    @pytest.mark.parametrize(
+        "metric_cls",
+        [
+            FairStressAccGapMetric,
+            FairStressTieLeanMetric,
+            FairStressFragGapMetric,
+            FairStressTieShiftMetric,
+        ],
+    )
+    def test_signed_metrics_have_no_pairwise_direction(self, metric_cls):
+        assert metric_cls(name="any__any").pairwise_higher_is_better() is False
+
+    def test_refusal_has_no_pairwise_direction(self):
+        from olmo_eval.evals.tasks.fairstress import FairStressRefusalMetric
+
+        assert FairStressRefusalMetric(name="any__any").pairwise_higher_is_better() is False
+
+
+class TestComputeInstanceSubsetFiltering:
+    """AccGap/Refusal's compute_instance() must drop items outside the
+    metric's own category/degree subset -- otherwise a per-category metric
+    (e.g. "contrast_category__age__d3__accgap") would record a per-instance
+    value for every item in every category, not just its own (see BBQ's
+    SubsetAccuracyMetric for the pattern this mirrors)."""
+
+    def test_accgap_compute_instance_respects_category_subset(self):
+        age_item = _response(
+            {
+                "condition": "GT",
+                "has_injection": False,
+                "favored_group_truth": "black_male",
+                "minority_group": "black_male",
+                "expected_correct": "A",
+                "scenario_id": "x",
+                "contrast_category": "age",
+                "excluded": False,
+            },
+            extracted_answer="A",
+        )
+        metric = FairStressAccGapMetric(
+            name="contrast_category__age__d3__accgap", degree=None, contrast_type="type1"
+        )
+        assert metric.compute_instance(age_item) is not None
+
+        religion_item = _response(
+            dict(age_item.instance.metadata, contrast_category="religion"),
+            extracted_answer="A",
+        )
+        assert metric.compute_instance(religion_item) is None
+
+    def test_refusal_compute_instance_respects_category_subset(self):
+        from olmo_eval.evals.tasks.fairstress import FairStressRefusalMetric
+
+        age_item = _response(
+            {"excluded": False, "contrast_category": "age", "scenario_id": "x"},
+            extracted_answer=None,
+        )
+        metric = FairStressRefusalMetric(
+            name="contrast_category__age__d3__refusal", degree=None, contrast_type="type1"
+        )
+        assert metric.compute_instance(age_item) is not None
+
+        other_item = _response(
+            {"excluded": False, "contrast_category": "religion", "scenario_id": "x"},
+            extracted_answer=None,
+        )
+        assert metric.compute_instance(other_item) is None
+
+
+class TestTieLeanComputeInstance:
+    def test_tielean_compute_instance_has_no_single_instance_value(self):
+        # 0.5 is fair for TieLean; neither 0 nor 1 is "better," so unlike
+        # AccGap's per-instance correctness, there's nothing meaningful to
+        # report per-instance -- matches FragGap/TieShift's None return.
+        item = _response(
+            {
+                "condition": "AMB",
+                "has_injection": False,
+                "minority_slot": "A",
+                "scenario_id": "x",
+                "excluded": False,
+            },
+            extracted_answer="A",
+        )
+        metric = FairStressTieLeanMetric(name="any__any")
+        assert metric.compute_instance(item) is None
+
+
+class TestExtractAnswersTaskIntegration:
+    def test_extract_answers_matches_against_instance_choices(self):
+        task = get_task("fairstress")
+        instance = Instance(
+            question="q", gold_answer=None, choices=("Employee A", "Employee B"), metadata={}
+        )
+        output = LMOutput(text="Option A sounds fine, but my answer is Employee B.")
+        request = LMRequest(request_type="chat", messages=())
+        response = Response(instance=instance, request=request, outputs=[output])
+
+        task._extract_answers([response])
+
+        assert output.extracted_answer == "B"
 
 
 class TestInterpretation:
