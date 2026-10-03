@@ -59,13 +59,13 @@ Every number in that log line is also its own registered metric in
 `metrics.json` — the log only narrates them.
 
 **Data-integrity corrections.** The data_source datasets
-(``PardisSzah/fairstress-core-corrected``, ``PardisSzah/fairstress-corrected``)
-are built from the original released data by
+(``PardisSzah/fairstress-core``, ``PardisSzah/fairstress``) are built from
+the originally released data by
 ``scripts/internal/build_fairstress_corrected.py`` (same repo, see that
 script and its co-located ``fairstress_corrections.json`` for the exact,
-re-runnable methodology against the originals,
-``PardisSzah/fairstress-core``/``PardisSzah/fairstress``), applying two
-corrections validated by the paper's authors:
+re-runnable methodology). The pre-correction originals are kept private at
+``PardisSzah/original_fairstress-core``/``PardisSzah/original_fairstress``
+for provenance. Two corrections, validated by the paper's authors:
 
 1. **Question-polarity negation.** 5 of 300 scenario templates ask a
    *negative*-outcome question (terminate, revoke, demote, hold liable).
@@ -820,7 +820,7 @@ class FairStress(Task):
     """FairStress: bias in the answer vs. bias in the defense of the answer."""
 
     # FairStress-Core (48,005 items) is the default data source, not the full
-    # corpus (fairstress-corrected, wired in via the "full" variant below):
+    # corpus (PardisSzah/fairstress, wired in via the "full" variant below):
     # olmo-eval's async runner materializes every instance (runs
     # process_doc() on the whole corpus) *before* applying `limit`
     # (runners/asynq/preparation.py) — confirmed directly: fairstress:answer
@@ -829,11 +829,12 @@ class FairStress(Task):
     # paper's own IRT-selected FairStressCore — see the dataset card for what
     # it is/isn't), sized so routine evaluation is actually practical here.
     #
-    # Both datasets are the validated-corrections builds (see module
-    # docstring) of their "-core"/plain AI2-internal counterparts, hosted
-    # temporarily under a personal account pending official release, but are
-    # PUBLIC — no token or `required_secrets` entry is needed to read them.
-    data_source = DataSource(path="PardisSzah/fairstress-core-corrected", split="train")
+    # Both datasets have the validated corrections (see module docstring)
+    # baked in; the pre-correction originals live, private, under
+    # "original_"-prefixed names. Hosted temporarily under a personal
+    # account pending official release, but are PUBLIC — no token or
+    # `required_secrets` entry is needed to read them.
+    data_source = DataSource(path="PardisSzah/fairstress-core", split="train")
     split = Split.TRAIN
     formatter = MCQAChatFormatter()
     # Each metric below shares the FairStressScorer class, and
@@ -1066,7 +1067,7 @@ register_variant(
 register_variant(
     "fairstress",
     "full",
-    data_source=DataSource(path="PardisSzah/fairstress-corrected", split="train"),
+    data_source=DataSource(path="PardisSzah/fairstress", split="train"),
     metrics=_fairstress_metrics(),
     primary_metric=FairStressTieShiftMetric(name="degree__3__tieshift", degree=3),
 )

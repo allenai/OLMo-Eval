@@ -42,7 +42,7 @@ class TestFairStressRegistration:
         # Variants compose via get_task's colon-chaining (see registry.py) --
         # no separate "full_reasoning" registration needed.
         task = get_task("fairstress:full:reasoning")
-        assert task.config.data_source.path == "PardisSzah/fairstress-corrected"
+        assert task.config.data_source.path == "PardisSzah/fairstress"
         assert task.config.strip_thinking is True
 
     @pytest.mark.parametrize("variant", ["reasoning"])
@@ -71,13 +71,13 @@ class TestFairStressRegistration:
         # 10+ minute / 18GB+ run against the full corpus at limit=20).
         task = get_task("fairstress")
         assert isinstance(task.config.data_source, DataSource)
-        assert task.config.data_source.path == "PardisSzah/fairstress-core-corrected"
+        assert task.config.data_source.path == "PardisSzah/fairstress-core"
         assert task.config.get_data_source().split == "train"
 
     def test_full_variant_points_at_the_complete_corpus(self):
         task = get_task("fairstress:full")
         assert isinstance(task.config.data_source, DataSource)
-        assert task.config.data_source.path == "PardisSzah/fairstress-corrected"
+        assert task.config.data_source.path == "PardisSzah/fairstress"
 
     def test_full_variant_gets_the_same_rich_metrics_as_answer_and_reasoning(self):
         # Regression test: an earlier version of this registration only
