@@ -8,6 +8,7 @@ from typing import Any
 
 from olmo_eval.common.metrics import Metric
 from olmo_eval.common.metrics.predictions import augment_prediction_instance_metrics
+from olmo_eval.common.scorers.base import SCORER_RESULTS_KEY
 from olmo_eval.common.types import Response, SamplingParams
 
 
@@ -102,6 +103,9 @@ def build_predictions(scored: Sequence[Any], metrics: Sequence[Metric] = ()) -> 
             # Whether the answer was stated in the requested format (scorer-set).
             if "answer_format_correct" in meta:
                 out_data["answer_format_correct"] = meta["answer_format_correct"]
+            # Per-instance results scorers keep, keyed by scorer name.
+            if SCORER_RESULTS_KEY in meta:
+                out_data[SCORER_RESULTS_KEY] = meta[SCORER_RESULTS_KEY]
 
             model_output.append(out_data)
 

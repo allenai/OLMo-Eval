@@ -25,8 +25,10 @@ depths -- 6 for nq/triviaqa/popqa (the `dep6` in the filenames: 0.0, 0.2, 0.4,
 0.6, 0.8, 0.95) and 3 for hotpotqa -- so the score averages over where in the
 context the answer sits, which is the "lost in the middle" effect these tasks
 exist to measure. HELMET samples by question and keeps every depth for the
-questions it picks, and that is reproduced here: a limit of 100 yields ~600
-instances for nq, not 100. Budget accordingly at the longer tiers.
+questions it picks, and that is reproduced here: 100 questions yield ~600
+instances for nq, not 100. Budget accordingly at the longer tiers. The task
+passes its `max_questions` setting here and leaves the runner's instance
+`limit` unset, so the sweep reaches the model intact.
 """
 
 import hashlib

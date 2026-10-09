@@ -116,6 +116,12 @@ def load_multi_lexsum_dataset(
             }
         )
 
+    missing = sum(1 for row in data if not row["keypoints"])
+    if missing:
+        # the judge cannot grade these; each scores 0.0 and is flagged in its
+        # judge_result
+        logger.warning("%d Multi-LexSum rows have no key points", missing)
+
     return {
         "data": data,
         "prompt_template": _USER_TEMPLATE + "\n\n" + _SYSTEM_TEMPLATE,

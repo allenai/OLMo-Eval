@@ -1100,6 +1100,7 @@ class VLLMServerProvider(InferenceProvider):
             max_len = request.max_length if request.max_length is not None else self.max_length
             if max_len is not None and max_len <= 1:
                 raise ValueError("max_length must be greater than 1 for loglikelihood requests")
+            overflow = 0
             if max_len is not None and len(full_tokens) > max_len - 1:
                 full_tokens = full_tokens[-(max_len - 1) :]
                 overflow = len(context_enc) + len(continuation_enc) - (max_len - 1)
@@ -1193,6 +1194,7 @@ class VLLMServerProvider(InferenceProvider):
                         "sum_logits": total,
                         "num_tokens": num_tokens,
                         "num_tokens_all": num_tokens,
+                        "prompt_truncated_tokens": overflow,
                         "is_greedy": is_greedy,
                     },
                 )

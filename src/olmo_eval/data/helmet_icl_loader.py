@@ -12,26 +12,33 @@ is HELMET's default: it forces the model to learn the mapping from context
 instead of leaning on label semantics it already knows.
 """
 
+import csv
 import hashlib
 import math
 import random
+import re
 from typing import Any
 
-from datasets import load_dataset
+from datasets import ClassLabel, Dataset, DatasetDict, DownloadManager, load_dataset
 
 # Source datasets, one entry per HELMET ICL task.
 #
 # HELMET loads several of these with `trust_remote_code=True`, but `datasets`
-# dropped script-based loading in 4.0, so three of the five resolve to a
-# parquet source here instead: CogComp/trec and nlu_evaluation_data via the
-# Hub's auto-converted `refs/convert/parquet` branch (byte-identical content),
-# and banking77 via `legacy-datasets/banking77`, since PolyAI/banking77 hosts
-# only the loading script and no data. Split sizes and label counts were
-# verified against the values HELMET hardcodes.
+# dropped script-based loading in 4.0, so three of the five resolve to another
+# source here: CogComp/trec via the Hub's auto-converted `refs/convert/parquet`
+# branch (byte-identical content), banking77 via `legacy-datasets/banking77`,
+# since PolyAI/banking77 hosts only the loading script and no data, and nlu
+# from the CSV its loading script read (see `_load_nlu_csv`), since the Hub
+# copy is no longer available. Split sizes and label counts were verified
+# against the values HELMET hardcodes.
+#
+# Every source is pinned to a commit. For trec that is a commit on the
+# `refs/convert/parquet` branch, which the Hub regenerates; if it is ever
+# garbage-collected the load fails loudly rather than silently drifting.
 ICL_DATASETS: dict[str, dict[str, Any]] = {
     "trec_coarse": {
         "path": "CogComp/trec",
-        "revision": "refs/convert/parquet",
+        "revision": "65752bf53af25bc935a0dce92fb5b6c930728450",
         "train_split": "train",
         "test_split": "test",
         "text_field": "text",
@@ -40,7 +47,7 @@ ICL_DATASETS: dict[str, dict[str, Any]] = {
     },
     "trec_fine": {
         "path": "CogComp/trec",
-        "revision": "refs/convert/parquet",
+        "revision": "65752bf53af25bc935a0dce92fb5b6c930728450",
         "train_split": "train",
         "test_split": "test",
         "text_field": "text",
@@ -49,6 +56,7 @@ ICL_DATASETS: dict[str, dict[str, Any]] = {
     },
     "banking77": {
         "path": "legacy-datasets/banking77",
+        "revision": "f54121560de48f2852f90be299010d1d6dc612ec",
         "train_split": "train",
         "test_split": "test",
         "text_field": "text",
@@ -57,6 +65,7 @@ ICL_DATASETS: dict[str, dict[str, Any]] = {
     },
     "clinic150": {
         "path": "clinc/clinc_oos",
+        "revision": "155b9c710419136e17307b80d0a13e68cd46b4ec",
         "name": "plus",
         "train_split": "train",
         "test_split": "validation",
@@ -65,8 +74,11 @@ ICL_DATASETS: dict[str, dict[str, Any]] = {
         "num_labels": 151,
     },
     "nlu": {
-        "path": "xingkunliuxtracta/nlu_evaluation_data",
-        "revision": "refs/convert/parquet",
+        "csv_url": (
+            "https://raw.githubusercontent.com/xliuhw/NLU-Evaluation-Data/"
+            "6e495bf0d371d18b611398f205bf53ddb9b1ad5d/AnnotatedData/"
+            "NLU-Data-Home-Domain-Annotated-All.csv"
+        ),
         # nlu ships a single split; HELMET carves out a test set with a
         # seeded 90/10 train_test_split.
         "split_from_train": 0.1,
@@ -122,6 +134,38 @@ def _balance_labels(
     return [record for round_samples in rounds for record in round_samples][:shots]
 
 
+# Entity markup in the nlu annotations, e.g. "[time : five am]".
+_NLU_ANNOTATION = re.compile(r"\[(.+?)\s+\:+\s(.+?)\]")
+
+
+def _load_nlu_csv(url: str) -> DatasetDict:
+    """Rebuild the nlu_evaluation_data dataset from its source CSV.
+
+    Follows the dataset's original loading script (huggingface/datasets 1.18,
+    `nlu_evaluation_data.py`), which HELMET used: rows with a "null"
+    annotation are dropped, the text is the annotation with its entity markup
+    removed, and the label is `{scenario}_{intent}`, indexed in sorted order.
+    Rows keep their file order, which the seeded train/test split depends on.
+    """
+    path = DownloadManager().download(url)
+    texts, labels = [], []
+    with open(path, encoding="utf-8") as f:
+        reader = csv.reader(
+            f, quotechar='"', delimiter=";", quoting=csv.QUOTE_ALL, skipinitialspace=True
+        )
+        next(reader)
+        for row in reader:
+            scenario, intent, annotation = row[2], row[3], row[5]
+            if annotation == "null":
+                continue
+            texts.append(_NLU_ANNOTATION.sub(r"\2", annotation))
+            labels.append(f"{scenario}_{intent}")
+
+    label_feature = ClassLabel(names=sorted(set(labels)))
+    dataset = Dataset.from_dict({"text": texts, "label": labels})
+    return DatasetDict({"train": dataset.cast_column("label", label_feature)})
+
+
 def _load_splits(spec: dict[str, Any], seed: int):
     """Load the train/test splits for one ICL source dataset.
 
@@ -135,7 +179,10 @@ def _load_splits(spec: dict[str, Any], seed: int):
     if "revision" in spec:
         load_kwargs["revision"] = spec["revision"]
 
-    dataset = load_dataset(spec["path"], **load_kwargs)
+    if "csv_url" in spec:
+        dataset = _load_nlu_csv(spec["csv_url"])
+    else:
+        dataset = load_dataset(spec["path"], **load_kwargs)
 
     if "split_from_train" in spec:
         split = dataset[spec["train_split"]].train_test_split(

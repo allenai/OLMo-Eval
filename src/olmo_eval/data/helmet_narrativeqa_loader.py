@@ -28,6 +28,9 @@ logger = logging.getLogger(__name__)
 # HELMET keeps documents strictly longer than this many reference tokens.
 MIN_DOCUMENT_TOKENS = 131072
 
+NARRATIVEQA_REPO = "deepmind/narrativeqa"
+NARRATIVEQA_REVISION = "2e643e7363944af1c33a652d1c87320d0871c4e4"
+
 _USER_TEMPLATE = (
     "You are given a story, which can be either a novel or a movie script, and a "
     "question. Answer the question as concisely as you can, using a single phrase if "
@@ -97,7 +100,7 @@ def load_narrativeqa_dataset(
     Returns:
         Dictionary with `data` (processed records) and the HELMET prompt templates.
     """
-    all_data = load_dataset("narrativeqa")
+    all_data = load_dataset(NARRATIVEQA_REPO, revision=NARRATIVEQA_REVISION)
     tokenizer = _load_reference_tokenizer(reference_tokenizer)
 
     demo_text = ""

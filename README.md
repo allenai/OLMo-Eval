@@ -697,7 +697,7 @@ olmo-eval evaluates vision-language models on image benchmarks. Tasks attach ima
 to `LMRequest.images` and the provider decides how to render them, so the task
 definition is the same regardless of which multimodal provider runs it.
 
-Four families of image tasks are built in:
+Five families of image tasks are built in:
 
 | Family | Suite | Tasks |
 | --- | --- | --- |
@@ -706,6 +706,8 @@ Four families of image tasks are built in:
 | Pointing | `molmo2_pointing` | `pixmo_points_eval`, `sa_co_gold_subset` |
 | Pointing (model prompts) | `molmo2_pointing_mp` | `pixmo_points_eval_mp`, `sa_co_gold_subset_mp`, `sa_co_gold_point_4k_mp` |
 | Multi-image | `molmo2_multiimage` | `muir_bench`, `mmiu`, `blink` |
+| Document OCR, English (default for Molmo2) | `ocr_en` | `olmocr_bench`, `cc_ocr_multi_scene_en`, `omnidocbench_en` |
+| Document OCR, every language | `ocr` | `olmocr_bench`, `cc_ocr_multi_scene`, `omnidocbench` |
 
 Image-QA primary metrics are all 0-1, so `molmo2_imageqa` averages them.
 `dense_caption` reports on a 0-100 scale, so `molmo2_imageqa_caption` is display-only
@@ -716,6 +718,45 @@ per instance (capped at 20, matching the mm_olmo eval config) and score multiple
 choice answers by MMMU-style option-letter parsing; besides the primary `all`
 accuracy each task reports per-category breakdowns (MuirBench's 12 task types,
 BLINK's 14 subtasks, MMIU's 7 relationship types plus image-count buckets).
+
+Document-OCR tasks hand the model one page image and grade the markdown (or JSON)
+it writes back, each with its benchmark's official scoring:
+
+- `olmocr_bench` — [olmOCR-bench](https://huggingface.co/datasets/allenai/olmOCR-bench):
+  1,403 PDF pages and 7,019 unit tests (text presence/absence, reading order, table
+  cells, rendered math). Tests run through the official `olmocr` scorer; `overall` is
+  the mean of the eight category pass rates (0-1). Math tests render with KaTeX in a
+  headless Chromium, which is installed on first use.
+- `cc_ocr_multi_scene` — the multi-scene OCR track of
+  [CC-OCR](https://huggingface.co/datasets/wulipc/CC-OCR): 2,750 scene-text, document and
+  web images in English and Chinese. The primary `macro_f1` is the official track score
+  (0-1): per-image F1 of the word (Chinese: character) multiset, averaged within and then
+  across the 13 sub-datasets.
+- `omnidocbench` — [OmniDocBench](https://github.com/opendatalab/OmniDocBench) v1.6:
+  1,651 pages scored by the pinned official evaluator, which runs in a virtualenv of its
+  own (needs `git` and `uv`). `overall` is the leaderboard's 0-100 number, which is why
+  the `ocr` suite is display-only. Its formula metric (CDM) renders LaTeX; the task sets
+  up the toolchain itself at job start, so it runs in one step anywhere (see
+  [OmniDocBench formula scoring](#omnidocbench-formula-scoring-cdm)). `omnidocbench_v15`
+  is the 1,355-page v1.5 release with its own evaluator; the two leaderboards are not
+  comparable.
+
+English-only variants keep the benchmarks' official scoring on a subset:
+`cc_ocr_multi_scene_en` runs the 8 English sub-datasets (2,000 images) and averages over
+those, and each OmniDocBench version has an `_en` variant (`omnidocbench_en`,
+`omnidocbench_v15_en`) that runs and scores only the pages annotated `english` (755 of
+v1.6's pages, 628 of v1.5's). Molmo2 models read English only, so the `_en` variants (suite
+`ocr_en`) are the default setting for evaluating them. The plain names run every language,
+as the leaderboards do, for multilingual models; `olmocr_bench` is English throughout and
+has no variant.
+
+By default each OCR task sends its benchmark's own instruction, for instruction-tuned
+checkpoints. A stage-1 checkpoint (`-o prompt_templates=none -o
+system_prompt_style=style_and_length_v2`) gets the OCR style tag it was trained on, alone:
+`olmocr:` for `olmocr_bench` and OmniDocBench, `textocr:` for CC-OCR.
+
+The OCR datasets are downloaded from the Hugging Face Hub at pinned revisions rather
+than read from `$MOLMO_DATA_DIR`.
 
 ### Setup
 
@@ -782,6 +823,70 @@ uv run olmo-eval suite inspect molmo2_imageqa
 The `molmo2-4b` preset runs `allenai/Molmo2-4B` with `dtype=float32`,
 `autocast_dtype=bfloat16` and `max_crops=24` (8 per image in multi-image prompts),
 matching the reference evaluation numerics.
+
+### OmniDocBench formula scoring (CDM)
+
+`omnidocbench`, `omnidocbench_v15` and their `_en` variants score formulas with CDM,
+which renders every formula through LaTeX and ImageMagick. Before inference each task
+installs whatever part of that toolchain is missing or at another version, then renders
+a test formula through its version's own CDM template. The whole evaluation, CDM
+included, finishes in the same job; no separate rescoring step is needed. Setup takes
+about 5-9 minutes on a fresh machine.
+
+The versions are the ones each release documents, because CDM follows the renderer
+(Ghostscript 10.02 instead of 9.55 moves a formula score by about 0.2 points):
+
+| | v1.6 (`omnidocbench`) | v1.5 (`omnidocbench_v15`) |
+| --- | --- | --- |
+| LaTeX | TeX Live 2025, `pdflatex` + `CJK` | TeX Live 2025, `xelatex` + `xeCJK` |
+| Font | `gkai` (TeX Live `arphic`) | Source Han Sans SC |
+| ImageMagick | 7.1.1-47 | 7.1.1-47 |
+| Ghostscript | 9.55.0 | 9.55.0 |
+| Other | | Node.js 16.13.1 (KaTeX tokenizer) |
+
+What the setup needs:
+
+- **Network access**: TeX Live 2025 comes from the frozen `tlnet-final` repository in the
+  TeX historic archive, ImageMagick and Ghostscript from their GitHub releases, the font
+  from Adobe's release, and Node.js from nodejs.org. Each download is checked against its
+  pinned SHA-256, and a mismatch stops the task.
+- **Linux x86_64**, where the installed binaries run. Elsewhere, put the toolchain on
+  `PATH` yourself.
+- **apt** (root, as in Beaker jobs), for the system libraries the ImageMagick AppImage
+  links against and for `fontconfig`.
+- TeX Live, ImageMagick and Ghostscript already on `PATH` at exactly these versions are
+  used as they are, as is any `node`; anything else is installed alongside, first on
+  `PATH` for the evaluation.
+
+If a download fails or the test formula does not render, the task stops before inference
+with the error, rather than scoring every formula zero. On a machine without network
+access or root, put the pinned versions on `PATH` first (the task then uses them as they
+are) or point `OMNIDOCBENCH_CDM_DIR` at a toolchain installed elsewhere.
+
+Environment variables:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `OMNIDOCBENCH_CDM_DIR` | `~/.cache/olmo_eval/omnidocbench/cdm` | Where the toolchain is installed; point several runs at one shared install to reuse it |
+| `OMNIDOCBENCH_EVAL_DIR` | `~/.cache/olmo_eval/omnidocbench` | Where each version's evaluator checkout and virtualenv are provisioned |
+| `OMNIDOCBENCH_EVAL_WORKERS` | `min(16, cpus / 4)` | Evaluator worker threads (matching, TEDS, CDM); 48 suits a Beaker GPU node |
+| `OMNIDOCBENCH_EVAL_TIMEOUT_S` | `43200` (12 h) | Wall-clock cap on evaluation; past it, as on any evaluator failure, the task reports no metrics and an error, and keeps the predictions for rescoring |
+| `OMNIDOCBENCH_DIR` / `OMNIDOCBENCH_V15_DIR` | Hub download | Local copy of the dataset (`OmniDocBench.json` + `images/`) |
+
+For example, on Beaker:
+
+```bash
+olmo-eval beaker launch -n molmo2-4b-omnidocbench \
+  -m /weka/oe-training-default/mm-olmo/released-models-molmo2-1225/Molmo2-4B/step2000 \
+  -t omnidocbench_en \
+  --harness default -o provider.kind=olmo_core_vlm -o provider.max_crops=24 \
+  -o provider.num_instances=2 \
+  --gpus 2 --env OMNIDOCBENCH_EVAL_WORKERS=48 \
+  -c ai2/holmes -p urgent --min-runtime 8h -w <workspace> -B <budget>
+```
+
+The job log shows the toolchain setup (`Running: ...install-tl...`, `tlmgr install ...`),
+then inference, then one `overall` for the task.
 
 ### Providers
 

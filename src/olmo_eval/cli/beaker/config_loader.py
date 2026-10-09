@@ -341,7 +341,11 @@ class LaunchConfigLoader:
             provider_config = None
 
         if harness_config and provider_config:
-            harness_config = harness_config.merge_provider(provider_config)
+            from olmo_eval.cli.run.config import merge_model_provider
+
+            harness_config = merge_model_provider(
+                harness_config, provider_config, harness_overrides
+            )
 
         # Calculate main provider GPU requirements
         main_instances = 1
@@ -406,8 +410,8 @@ class LaunchConfigLoader:
         if not harness_name:
             return None
 
-        from olmo_eval.cli.run.config import _apply_dotlist_overrides
-        from olmo_eval.harness import HarnessConfig, get_harness_preset
+        from olmo_eval.cli.run.config import _apply_harness_overrides
+        from olmo_eval.harness import get_harness_preset
 
         try:
             harness_config = get_harness_preset(harness_name)
@@ -415,8 +419,6 @@ class LaunchConfigLoader:
             return None
 
         if harness_overrides:
-            harness_dict = harness_config.to_dict()
-            harness_dict = _apply_dotlist_overrides(harness_dict, harness_overrides)
-            harness_config = HarnessConfig.from_dict(harness_dict)
+            harness_config = _apply_harness_overrides(harness_config, harness_overrides)
 
         return harness_config

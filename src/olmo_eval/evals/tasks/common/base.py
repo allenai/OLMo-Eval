@@ -191,6 +191,11 @@ class TaskConfig:
     prompt_templates: str | None = None
     system_prompt_style: str | None = None
 
+    #: Task-specific settings that shape the data or prompts but have no field of
+    #: their own, such as shot counts, token budgets or source revisions. Set them
+    #: here so that changing one changes the task hash.
+    task_settings: dict[str, Any] | None = None
+
     def __post_init__(self) -> None:
         """Validate scheduler-only sandbox allocation hints."""
         if isinstance(self.output_score_aggregation, str):
@@ -310,6 +315,8 @@ class TaskConfig:
             serialized["system_prompt_style"] = self.system_prompt_style
         if self.strip_thinking:
             serialized["strip_thinking"] = True
+        if self.task_settings is not None:
+            serialized["task_settings"] = self.task_settings
         if any(
             value is not None
             for value in (
@@ -342,14 +349,7 @@ class TaskConfig:
             # If it's a Metric instance, return it directly
             if isinstance(self.primary_metric, Metric):
                 return self.primary_metric
-            # A MetricName (or bare str) names one of this task's own metrics.
-            # Resolving it matters beyond display: a task whose primary metric
-            # stays unresolved contributes nothing to the average-of-averages a
-            # parent suite computes, so the suite silently falls back to
-            # averaging whichever metric name its children happen to share.
-            for metric in self.metrics:
-                if metric.name == self.primary_metric:
-                    return metric
+            # If it's a MetricName enum, we can't resolve it to an instance here
             return None
         # Default to single metric if only one is defined
         if len(self.metrics) == 1:

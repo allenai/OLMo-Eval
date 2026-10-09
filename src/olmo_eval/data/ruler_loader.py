@@ -17,6 +17,9 @@ from huggingface_hub.utils import silent_tqdm
 
 logger = logging.getLogger(__name__)
 
+RULER_DATA_REPO = "allenai/ruler_data"
+RULER_DATA_REVISION = "b2d1d948dc4f6ca37c0135123f3b3afbed741130"
+
 
 def _disable_ruler_progress_bars() -> None:
     """Avoid HF tqdm `_lock` failures in the RULER download path."""
@@ -42,15 +45,18 @@ def download_ruler_data() -> str:
     """
     _disable_ruler_progress_bars()
 
-    root_dir = os.path.join(_hf_datasets_cache(), "allenai--RULER")
+    # Keyed by revision, so moving the pin re-extracts rather than reusing an
+    # older copy.
+    root_dir = os.path.join(_hf_datasets_cache(), f"allenai--RULER-{RULER_DATA_REVISION[:12]}")
     data_dir = os.path.join(root_dir, "data")
 
     if not os.path.exists(data_dir):
         logger.info(f"Local RULER data not found in {root_dir}, downloading...")
         my_file = hf_hub_download(  # ty: ignore[no-matching-overload]
-            repo_id="allenai/ruler_data",
+            repo_id=RULER_DATA_REPO,
             filename="data_100_samples.tgz",
             repo_type="dataset",
+            revision=RULER_DATA_REVISION,
             tqdm_class=silent_tqdm,
         )
         os.makedirs(root_dir, exist_ok=True)

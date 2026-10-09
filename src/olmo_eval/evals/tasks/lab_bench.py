@@ -41,10 +41,8 @@ from olmo_eval.common.types import (
     Split,
 )
 from olmo_eval.data import DataLoader, DataSource
+from olmo_eval.evals.extract import ANSWER_LINE_PATTERN
 from olmo_eval.evals.tasks.common import Task, register, register_variant
-
-# Regex for "ANSWER: X" pattern (case-insensitive)
-_ANSWER_PATTERN = re.compile(r"ANSWER\s*:\s*([A-Z])", re.IGNORECASE)
 
 # Matches REFUSE_CHOICE from the official LAB-Bench evaluation code
 _REFUSE_CHOICE = "Insufficient information to answer the question"
@@ -279,7 +277,7 @@ class LabBenchTask(Task):
 
     def extract_answer(self, output: LMOutput) -> str | None:
         """Extract the last ``ANSWER: X`` letter from model output."""
-        matches = list(_ANSWER_PATTERN.finditer(output.text))
+        matches = list(ANSWER_LINE_PATTERN.finditer(output.text))
         return matches[-1].group(1).upper() if matches else None
 
 

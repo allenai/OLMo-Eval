@@ -10,7 +10,7 @@ Three deliberate differences from `suites/ruler.py`:
 1. `helmet_all__*` aggregates the *category* suites rather than flat-averaging
    every task, matching how the HELMET paper reports an overall number. A flat
    average would let a category's task count set its weight -- ICL contributes
-   five tasks and recall one, so recall would be worth a sixth of ICL.
+   five tasks and re-ranking one, so re-ranking would be worth a fifth of ICL.
 
 2. `helmet_all__*` is only registered where more than one category exists at
    that length. Above 128k only `json_kv` extends, so a combined suite there
@@ -34,11 +34,16 @@ CATEGORIES = ["recall", "rag", "rerank", "longqa", "summ", "icl", "cite"]
 
 
 def _tasks_for(category: str, size: int, judged: bool | None = None) -> list[str]:
-    """Task names in a category at a size, optionally filtered by judge use."""
+    """Task names in a category at a size, optionally filtered by judge use.
+
+    Ablations (the ALCE nocite variants) stay registered as tasks but are left
+    out, since HELMET's category averages exclude them.
+    """
     return [
         f"helmet_{name}"
         for name, config in HELMET_TASKS.items()
         if config["tag"] == category
+        and not config.get("ablation")
         and name.endswith(f"__{size}")
         and (judged is None or bool(config.get("judged")) == judged)
     ]

@@ -8,6 +8,7 @@ from typing import Any
 
 from rich.console import Console
 
+from olmo_eval.common.types import ProviderKind
 from olmo_eval.evals.suites import get_suite, suite_exists
 from olmo_eval.harness.config import HarnessConfig, ProviderConfig
 
@@ -88,12 +89,13 @@ def _apply_dotlist_overrides(base_dict: dict[str, Any], overrides: list[str]) ->
       ``sandbox_pool_min_instances`` minimum instead of being applied per sandbox
 
     Args:
-        base_dict: The base dictionary to modify.
+        base_dict: The base dictionary. It is not modified.
         overrides: List of dotlist strings (e.g., ["sandboxes.0.mode=modal"]).
 
     Returns:
-        The modified dictionary.
+        A new dictionary with the overrides applied.
     """
+    base_dict = copy.deepcopy(base_dict)
     for override in overrides:
         if "=" not in override:
             continue
@@ -172,6 +174,57 @@ def _apply_dotlist_overrides(base_dict: dict[str, Any], overrides: list[str]) ->
             )
 
     return base_dict
+
+
+def provider_kind_override(overrides: list[str]) -> str | None:
+    """Return the provider kind set by a CLI override such as ``provider.kind=vllm_server``."""
+    provider_overrides = [
+        o for o in overrides if o.split("=", 1)[0].strip() in ("provider", "provider.kind")
+    ]
+    if not provider_overrides:
+        return None
+    provider = _apply_dotlist_overrides({"provider": {}}, provider_overrides)["provider"]
+    kind = provider.get("kind") if isinstance(provider, dict) else None
+    return str(kind) if kind else None
+
+
+def merge_model_provider(
+    harness_config: HarnessConfig,
+    provider_config: ProviderConfig,
+    overrides: list[str] | None = None,
+) -> HarnessConfig:
+    """Merge a model's provider into a harness config, honoring a CLI provider.kind override.
+
+    A harness preset's own provider kind yields to the model preset's kind, but an
+    explicit ``provider.kind`` override always wins. Scaffolds talk to the model through
+    an OpenAI client, so a model preset's in-process vllm kind runs as vllm_server under
+    a scaffold.
+    """
+    merged = harness_config.merge_provider(provider_config)
+    kind = provider_kind_override(overrides or [])
+    if kind is None and merged.scaffold and merged.provider.kind == ProviderKind.VLLM:
+        kind = ProviderKind.VLLM_SERVER
+    return merged.with_provider_overrides(kind=kind) if kind else merged
+
+
+def _apply_harness_overrides(harness_config: HarnessConfig, overrides: list[str]) -> HarnessConfig:
+    """Apply CLI overrides to harness config.
+
+    Args:
+        harness_config: Base HarnessConfig to modify.
+        overrides: List of dotlist override strings (e.g., ["sandbox.mode=docker"]).
+            Supports list indices like "sandboxes.0.mode=modal".
+            Supports JSON values like 'sandboxes.0={"mode":"modal"}'.
+            Supports shared sandbox overrides like
+            'sandboxes={"mode":"modal","instances":64,"min_instances":24}'
+            where non-pool fields are applied to each sandbox config and
+            instances/min_instances set the shared sandbox pool budget/minimum.
+
+    Returns:
+        New HarnessConfig with overrides applied.
+    """
+    harness_dict = _apply_dotlist_overrides(harness_config.to_dict(), overrides)
+    return HarnessConfig.from_dict(harness_dict)
 
 
 @dataclass
@@ -357,9 +410,7 @@ class RunConfigBuilder:
 
         task_overrides: dict[str, dict[str, Any]] = {}
         for task_spec, cli_overrides in resolved_cli_overrides.items():
-            override_dict: dict[str, Any] = {}
-            _apply_dotlist_overrides(override_dict, cli_overrides)
-            task_overrides[task_spec] = override_dict
+            task_overrides[task_spec] = _apply_dotlist_overrides({}, cli_overrides)
 
         # Resolve harness configuration with provider config built in
         harness_config = self._resolve_harness_config(self.model)
@@ -449,14 +500,14 @@ class RunConfigBuilder:
 
         # Apply CLI overrides to harness config
         if self.cli_harness_overrides:
-            harness_dict = harness_config.to_dict()
-            harness_dict = _apply_dotlist_overrides(harness_dict, self.cli_harness_overrides)
-            harness_config = HarnessConfig.from_dict(harness_dict)
+            harness_config = _apply_harness_overrides(harness_config, self.cli_harness_overrides)
 
         from olmo_eval.common.configs import get_provider_config
 
         provider_config = get_provider_config(model_name)
-        harness_config = harness_config.merge_provider(provider_config)
+        harness_config = merge_model_provider(
+            harness_config, provider_config, self.cli_harness_overrides
+        )
         if self.force_download_model:
             harness_config = harness_config.with_provider_overrides(force_download=True)
 

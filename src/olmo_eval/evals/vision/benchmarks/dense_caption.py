@@ -178,31 +178,27 @@ class DenseCaptionEval(VisionTask):
     #: Prompt family assumed when the run does not say. Matches the instruction-tuned
     #: checkpoints, mirroring `ModelPromptPointingTask`'s defaults.
     default_system_prompt_style = "demo_or_style_v2"
-    #: mm_olmo `DataFormatter.default_inference_len`; the length bucket used at inference by
-    #: the `style_and_length*` families.
-    default_inference_len = 65
 
     def _question(self, idx: int) -> str:
         """The caption prompt for example ``idx``, following the checkpoint's family.
 
         The prompt has to follow the checkpoint rather than the task, exactly as for the
-        `_mp` pointing tasks: a captioner-family checkpoint (mm_olmo `train_captioner.py`,
-        `system_prompt="style_and_length_v2"`, which includes OLMo-core's
-        `Molmo2-Stage1.py` runs with `style_length_conditioning=True`) was trained with a
-        `"<style> <bucket>:"` prefix on every caption, and mm_olmo re-applies it at
-        inference via `default_inference_len` (`olmo/data/data_formatter.py`). Handing such
-        a checkpoint a natural-language instruction instead measures it out of distribution:
-        on a 4B stage-1 run it cost 7.1 recall points (38.18 -> 45.28) and made 3.4% of
-        answers come back as `<points .../>` markup rather than prose.
+        `_mp` pointing tasks: a stage-1 checkpoint (OLMo-core's `Molmo2-Stage1.py`,
+        `system_prompt="style_and_length_v2"`) was trained with the caption's style tag as
+        its whole user turn, `long_caption:`, with no instruction and no length number
+        (OLMo-core #875). Handing such a checkpoint a natural-language instruction instead
+        measures it out of distribution: on a 4B stage-1 run it cost 7.1 recall points
+        (38.18 -> 45.28) and made 3.4% of answers come back as `<points .../>` markup
+        rather than prose.
 
-        So `-o system_prompt_style=style_and_length_v2` selects the captioner prompt here,
-        the same override that selects it for the pointing tasks.
+        So `-o system_prompt_style=style_and_length_v2` selects the bare tag here, the same
+        override that selects the stage-1 prompt for the pointing and OCR tasks.
         """
         if self.caption_prompt is not None:
             return self.caption_prompt
         style = self.config.system_prompt_style or self.default_system_prompt_style
         if style in STYLE_PREFIX_STYLES:
-            return f"long_caption {self.default_inference_len}:"
+            return "long_caption:"
         if style in NO_PREFIX_STYLES:
             return dense_caption_question(idx)
         raise ValueError(
@@ -277,16 +273,18 @@ class DenseCaptionEval(VisionTask):
 
 @register("dense_caption_captioner")
 class DenseCaptionCaptionerEval(DenseCaptionEval):
-    """Dense-caption eval prompt for mm_olmo's captioner-family checkpoints.
+    """Dense-caption eval prompt for stage-1 (captioner-family) checkpoints.
 
     Checkpoints trained with ``prompt_templates="none"`` + ``system_prompt=
-    "style_and_length_v2"`` (mm_olmo ``train_captioner.py``; e.g. the
-    siglip2-cap-stage1 runs) see a constant eval prompt: an empty user question
-    with the style/length prefix ``"long_caption {default_inference_len}:"``
-    (``default_inference_len`` defaults to 65). Verified verbatim against an
-    mm_olmo ``DenseCaptionEval-test`` prediction dump. Use ``dense_caption``
-    for released-Molmo2-family (``uber_model_v2``) checkpoints, which sample a
-    seeded natural-language instruction instead.
+    "style_and_length_v2"`` see a constant eval prompt, the caption's style tag with
+    nothing after it: ``"long_caption:"``. That is exactly what OLMo-core's
+    ``Molmo2-Stage1.py`` trains on (OLMo-core #875), so train and test share one prompt.
+    Use ``dense_caption`` for released-Molmo2-family (``uber_model_v2``) checkpoints,
+    which sample a seeded natural-language instruction instead.
+
+    mm_olmo's captioner-family checkpoints were trained on ``"long_caption 65:"`` instead.
+    They are no longer evaluated, so this task follows OLMo-core's stage 1 and no longer
+    reproduces their training prompt.
     """
 
-    caption_prompt: str | None = "long_caption 65:"
+    caption_prompt: str | None = "long_caption:"

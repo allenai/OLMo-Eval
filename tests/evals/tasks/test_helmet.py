@@ -350,6 +350,53 @@ def test_sampled_rows_identical_to_full_load(tmp_path):
     assert len({r["question"] for r in sampled}) == 3
 
 
+def test_kilt_runner_keeps_every_depth_of_each_question(tmp_path, monkeypatch):
+    """The runner's instance cap must not break up a question's depth sweep.
+
+    Runs the real `prepare_task_items` against a stub 300-question x 6-depth
+    file. The loader caps questions; if the task also set an instance
+    `limit`, the runner would re-sample rows and queue a question at only
+    some of its depths.
+    """
+    import olmo_eval.data.helmet_kilt_loader as kilt
+    from olmo_eval.runners.asynq.preparation import prepare_task_items
+
+    depths = (0.0, 0.2, 0.4, 0.6, 0.8, 0.95)
+    rows = [
+        {
+            "id": f"q{question}",
+            "question": f"question {question}?",
+            "answers": [f"answer {question}"],
+            "depth": depth,
+            "ctxs": [{"title": f"t{question}", "text": f"depth {depth}"}],
+        }
+        for question in range(300)
+        for depth in depths
+    ]
+    test_file = tmp_path / "test.jsonl"
+    test_file.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    demo_file = tmp_path / "demo.jsonl"
+    demo_file.write_text("\n".join(json.dumps(r) for r in rows[:12]) + "\n")
+
+    manifest = {"kilt_nq": {"4k": {"test_file": str(test_file), "demo_file": str(demo_file)}}}
+    monkeypatch.setattr(kilt, "load_kilt_manifest", lambda: manifest)
+    monkeypatch.setattr(kilt, "download_helmet_plus_file", lambda path: path)
+    monkeypatch.setattr(kilt, "_load_reference_tokenizer", lambda *args, **kwargs: None)
+    monkeypatch.setattr(kilt, "_truncate_prompt_context", lambda row, *args: row)
+
+    task, items = prepare_task_items("helmet_kilt_nq__4096", "stub-model", None)
+
+    max_questions = HELMET_TASKS["kilt_nq__4096"]["max_questions"]
+    assert task.config.limit is None
+    assert len(items) == max_questions * len(depths)
+    depths_by_question: dict[str, set[str]] = {}
+    for item in items:
+        question = item.instance.metadata["judge_question"]
+        depths_by_question.setdefault(question, set()).add(item.instance.question)
+    assert len(depths_by_question) == max_questions
+    assert all(len(seen) == len(depths) for seen in depths_by_question.values())
+
+
 # ---------------------------------------------------------------------------
 # task registry and suite structure
 
@@ -359,7 +406,8 @@ def test_helmet_task_inventory():
     for config in HELMET_TASKS.values():
         by_tag[config["tag"]] = by_tag.get(config["tag"], 0) + 1
     assert by_tag == {
-        "recall": 10,  # 4k-2m
+        # json_kv at 4k-2m, plus three RULER NIAH tasks at 4k-128k
+        "recall": 28,
         "rag": 24,
         "rerank": 6,
         "longqa": 18,
@@ -367,7 +415,7 @@ def test_helmet_task_inventory():
         "icl": 30,
         "cite": 24,
     }
-    assert len(HELMET_TASKS) == 124
+    assert len(HELMET_TASKS) == 142
 
 
 def test_only_recall_extends_past_standard_lengths():
@@ -417,8 +465,20 @@ def test_helmet_suite_structure():
     import olmo_eval.evals.suites.helmet  # noqa: F401 - triggers registration
     from olmo_eval.evals.suites.registry import get_suite
 
-    assert len(get_suite("helmet_all__4096").expanded_tasks) == 20
-    assert len(get_suite("helmet_cite__4096").expanded_tasks) == 4
+    assert len(get_suite("helmet_all__4096").expanded_tasks) == 21
+    # HELMET's Recall average: json_kv plus three RULER NIAH tasks
+    assert set(get_suite("helmet_recall__4096").expanded_tasks) == {
+        "helmet_json_kv__4096",
+        "helmet_ruler_niah_mk_2__4096",
+        "helmet_ruler_niah_mk_3__4096",
+        "helmet_ruler_niah_mv__4096",
+    }
+    # HELMET's Cite average leaves out the nocite ablations, which stay runnable
+    assert set(get_suite("helmet_cite__4096").expanded_tasks) == {
+        "helmet_alce_asqa__4096",
+        "helmet_alce_qampari__4096",
+    }
+    assert HELMET_TASKS["alce_asqa_nocite__4096"]["ablation"] is True
     # nojudge excludes exactly the three judged tasks
     all_tasks = set(get_suite("helmet_all__4096").expanded_tasks)
     nojudge = set(get_suite("helmet_nojudge__4096").expanded_tasks)
@@ -469,3 +529,195 @@ def test_judge_scorer_to_dict_is_stable_and_serializable():
     # two independent constructions carry distinct closures but must
     # serialize identically, or task hashes would differ run to run
     assert HelmetLongQAJudgeScorer().to_dict() == HelmetLongQAJudgeScorer().to_dict()
+
+
+# ---------------------------------------------------------------------------
+# judge settings reach the task hash, and judge failures are recorded
+
+
+def _stub_judge(*replies: str):
+    pending = list(replies)
+
+    async def judge(prompt: str, **kwargs) -> str:
+        return pending.pop(0)
+
+    return judge
+
+
+@pytest.mark.parametrize(
+    "change",
+    [{"judge_model": "gpt-4o-mini"}, {"judge_temperature": 1.0}, {"judge_max_tokens": 64}],
+)
+def test_judge_settings_change_the_serialized_scorer(change):
+    for scorer_cls in (HelmetLongQAJudgeScorer, HelmetSummJudgeScorer):
+        assert scorer_cls().to_dict() != scorer_cls(**change).to_dict()
+
+
+def test_provider_path_uses_the_judge_settings(monkeypatch):
+    import asyncio
+
+    seen = {}
+
+    async def fake_provider(self, prompt, context, **kwargs):
+        seen.update(kwargs)
+        return '{"fluency": 1, "correctness": 3}'
+
+    monkeypatch.setattr(HelmetLongQAJudgeScorer, "_score_with_provider", fake_provider)
+    monkeypatch.setattr(HelmetLongQAJudgeScorer, "_validate_provider", lambda self, ctx: None)
+    scorer = HelmetLongQAJudgeScorer(provider_name="judge", judge_temperature=0.3)
+    score = asyncio.run(scorer.ascore_with_context(_instance(gold="x"), _output("x"), None))
+    assert score == 1.0
+    assert seen == {"temperature": 0.3, "max_tokens": scorer.judge_max_tokens}
+
+
+def test_longqa_judge_records_parse_errors_in_predictions():
+    import asyncio
+
+    from olmo_eval.common.types import LMRequest, RequestType, Response
+    from olmo_eval.runners.io.builders import build_predictions
+
+    instance = _instance(gold="x")
+    good, bad = _output("x"), _output("x")
+    scorer = HelmetLongQAJudgeScorer(
+        judge_fn=_stub_judge('{"fluency": 1, "correctness": 3}', "no json here")
+    )
+    assert asyncio.run(scorer.ascore_with_context(instance, good, None)) == 1.0
+    assert asyncio.run(scorer.ascore_with_context(instance, bad, None)) == 0.0
+    assert good.metadata["judge_result"]["parse_error"] is False
+    assert bad.metadata["judge_result"] == {
+        "raw_judge_response": "no json here",
+        "parse_error": True,
+    }
+
+    request = LMRequest(request_type=RequestType.COMPLETION, prompt="q")
+    (prediction,) = build_predictions([Response(instance=instance, request=request, outputs=[bad])])
+    assert prediction["model_output"][0]["judge_result"]["parse_error"] is True
+
+
+def test_summ_judge_records_parse_errors_and_missing_keypoints():
+    import asyncio
+
+    scorer = HelmetSummJudgeScorer(
+        judge_fn=_stub_judge('{"fluency": 1}', '{"recall": 2}', "unparseable")
+    )
+    output = _output("A summary.")
+    instance = _instance(gold="ref", keypoints=["a", "b"], expert_summary="ref")
+    assert asyncio.run(scorer.ascore_with_context(instance, output, None)) == 0.0
+    result = output.metadata["judge_result"]
+    assert result["parse_error"] is True
+    assert result["raw_judge_responses"]["precision"] == "unparseable"
+
+    output = _output("A summary.")
+    assert asyncio.run(scorer.ascore_with_context(_instance(gold="ref"), output, None)) == 0.0
+    assert output.metadata["judge_result"] == {"missing_keypoints": True, "parse_error": False}
+
+
+# ---------------------------------------------------------------------------
+# HELMET's own settings and source revisions reach the task hash
+
+
+def test_helmet_settings_reach_the_task_hash(monkeypatch):
+    from olmo_eval.common.types.base import compute_task_hash
+    from olmo_eval.data import helmet_icl_loader
+    from olmo_eval.evals.tasks import helmet
+    from olmo_eval.evals.tasks.common.registry import get_task
+
+    config = get_task("helmet_icl_trec_coarse__4096").config
+    settings = config.to_dict()["task_settings"]
+    assert settings["helmet"]["shots"] == 200
+    assert settings["sources"]["icl"]["revision"] == "65752bf53af25bc935a0dce92fb5b6c930728450"
+    assert settings["templates"]["_SYSTEM_TEMPLATE"] == "label:"
+
+    base = helmet._task_settings(HELMET_TASKS["icl_trec_coarse__4096"])
+    assert helmet._task_settings({**HELMET_TASKS["icl_trec_coarse__4096"], "shots": 100}) != base
+    monkeypatch.setattr(helmet_icl_loader, "_SYSTEM_TEMPLATE", "Label:")
+    assert helmet._task_settings(HELMET_TASKS["icl_trec_coarse__4096"]) != base
+    monkeypatch.setattr(helmet, "HELMET_PLUS_REVISION", "0" * 40)
+    kilt_cfg = HELMET_TASKS["kilt_nq__4096"]
+    assert helmet._task_settings(kilt_cfg)["sources"]["helmet_plus"].endswith("0" * 40)
+
+    def task_hash(settings):
+        from dataclasses import replace
+
+        return compute_task_hash(replace(config, task_settings=settings).to_dict())
+
+    assert task_hash(base) != task_hash({**base, "helmet": {**base["helmet"], "shots": 100}})
+
+
+def test_task_settings_are_omitted_when_unset():
+    from olmo_eval.evals.tasks.common.registry import get_task
+
+    assert "task_settings" not in get_task("hellaswag").config.to_dict()
+
+
+def test_nlu_csv_is_parsed_like_its_original_loading_script(tmp_path, monkeypatch):
+    from olmo_eval.data import helmet_icl_loader
+
+    header = (
+        "userid;answerid;scenario;intent;status;answer_annotation;notes;"
+        "suggested_entities;answer_normalised;answer;question"
+    )
+    lines = [
+        header,
+        '1;1;alarm;set;;"wake me up at [time : five am] this week";;;x;x;q',
+        '1;2;alarm;set;;"null";;;x;x;q',
+        '1;3;weather;query;;"is it [weather_descriptor : raining]";;;x;x;q',
+        '1;4;alarm;query;;"what alarms do i have";;;x;x;q',
+    ]
+    path = tmp_path / "nlu.csv"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    monkeypatch.setattr(helmet_icl_loader.DownloadManager, "download", lambda self, url: str(path))
+
+    train = helmet_icl_loader._load_nlu_csv("unused")["train"]
+    # the null row is dropped, entity markup stripped, and file order kept
+    assert train["text"] == [
+        "wake me up at five am this week",
+        "is it raining",
+        "what alarms do i have",
+    ]
+    # labels are `{scenario}_{intent}`, indexed in sorted order
+    assert train.features["label"].names == ["alarm_query", "alarm_set", "weather_query"]
+    assert train["label"] == [1, 2, 0]
+
+
+def test_helmet_ruler_tasks_render_helmets_prompt(tmp_path, monkeypatch):
+    """HELMET renders RULER from its templates with the answer prefix on its own
+    line, not from the files' prebuilt `input`, and keeps HELMET's budgets."""
+    from olmo_eval.data.ruler_tasks import RULER_TASKS
+    from olmo_eval.evals.tasks import helmet
+    from olmo_eval.evals.tasks.common.registry import get_task
+
+    row = {
+        "index": 0,
+        "input": "prebuilt prompt that HELMET does not use",
+        "outputs": ["111", "222"],
+        "answer": ["111", "222"],
+        "context": "HAYSTACK",
+        "query": "blue-tick",
+        "type_needle_v": "numbers",
+        "length": 10,
+    }
+    path = tmp_path / RULER_TASKS["niah_mv__4096"]["data"]
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(row) + "\n")
+    monkeypatch.setattr(helmet, "download_ruler_data", lambda: str(tmp_path))
+
+    task = get_task("helmet_ruler_niah_mv__4096")
+    (instance,) = list(task.instances)
+    prompt = task.format_request(instance).prompt
+    assert prompt.endswith(
+        "What are all the special magic numbers for blue-tick mentioned in the provided text?"
+        "\nThe special magic numbers for blue-tick mentioned in the provided text are"
+    )
+    assert "HAYSTACK" in prompt and "prebuilt" not in prompt
+    assert instance.gold_answer == ["111", "222"]
+    # ruler_recall is the fraction of gold values found
+    assert task.config.get_primary_metric().scorer().score(instance, _output("111 and 333")) == 0.5
+
+    budgets = {
+        name: HELMET_TASKS[f"ruler_{name}__4096"]["max_gen_toks"]
+        for name in ("niah_mk_2", "niah_mk_3", "niah_mv")
+    }
+    assert budgets == {"niah_mk_2": 50, "niah_mk_3": 100, "niah_mv": 50}
+    sources = task.config.to_dict()["task_settings"]["sources"]
+    assert sources["ruler_data"].startswith("allenai/ruler_data@")

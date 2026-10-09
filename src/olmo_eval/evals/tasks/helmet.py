@@ -15,6 +15,7 @@ graded by an LLM judge (see `helmet_judge.py`) and therefore need a judge
 configured -- the `helmet_nojudge__*` suites exclude them.
 """
 
+import os
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -27,15 +28,48 @@ from olmo_eval.common.scorers.base import _squad_normalize_answer
 from olmo_eval.common.scorers.helmet_judge import HelmetLongQAJudgeScorer, HelmetSummJudgeScorer
 from olmo_eval.common.scorers.substring import SubstringExactMatchScorer
 from olmo_eval.common.types import Instance, LMOutput, LMRequest, RequestType, SamplingParams
+from olmo_eval.data import (
+    helmet_alce_loader,
+    helmet_icl_loader,
+    helmet_infbench_loader,
+    helmet_kilt_loader,
+    helmet_loader,
+    helmet_msmarco_loader,
+    helmet_multilexsum_loader,
+    helmet_narrativeqa_loader,
+)
 from olmo_eval.data.helmet_alce_loader import load_alce_dataset
-from olmo_eval.data.helmet_icl_loader import load_icl_dataset
-from olmo_eval.data.helmet_infbench_loader import load_infbench_dataset
+from olmo_eval.data.helmet_icl_loader import ICL_DATASETS, load_icl_dataset
+from olmo_eval.data.helmet_infbench_loader import (
+    INFBENCH_SUBSETS,
+    INFINITEBENCH_REPO,
+    INFINITEBENCH_REVISION,
+    REFERENCE_TOKENIZER,
+    REFERENCE_TOKENIZER_REVISION,
+    load_infbench_dataset,
+)
 from olmo_eval.data.helmet_kilt_loader import load_kilt_dataset
-from olmo_eval.data.helmet_loader import load_json_kv_dataset
+from olmo_eval.data.helmet_loader import (
+    HELMET_PLUS_REPO_ID,
+    HELMET_PLUS_REVISION,
+    load_json_kv_dataset,
+)
 from olmo_eval.data.helmet_msmarco_loader import load_msmarco_dataset, parse_rankings
 from olmo_eval.data.helmet_multilexsum_loader import load_multi_lexsum_dataset
-from olmo_eval.data.helmet_narrativeqa_loader import load_narrativeqa_dataset
+from olmo_eval.data.helmet_narrativeqa_loader import (
+    NARRATIVEQA_REPO,
+    NARRATIVEQA_REVISION,
+    load_narrativeqa_dataset,
+)
 from olmo_eval.data.helmet_tasks import HELMET_TASKS
+from olmo_eval.data.ruler_loader import (
+    RULER_DATA_REPO,
+    RULER_DATA_REVISION,
+    download_ruler_data,
+    get_ruler_templates,
+    load_ruler_dataset,
+)
+from olmo_eval.data.ruler_tasks import RULER_TASKS
 from olmo_eval.evals.tasks.common.base import Task, TaskConfig
 from olmo_eval.evals.tasks.common.registry import register
 
@@ -102,8 +136,13 @@ class HelmetTask(Task):
         # With a chat template the answer prefix is left off rather than fed in
         # as a partial assistant turn, matching how HELMET runs its chat-format
         # tasks (and how ruler.py handles the same distinction).
+        # RULER's answer prefixes name the needle and query, so the system
+        # template is filled from the row too; for every other task it has no
+        # fields and formatting leaves it unchanged
         prepend_text = (
-            "" if self.helmet_config.get("use_chat_template") else self._templates["system"]
+            ""
+            if self.helmet_config.get("use_chat_template")
+            else self._templates["system"].format(**doc)
         )
 
         answer = doc.get("answer")
@@ -331,14 +370,21 @@ class HelmetNarrativeQaTask(HelmetTask):
 
 
 class HelmetKiltTask(HelmetTask):
-    """HELMET RAG task: answer an open-domain question from retrieved passages."""
+    """HELMET RAG task: answer an open-domain question from retrieved passages.
+
+    The question cap is `max_questions`, not `config.limit`: every question
+    appears once per gold-passage depth, and the runner applies `limit` to
+    instances, which would keep some depths of a question and drop others.
+    These tasks leave `limit` unset by default; setting one (e.g. for a smoke
+    test) caps instances like any other task, at the cost of the depth sweep.
+    """
 
     def _load_dataset(self) -> dict[str, Any]:
         return load_kilt_dataset(
             task=self.helmet_config["kilt_task"],
             length_name=self.helmet_config["length_name"],
             shots=self.helmet_config["shots"],
-            max_samples=self.config.limit,
+            max_samples=self.helmet_config["max_questions"],
             seed=self.config.seed,
             popularity_threshold=self.helmet_config.get("popularity_threshold"),
             max_prompt_tokens=self.helmet_config["max_prompt_tokens"],
@@ -397,8 +443,28 @@ class HelmetAlceTask(HelmetTask):
         )
 
 
+class HelmetRulerTask(HelmetTask):
+    """HELMET recall task: one of the RULER needle-in-a-haystack variants.
+
+    Reads the same pre-generated RULER files as the `ruler_*` tasks, but builds
+    the prompt the way HELMET does: from its templates and the row's fields,
+    with the answer prefix on its own line. The files' prebuilt `input`, which
+    the `ruler_*` tasks use, joins the two with a space instead.
+    """
+
+    def _load_dataset(self) -> dict[str, Any]:
+        ruler_name = f"{self.helmet_config['ruler_task']}__{self.context_size}"
+        return load_ruler_dataset(
+            task_name=ruler_name,
+            data_path=os.path.join(download_ruler_data(), RULER_TASKS[ruler_name]["data"]),
+            max_samples=self.config.limit,
+            seed=self.config.seed,
+        )
+
+
 _TASK_CLASSES: dict[str, type[HelmetTask]] = {
     "json_kv": HelmetJsonKvTask,
+    "ruler": HelmetRulerTask,
     "icl": HelmetIclTask,
     "infbench": HelmetInfbenchTask,
     "narrativeqa": HelmetNarrativeQaTask,
@@ -413,6 +479,8 @@ _TASK_CLASSES: dict[str, type[HelmetTask]] = {
 # answer) and ICL with exact match; see HELMET's scripts/collect_results.py.
 _TASK_METRICS: dict[str, tuple] = {
     "json_kv": ((RecallMetric(),), "recall"),
+    # HELMET's ruler_recall: the fraction of gold values found in the output
+    "ruler": ((RecallMetric(),), "recall"),
     # HELMET-normalized exact match, not the generic scorer -- see
     # HelmetExactMatchScorer for why the difference is load-bearing
     "icl": ((AccuracyMetric(name="exact_match", scorer=HelmetExactMatchScorer),), "exact_match"),
@@ -452,6 +520,56 @@ _TASK_METRICS: dict[str, tuple] = {
 }
 
 
+# The loader module behind each task kind, whose prompt templates feed the task hash.
+_LOADER_MODULES = {
+    "json_kv": helmet_loader,
+    "icl": helmet_icl_loader,
+    "infbench": helmet_infbench_loader,
+    "narrativeqa": helmet_narrativeqa_loader,
+    "kilt": helmet_kilt_loader,
+    "msmarco": helmet_msmarco_loader,
+    "multi_lexsum": helmet_multilexsum_loader,
+    "alce": helmet_alce_loader,
+}
+
+# Kinds that truncate or trim with the reference tokenizer.
+_USES_REFERENCE_TOKENIZER = {"infbench", "narrativeqa", "kilt", "multi_lexsum"}
+
+
+def _task_settings(task_cfg: dict) -> dict[str, Any]:
+    """Everything that shapes a task's prompts but has no TaskConfig field of its own.
+
+    Serialized into the task hash, so a change to shots, token budgets, prompt
+    templates or a pinned source revision gives the task a new hash.
+    """
+    kind = task_cfg["kind"]
+    sources: dict[str, Any] = {}
+    if kind == "icl":
+        sources["icl"] = ICL_DATASETS[task_cfg["icl_dataset"]]
+    elif kind == "ruler":
+        sources["ruler_data"] = f"{RULER_DATA_REPO}@{RULER_DATA_REVISION}"
+    elif kind == "narrativeqa":
+        sources["narrativeqa"] = f"{NARRATIVEQA_REPO}@{NARRATIVEQA_REVISION}"
+    else:
+        sources["helmet_plus"] = f"{HELMET_PLUS_REPO_ID}@{HELMET_PLUS_REVISION}"
+    if kind == "infbench":
+        sources["infinitebench"] = f"{INFINITEBENCH_REPO}@{INFINITEBENCH_REVISION}"
+        sources["infinitebench_subset"] = INFBENCH_SUBSETS[task_cfg["infbench_subset"]]
+    if kind in _USES_REFERENCE_TOKENIZER:
+        sources["reference_tokenizer"] = f"{REFERENCE_TOKENIZER}@{REFERENCE_TOKENIZER_REVISION}"
+
+    if kind == "ruler":
+        user, system, _ = get_ruler_templates(task_cfg["ruler_task"])
+        templates = {"user": user, "system": system}
+    else:
+        templates = {
+            name: value
+            for name, value in vars(_LOADER_MODULES[kind]).items()
+            if "TEMPLATE" in name and isinstance(value, str)
+        }
+    return {"helmet": task_cfg, "sources": sources, "templates": templates}
+
+
 def _make_helmet_task_class(task_name: str, task_cfg: dict) -> type[HelmetTask]:
     """Create a task subclass for a HELMET-plus task variant.
 
@@ -460,6 +578,10 @@ def _make_helmet_task_class(task_name: str, task_cfg: dict) -> type[HelmetTask]:
     """
     base_cls = _TASK_CLASSES[task_cfg["kind"]]
     metrics, primary_metric = _TASK_METRICS[task_cfg["metrics_key"]]
+    # Hand over the Metric itself, not its name: TaskConfig only resolves a
+    # Metric instance, and an unresolved primary drops the task out of its
+    # suite's average-of-averages.
+    primary_metric = next(m for m in metrics if m.name == primary_metric)
 
     stop_sequences = ("\n",) if task_cfg.get("stop_new_line") else None
 
@@ -477,6 +599,7 @@ def _make_helmet_task_class(task_name: str, task_cfg: dict) -> type[HelmetTask]:
                 stop_sequences=stop_sequences,
             ),
             "limit": task_cfg["limit"],
+            "task_settings": _task_settings(task_cfg),
         },
     )
 

@@ -147,6 +147,7 @@ class LogprobInput:
     num_tokens_all: int
     continuation_token_ids: list[int]
     continuation: str
+    prompt_truncated_tokens: int = 0
 
 
 def _import_olmo_core() -> OlmoCoreImports:

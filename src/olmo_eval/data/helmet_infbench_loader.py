@@ -21,6 +21,7 @@ results. It does mean the realized length under Olmo 3 differs from nominal,
 the same trade already taken for the ICL tasks -- see `helmet_tasks.py`.
 """
 
+import functools
 import json
 import logging
 from typing import Any
@@ -34,6 +35,11 @@ logger = logging.getLogger(__name__)
 # HELMET truncates against meta-llama/Llama-2-7b-hf; this is an ungated mirror
 # of the same tokenizer, so the repo doesn't require gated-model access.
 REFERENCE_TOKENIZER = "NousResearch/Llama-2-7b-hf"
+# Pinned, since the tokenizer sets how much text every model sees.
+REFERENCE_TOKENIZER_REVISION = "8efe6c9b93655b934e27bd9981e3ec13e55aee9d"
+
+INFINITEBENCH_REPO = "xinrongzhang2022/infinitebench"
+INFINITEBENCH_REVISION = "90f0394333616266d9fe85824ceaf505093cbaa5"
 
 # Appended to a context after cutting it, so the model can tell the document
 # was truncated rather than simply ending. Verbatim from HELMET.
@@ -109,10 +115,12 @@ def _process_multiple_choice(example: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+@functools.cache
 def _load_reference_tokenizer(name: str):
     from transformers import AutoTokenizer
 
-    return AutoTokenizer.from_pretrained(name)
+    revision = REFERENCE_TOKENIZER_REVISION if name == REFERENCE_TOKENIZER else None
+    return AutoTokenizer.from_pretrained(name, revision=revision)
 
 
 def _truncate_context(context: str, max_tokens: int, tokenizer, separator_length: int) -> str:
@@ -160,9 +168,9 @@ def load_infbench_dataset(
         )
 
     spec = INFBENCH_SUBSETS[subset]
-    data = load_dataset("xinrongzhang2022/infinitebench", features=_INFBENCH_FEATURES)[
-        spec["split"]
-    ]
+    data = load_dataset(
+        INFINITEBENCH_REPO, features=_INFBENCH_FEATURES, revision=INFINITEBENCH_REVISION
+    )[spec["split"]]
 
     def process_example(example: dict[str, Any]) -> dict[str, Any]:
         update = {"question": example["input"], "demo": ""}
@@ -223,6 +231,17 @@ def load_infbench_dataset(
 
     rows = data.to_list()
     if keypoints:
+        missing = [row["id"] for row in rows if not keypoints.get(row["id"])]
+        if missing:
+            # the judge cannot grade these; each scores 0.0 and is flagged in
+            # its judge_result
+            logger.warning(
+                "%d InfiniteBench %s rows have no key points in %s: %s",
+                len(missing),
+                subset,
+                spec["keypoints_file"],
+                missing[:5],
+            )
         for row in rows:
             row["keypoints"] = keypoints.get(row["id"], [])
             # the expert reference the precision rubric grades against

@@ -93,12 +93,29 @@ _MULTI_LEXSUM_PROMPT_RESERVE = 300
 _ALCE_MAX_GEN_TOKS = 300
 _ALCE_NOCITE_MAX_GEN_TOKS = 600
 
+# HELMET's recall category pairs json_kv with three RULER needle-in-a-haystack
+# tasks (configs/recall.yaml), with these generation budgets. RULER's own
+# budget for niah_mv is longer; this keeps HELMET's.
+_RECALL_RULER_MAX_GEN_TOKS = {"niah_mk_2": 50, "niah_mk_3": 100, "niah_mv": 50}
+
 # Base task configurations, keyed by HELMET task type.
 _BASE_TASKS: dict[str, dict] = {
     "json_kv": {
         "kind": "json_kv",
         "tag": "recall",
         "context_sizes": CONTEXT_SIZES,
+    },
+    **{
+        f"ruler_{name}": {
+            "kind": "ruler",
+            "tag": "recall",
+            "ruler_task": name,
+            "context_sizes": STANDARD_CONTEXT_SIZES,
+            "max_gen_toks": gen_toks,
+            # RULER prompts carry no demonstrations
+            "shots": 0,
+        }
+        for name, gen_toks in _RECALL_RULER_MAX_GEN_TOKS.items()
     },
     **{
         f"icl_{name}": {
@@ -140,6 +157,11 @@ _BASE_TASKS: dict[str, dict] = {
             "shots": 2,
             # the answer is a single short line, so stop at the newline
             "stop_new_line": True,
+            # Each question repeats once per gold-passage depth, and the score
+            # averages over depths. The loader caps questions; an instance
+            # `limit` on top would re-sample rows and break up the sweep.
+            "max_questions": _DEFAULT_LIMIT,
+            "limit": None,
             **extra,
         }
         for name, extra in {
@@ -188,6 +210,9 @@ _BASE_TASKS: dict[str, dict] = {
             "metrics_key": metrics_key,
             "tag": "cite",
             "alce_task": name,
+            # HELMET's Cite average leaves out the nocite ablations, so they are
+            # registered but kept out of the category suites
+            "ablation": name.endswith("_nocite"),
             # every tier reads the same 2000-document pool and shows a prefix
             # of it, so the ceiling is where the pool runs out
             "context_sizes": STANDARD_CONTEXT_SIZES,
@@ -271,11 +296,16 @@ def _generate_helmet_tasks() -> dict:
                 task["max_context_tokens"] = size - reserve - max_gen_toks
             if "alce_task" in base_config:
                 task["alce_task"] = base_config["alce_task"]
+            if base_config.get("ablation"):
+                task["ablation"] = True
+            if "ruler_task" in base_config:
+                task["ruler_task"] = base_config["ruler_task"]
             if "kilt_task" in base_config:
                 task["kilt_task"] = base_config["kilt_task"]
                 # HELMET trims the retrieved passages at inference time so the
                 # prompt plus generation fits the tier
                 task["max_prompt_tokens"] = size - max_gen_toks
+                task["max_questions"] = base_config["max_questions"]
                 if "popularity_threshold" in base_config:
                     task["popularity_threshold"] = base_config["popularity_threshold"]
             if "icl_dataset" in base_config:

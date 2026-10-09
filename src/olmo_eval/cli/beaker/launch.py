@@ -533,6 +533,7 @@ def launch(
     harness_needs_sandbox = False
     harness_preset = None
     if launch_config.harness:
+        from olmo_eval.cli.run.config import _apply_harness_overrides
         from olmo_eval.harness import get_harness_preset
 
         harness_preset = get_harness_preset(launch_config.harness)
@@ -853,6 +854,7 @@ def _build_experiment_summary(
         output_dir=BEAKER_RESULT_DIR,
     )
 
+    from olmo_eval.cli.run.config import _apply_harness_overrides, merge_model_provider
     from olmo_eval.common.configs import get_provider_config
     from olmo_eval.harness import get_harness_preset
 
@@ -860,7 +862,7 @@ def _build_experiment_summary(
     if harness_overrides:
         harness_config = _apply_harness_overrides(harness_config, harness_overrides)
     provider_config = get_provider_config(exp.model_spec)
-    harness_config = harness_config.merge_provider(provider_config)
+    harness_config = merge_model_provider(harness_config, provider_config, harness_overrides)
 
     return ExperimentSummary(
         name=exp.name,
@@ -986,30 +988,6 @@ def _launch_jobs(
                 console.print(f"[green]Launched:[/green] {launcher.experiment_url(experiment)}")
                 launched_experiments.append(experiment.id)
     return launched_experiments
-
-
-def _apply_harness_overrides(harness_config, overrides: list[str]):
-    """Apply CLI overrides to harness config.
-
-    Args:
-        harness_config: Base HarnessConfig to modify.
-        overrides: List of dotlist override strings (e.g., ["sandbox.mode=docker"]).
-            Supports list indices like "sandboxes.0.mode=modal".
-            Supports JSON values like 'sandboxes.0={"mode":"modal"}'.
-            Supports shared sandbox overrides like
-            'sandboxes={"mode":"modal","instances":64,"min_instances":24}'
-            where non-pool fields are applied to each sandbox config and
-            instances/min_instances set the shared sandbox pool budget/minimum.
-
-    Returns:
-        New HarnessConfig with overrides applied.
-    """
-    from olmo_eval.cli.run.config import _apply_dotlist_overrides
-    from olmo_eval.harness import HarnessConfig
-
-    harness_dict = harness_config.to_dict()
-    harness_dict = _apply_dotlist_overrides(harness_dict, overrides)
-    return HarnessConfig.from_dict(harness_dict)
 
 
 def _launch_external_evals(

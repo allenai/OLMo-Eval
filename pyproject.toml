@@ -78,7 +78,7 @@ olmo_core = [
 # ai2-olmo-core release yet; pin the vision branch by commit so the declared
 # install supports OlmoCoreVLMProvider. Collapse into `olmo_core` once released.
 olmo_core_vlm = [
-    "ai2-olmo-core[torchao,transformers] @ git+https://github.com/allenai/OLMo-core.git@2dad929acb742faaa566a173f3484ff760c3ca07",
+    "ai2-olmo-core[torchao,transformers] @ git+https://github.com/allenai/OLMo-core.git@42e65ea6a69cce8858bbf18226c8d092388ced0a",
 ]
 vllm = [
     # vllm + its companions are Linux/CUDA-only; skip on macOS so the lockfile
@@ -305,6 +305,8 @@ allowed-unresolved-imports = [
     "crawl4ai.**",
     "modal.**",
     "swerex.**",
+    "olmocr.**",
+    "pymupdf.**",
 ]
 
 [tool.gantry]

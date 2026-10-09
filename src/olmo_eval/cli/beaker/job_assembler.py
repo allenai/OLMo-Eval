@@ -16,6 +16,7 @@ from olmo_eval.launch.beaker.mirror import log
 if TYPE_CHECKING:
     from olmo_eval.cli.beaker.config_loader import LaunchConfig
     from olmo_eval.cli.beaker.experiment_plan import ExperimentPlan
+    from olmo_eval.harness import HarnessConfig
     from olmo_eval.launch import BeakerJobConfig
 
 
@@ -41,6 +42,40 @@ def get_provider_kind(model_spec: str, default_kind: str | None = None) -> str |
         return provider_config.kind or default_kind
     except Exception:
         return default_kind
+
+
+def resolve_provider_kind(
+    model_spec: str,
+    harness_config: HarnessConfig | None,
+    harness_overrides: list[str] | None = None,
+) -> str | None:
+    """Resolve the provider kind a job will run with, the same way ``olmo-eval run`` does.
+
+    Install-time choices such as the isolated vLLM venv must follow this resolution, or
+    the job installs for one provider and runs another.
+
+    Args:
+        model_spec: Model name or path.
+        harness_config: Harness preset with CLI overrides applied, or None.
+        harness_overrides: CLI override strings forwarded to the run command.
+
+    Returns:
+        Provider kind string (e.g., "vllm", "vllm_server", "litellm") or None.
+    """
+    from olmo_eval.cli.run.config import merge_model_provider, provider_kind_override
+    from olmo_eval.common.configs import get_provider_config
+    from olmo_eval.harness import HarnessConfig
+
+    try:
+        provider_config = get_provider_config(model_spec)
+    except Exception:
+        fallback = harness_config.provider.kind if harness_config else None
+        kind = provider_kind_override(harness_overrides or []) or fallback
+        return str(kind) if kind else None
+
+    base = harness_config or HarnessConfig(name="default")
+    merged = merge_model_provider(base, provider_config, harness_overrides)
+    return str(merged.provider.kind) if merged.provider.kind else None
 
 
 def get_provider_extras(model_spec: str, default_kind: str | None = None) -> list[str]:
@@ -446,7 +481,7 @@ class JobConfigAssembler:
 
             preset = get_harness_preset(self.config.harness)
             if self.config.harness_overrides:
-                from olmo_eval.cli.beaker.launch import _apply_harness_overrides
+                from olmo_eval.cli.run.config import _apply_harness_overrides
 
                 preset = _apply_harness_overrides(preset, self.config.harness_overrides)
             scaffold_name = preset.scaffold
@@ -463,13 +498,11 @@ class JobConfigAssembler:
             )
             harness_provider_package = preset.provider.package
             harness_provider_deps = list(preset.provider.dependencies)
-            # Use provider kind from preset (includes harness_overrides like -o provider.kind=vllm)
-            harness_provider_kind = str(preset.provider.kind) if preset.provider.kind else None
         else:
-            harness_provider_kind = None
+            preset = None
 
-        # Determine provider kind - prefer harness preset (with overrides) over model spec default
-        provider_kind = harness_provider_kind or get_provider_kind(exp.model_spec)
+        # Install for the provider the job will actually run with
+        provider_kind = resolve_provider_kind(exp.model_spec, preset, self.config.harness_overrides)
         vllm_isolated_venv = provider_kind == "vllm_server"
         model_provider_extras = get_provider_extras(exp.model_spec, default_kind=provider_kind)
 

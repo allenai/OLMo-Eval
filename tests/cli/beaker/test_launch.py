@@ -54,7 +54,7 @@ class TestHarnessOverridesProviderDependencies:
 
     def test_apply_harness_overrides_with_list_dependencies(self):
         """Test that harness overrides with list dependencies work."""
-        from olmo_eval.cli.beaker.launch import _apply_harness_overrides
+        from olmo_eval.cli.run.config import _apply_harness_overrides
         from olmo_eval.harness import get_harness_preset
 
         preset = get_harness_preset("default")
@@ -67,7 +67,7 @@ class TestHarnessOverridesProviderDependencies:
 
     def test_apply_harness_overrides_with_string_dependencies_raises(self):
         """Test that harness overrides with string dependencies raises error."""
-        from olmo_eval.cli.beaker.launch import _apply_harness_overrides
+        from olmo_eval.cli.run.config import _apply_harness_overrides
         from olmo_eval.harness import get_harness_preset
 
         preset = get_harness_preset("default")
@@ -132,7 +132,7 @@ class TestHarnessOverridesProviderDependencies:
 
     def test_provider_package_overrides_vllm_extra(self):
         """Test that provider.package overrides the default vllm extra."""
-        from olmo_eval.cli.beaker.launch import _apply_harness_overrides
+        from olmo_eval.cli.run.config import _apply_harness_overrides
         from olmo_eval.harness import get_harness_preset
 
         preset = get_harness_preset("default")
@@ -319,7 +319,7 @@ class TestHarnessOverridesProviderDependencies:
 
     def test_apply_harness_overrides_with_global_sandbox_override(self):
         """Test that sandboxes={...} sets the shared pool and common sandbox fields."""
-        from olmo_eval.cli.beaker.launch import _apply_harness_overrides
+        from olmo_eval.cli.run.config import _apply_harness_overrides
         from olmo_eval.harness import get_harness_preset
         from olmo_eval.harness.sandbox import SandboxMode
 
@@ -601,3 +601,143 @@ class TestTaskExpansionInExperimentSummary:
         # But expanded tasks ARE keys
         for task in expanded:
             assert task in task_configs_by_spec
+
+
+class TestProviderKindConsistency:
+    """The Beaker install step and the in-container run must agree on the provider kind.
+
+    Regression tests for a job that installed vLLM into the isolated server venv (because
+    the harness preset says vllm_server) and then ran the model preset's in-process vllm
+    provider, which could not import vLLM from the main venv.
+    """
+
+    CASES = [
+        # (model, harness, overrides, expected kind)
+        ("olmo-3-1025-7b", "default", [], "vllm"),
+        ("olmo-3-1025-7b", "default", ["provider.kind=vllm_server"], "vllm_server"),
+        ("olmo-3-1025-7b", None, ["provider.kind=vllm_server"], "vllm_server"),
+        ("olmo-3-1025-7b", None, [], "vllm"),
+        ("gpt-4o", "default", [], "litellm"),
+        ("Qwen/Qwen3-4B", "default", [], "vllm_server"),
+        ("Qwen/Qwen3-4B", "default", ["provider.kind=vllm"], "vllm"),
+        ("Qwen/Qwen3-4B", "default", ['provider={"kind":"vllm"}'], "vllm"),
+        # Scaffolds need an OpenAI client, so in-process vllm runs as a server
+        ("llama3.1-8b-instruct", "simple_agent", [], "vllm_server"),
+        ("gpt-4o", "simple_agent", [], "litellm"),
+    ]
+
+    @staticmethod
+    def _assemble(model: str, harness: str | None, overrides: list[str]):
+        from unittest.mock import patch
+
+        from olmo_eval.cli.beaker.config_loader import LaunchConfig
+        from olmo_eval.cli.beaker.experiment_plan import ExperimentPlan
+        from olmo_eval.cli.beaker.job_assembler import JobConfigAssembler
+
+        launch_config = LaunchConfig(
+            name="test",
+            model_specs=[model],
+            task_specs=["humaneval"],
+            cluster="h100",
+            workspace="ai2/test",
+            budget="ai2/test",
+            harness=harness,
+            harness_overrides=overrides,
+        )
+        exp = ExperimentPlan(
+            name="test",
+            model_spec=model,
+            priority="normal",
+            tasks=["humaneval"],
+            original_task_specs=["humaneval"],
+            total_expanded_tasks=1,
+            num_gpus=1,
+        )
+        assembler = JobConfigAssembler(
+            config=launch_config,
+            effective_image="test-image",
+            effective_groups=[],
+            beaker_username="test-user",
+            common_secrets=[],
+            store_secrets=[],
+            task_secrets=[],
+            inject_aws_credentials=False,
+            inject_gcs_credentials=False,
+        )
+        with patch("olmo_eval.cli.beaker.job_assembler.cluster_has_weka", return_value=False):
+            return assembler.assemble(exp)
+
+    @pytest.mark.parametrize(("model", "harness", "overrides", "expected"), CASES)
+    def test_run_resolves_expected_kind(self, model, harness, overrides, expected):
+        from olmo_eval.cli.run.config import RunConfigBuilder
+
+        config = RunConfigBuilder(
+            model=model,
+            task=("humaneval",),
+            output_dir="/tmp/results",
+            harness_preset=harness,
+            cli_harness_overrides=overrides,
+        ).build()
+
+        assert str(config.harness_config.provider.kind) == expected
+
+    @pytest.mark.parametrize(("model", "harness", "overrides", "expected"), CASES)
+    def test_launcher_resolves_expected_kind(self, model, harness, overrides, expected):
+        from olmo_eval.cli.beaker.job_assembler import resolve_provider_kind
+        from olmo_eval.cli.run.config import _apply_harness_overrides
+        from olmo_eval.harness import get_harness_preset
+
+        preset = None
+        if harness:
+            preset = _apply_harness_overrides(get_harness_preset(harness), overrides)
+
+        assert resolve_provider_kind(model, preset, overrides) == expected
+
+    @pytest.mark.parametrize(("model", "harness", "overrides", "expected"), CASES)
+    def test_isolated_vllm_venv_only_for_vllm_server(self, model, harness, overrides, expected):
+        job_config = self._assemble(model, harness, overrides)
+
+        assert job_config.vllm_isolated_venv is (expected == "vllm_server")
+        assert ("vllm" in job_config.extras) is (expected in ("vllm", "vllm_server"))
+        assert ("litellm" in job_config.extras) is (expected == "litellm")
+
+
+class TestProviderKindOverride:
+    """Tests for extracting an explicit provider.kind from CLI overrides."""
+
+    @pytest.mark.parametrize(
+        ("overrides", "expected"),
+        [
+            ([], None),
+            (["provider.max_model_len=4096"], None),
+            (["provider.kind=vllm_server"], "vllm_server"),
+            (['provider={"kind":"litellm"}'], "litellm"),
+            (["provider.kind=vllm", "provider.kind=vllm_server"], "vllm_server"),
+            (["provider.kwargs.kind=vllm"], None),
+            (["providers.kind=vllm"], None),
+            (["batching.chunk_size=2"], None),
+            (["provider.dependencies.0=example-package==2"], None),
+            (
+                ["provider.dependencies.0=example-package==2", "provider.kind=vllm_server"],
+                "vllm_server",
+            ),
+        ],
+    )
+    def test_provider_kind_override(self, overrides, expected):
+        from olmo_eval.cli.run.config import provider_kind_override
+
+        assert provider_kind_override(overrides) == expected
+
+    def test_indexed_provider_override_with_harness_config(self):
+        from olmo_eval.cli.run.config import _apply_harness_overrides, merge_model_provider
+        from olmo_eval.common.configs import get_provider_config
+        from olmo_eval.harness import get_harness_preset
+
+        overrides = ["provider.dependencies.0=example-package==2"]
+        preset = get_harness_preset("default").with_provider_overrides(
+            dependencies=["example-package==1"]
+        )
+        preset = _apply_harness_overrides(preset, overrides)
+        merged = merge_model_provider(preset, get_provider_config("olmo-3-1025-7b"), overrides)
+
+        assert list(merged.provider.dependencies) == ["example-package==2"]
