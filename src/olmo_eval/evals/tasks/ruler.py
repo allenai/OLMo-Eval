@@ -18,14 +18,14 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any, cast
 
-from olmo_eval.common.formatters import PPLFormatter
+from olmo_eval.common.formatters import ChatFormatter, PPLFormatter
 from olmo_eval.common.metrics import RecallMetric
 from olmo_eval.common.scorers.base import Scorer
 from olmo_eval.common.types import Instance, LMOutput, LMRequest, RequestType, SamplingParams
 from olmo_eval.data.ruler_loader import download_ruler_data, load_ruler_dataset
 from olmo_eval.data.ruler_tasks import RULER_TASKS
 from olmo_eval.evals.tasks.common.base import Task, TaskConfig
-from olmo_eval.evals.tasks.common.registry import register
+from olmo_eval.evals.tasks.common.registry import register, register_variant
 
 
 def _normalize_answer(s: str) -> str:
@@ -286,3 +286,10 @@ for _task_name, _task_config in RULER_TASKS.items():
     # Inject into module globals so pickle can find the class by name
     globals()[_cls.__name__] = _cls
     register(f"ruler_{_task_name}")(_cls)
+    # `:chat` serves the same preformatted RULER input (it already ends with the answer prefix)
+    # as one user turn through the model's chat template, for chat models judged in their
+    # serving format. Sampling, scoring and items are unchanged, so a `:chat` cell pairs
+    # item-for-item with the completion cell on the same checkpoint.
+    register_variant(
+        f"ruler_{_task_name}", "chat", formatter=ChatFormatter(user_template="{question}")
+    )
