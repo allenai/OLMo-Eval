@@ -2,10 +2,12 @@ import re
 from collections.abc import Iterator
 from typing import Any
 
+from olmo_eval.common.formatters import ChatFormatter
 from olmo_eval.common.metrics import AccuracyMetric, PassAtKMetric
 from olmo_eval.common.scorers import ExactMatchScorer
 from olmo_eval.common.types import Instance, LMOutput, LMRequest, RequestType, SamplingParams
 from olmo_eval.data import DataSource
+from olmo_eval.evals.extract.math import last_boxed_only_string
 from olmo_eval.evals.tasks.common import (
     OutputScoreAggregation,
     Task,
@@ -22,6 +24,24 @@ def _extract_last_number(text: str) -> str | None:
     output = _COMMA_IN_NUMBER_RE.sub(r"\1\2", text)
     numbers = _NUMBER_RE.findall(output)
     return numbers[-1] if numbers else None
+
+
+def _strip_trailing_zeros(number: str) -> str:
+    """Drop trailing decimal zeros so ``57.00`` matches a gold answer of ``57``."""
+    if "." not in number:
+        return number
+    return number.rstrip("0").rstrip(".") or "0"
+
+
+def _extract_boxed_or_last_number(text: str) -> str | None:
+    """Return the number in the last ``\\boxed{}``, else the last number in the text."""
+    boxed = last_boxed_only_string(text)
+    number = None
+    if boxed is not None and "{" in boxed:
+        number = _extract_last_number(boxed[boxed.index("{") + 1 : -1])
+    if number is None:
+        number = _extract_last_number(text)
+    return None if number is None else _strip_trailing_zeros(number)
 
 
 def _clean_short_answer(text: str) -> str:
@@ -74,13 +94,12 @@ class GSM8K(Task):
                     },
                 )
             )
-        num = self.config.num_fewshot
-        if num and num < len(instances):
-            instances = instances[:num]
-        return instances
+        return instances[: self.config.num_fewshot]
 
     def format_request(self, instance: Instance) -> LMRequest:
         fewshot = self.get_fewshot()
+        if self.config.formatter is not None:
+            return self.config.formatter.format(instance, fewshot)
 
         parts: list[str] = []
         for ex in fewshot:
@@ -91,6 +110,8 @@ class GSM8K(Task):
         return LMRequest(request_type=RequestType.COMPLETION, prompt=prompt)
 
     def extract_answer(self, output: LMOutput) -> str | None:
+        if self.config.answer_extractor is not None:
+            return self.config.answer_extractor(output.text)
         return _extract_last_number(output.text)
 
 
@@ -113,4 +134,26 @@ register_variant(
         num_samples=8,
     ),
     output_score_aggregation=OutputScoreAggregation.FIRST,
+)
+
+
+# Zero-shot chat variant for instruct and reasoning models (as on main). Drops stop
+# sequences and lifts the token cap so chain-of-thought is not truncated.
+register_variant(
+    "gsm8k",
+    "chat",
+    formatter=ChatFormatter(
+        user_template=(
+            "{question}\n\nPlease reason step by step, "
+            "and put your final answer within \\boxed{{}}."
+        ),
+    ),
+    num_fewshot=0,
+    sampling_params=SamplingParams(
+        max_tokens=None,
+        temperature=0.6,
+        top_p=0.95,
+    ),
+    strip_thinking=True,
+    answer_extractor=_extract_boxed_or_last_number,
 )

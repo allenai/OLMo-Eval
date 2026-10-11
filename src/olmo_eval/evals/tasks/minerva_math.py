@@ -2,7 +2,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
-from olmo_eval.common.formatters import CompletionFormatter, PPLFormatter
+from olmo_eval.common.formatters import ChatFormatter, CompletionFormatter, PPLFormatter
 from olmo_eval.common.metrics import AccuracyMetric, BPBMetricInstanceAvg, PassAtKMetric
 from olmo_eval.common.scorers import MinervaMathScorer
 from olmo_eval.common.types import Instance, LMOutput, LMRequest, RequestType, SamplingParams
@@ -184,6 +184,29 @@ for subset in MATH_SUBSETS:
 @register("math500")
 class Math500(Math500Task):
     data_source = DataSource(path="HuggingFaceH4/MATH-500")
+
+
+# Zero-shot chat variant for instruct and reasoning models, built like gsm8k:chat: no
+# few-shot turns, no stop sequences or token cap, so chain-of-thought is not truncated.
+# Answers are extracted by MathExtractor (last \\boxed{} first) and scored by
+# MinervaMathScorer, as the base task.
+register_variant(
+    "math500",
+    "chat",
+    formatter=ChatFormatter(
+        user_template=(
+            "{question}\n\nPlease reason step by step, "
+            "and put your final answer within \\boxed{{}}."
+        ),
+    ),
+    num_fewshot=0,
+    sampling_params=SamplingParams(
+        max_tokens=None,
+        temperature=0.6,
+        top_p=0.95,
+    ),
+    strip_thinking=True,
+)
 
 
 for _subset in MATH_SUBSETS:
