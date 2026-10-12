@@ -49,11 +49,14 @@ next to its value; carry both wherever the number goes (±0.026 at 300, ±0.046 
    seeded `limit` sample is drawn first, then every n-th row is taken, so the shards partition the
    exact rows an unsharded run grades and pool back exactly.
 3. **Pack** cells into single-GPU bins that fit `--budget-hours` (default 1.5) minus
-   `--setup-minutes` (default 8, install + model load). A bin never holds two shards of one cell or
-   two batch sizes.
+   `--setup-minutes` (default 8, install + model load). A bin never holds two shards of one cell,
+   two batch sizes, or a YaRN cell next to a non-YaRN one.
 4. **Submit** one gantry job per bin. Each runs a single `olmo-eval run` over all of its cells, so
    the model loads once:
    - provider: olmo-eval's native `olmo_core` (no HF/vLLM export), `max_model_len` 262,144;
+   - **the r256k rung runs with YaRN** (`--yarn-rungs`, default `r256k`): its jobs apply YaRN
+     factor 2 to the checkpoint's RoPE in `preflight.py`, raise `max_model_len` to 524,288 and feed
+     prefill in 131,072-token chunks. Every other rung is untouched (see *Caveats*);
    - `CTC_SUITE_PROMPT_FORMAT=chat`: the prompt body byte-identical to the CTC SFT data, in the
      model's chat template (IID with chat-template SFT checkpoints; not comparable with the
      default `alpaca` numbers);
@@ -118,17 +121,23 @@ bitwise-identical, so `--full-batch-size 1` if you need bitwise determinism; bs=
 
 ## Caveats
 
-- **Left truncation at 256k -- most of the rung, not "some rows".** Through the chat + doc-marker
-  prompt path the r256k prompts run to ~272k tokens, and the provider left-truncates anything over
-  `max_model_len - max_tokens`, cutting the chat header and instruction. Measured 2026-09-29 (all 125
-  rows): nq 43%, oolong 50%, hpqa 83%, contradiction 83%, rerank 98%, qdmatch_nq and outlier 100%.
-  A default r256k cell is therefore not a valid measurement. Two fixes, both r256k-only
-  (`--policy r256k:100`):
-  - `--fit-window`: `fit_to_window.py` shortens only the distractor documents' text (0-3%), keeping
-    every document, index and gold document intact, until each prompt fits. Refuses `oolong`.
-  - `--rope-yarn 2 --max-model-len 524288`: YaRN on the checkpoint's RoPE (the suite's historical
-    r256k serving setting), so the full prompt fits -- but the model then runs under a position
-    encoding it was not trained with.
+- **r256k runs with YaRN, and its numbers carry that setting.** Through the chat + doc-marker prompt
+  path the r256k prompts run to ~272k tokens, past Qwen3.5's 262,144 positions. Scored in the base
+  window, the provider left-truncates anything over `max_model_len - max_tokens` -- cutting the chat
+  header and instruction off nq 43%, oolong 50%, hpqa 83%, contradiction 83%, rerank 98%,
+  qdmatch_nq and outlier 100% of the rows (measured 2026-09-29) -- which reads as a fake 256k
+  collapse. So r256k defaults to YaRN factor 2 (the suite's historical r256k serving setting) with
+  chunked prefill: one forward longer than 262,144 tokens dies with a Triton illegal memory access,
+  and chunking is exact (OLMo-core `GenerationConfig.prefill_chunk_size`, on `prasann/landmark` from
+  `d28e458b2`). The cost: the model runs under a position encoding it was not trained with, at every
+  position. Quote r256k numbers as "YaRN x2".
+  - `--fit-window` is the alternative: `fit_to_window.py` shortens only the distractor documents'
+    text (0-3%), keeping every document, index and gold document intact, until each prompt fits the
+    base window. It refuses `oolong`, whose one document is the item list the answer counts over.
+    On the setA 32k/256k pair the two agreed within noise on every r256k cell (eval_size 100 each).
+  - `--yarn-rungs ''` restores the truncating base-window behaviour (not a valid r256k measurement).
+  - Runs launched before `8e63b917` have no per-rung YaRN: their r256k cells were truncated unless
+    they passed `--fit-window` or `--rope-yarn` explicitly.
 - **Shortcut rows.** `ctc_textgroups` (the shortest document is gold in ~0.55 of rows at 8k-32k)
   and `ctc_strmatch` (only the gold pairs share words) are partly solvable without the task.
 
