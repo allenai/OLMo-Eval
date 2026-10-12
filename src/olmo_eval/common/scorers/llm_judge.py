@@ -359,8 +359,13 @@ class LLMJudgeScorer(ContextScorer):
                 request_type=RequestType.CHAT,
                 messages=({"role": "user", "content": prompt},),
             )
+        from olmo_eval.inference.errors import first_output
+
         results = await provider.agenerate([request], sampling_params)
-        return results[0][0].text if results and results[0] else ""
+        outputs = results[0] if results else []
+        if not outputs:
+            return ""
+        return first_output(outputs).text
 
     async def _choice_logprobs_with_provider(
         self,

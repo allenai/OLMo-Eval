@@ -74,12 +74,12 @@ class PrecisionMetric(Metric):
             return 0.0
         return sum(r.scores.get(scorer_name, 0.0) for r in committed) / len(committed)
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         # Precision excludes refusals before averaging, so raw MC scorer values
         # are not interchangeable with the stored task metric.
         return False
 
-    def pairwise_display_format(self) -> str:
+    def display_format(self) -> str:
         return "percentage"
 
 
@@ -99,11 +99,11 @@ class CoverageMetric(Metric):
         committed = sum(1 for r in responses if not _is_refusal(r))
         return committed / len(responses)
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         # Coverage is derived from refusal handling, not the MC scorer signal.
         return False
 
-    def pairwise_display_format(self) -> str:
+    def display_format(self) -> str:
         return "percentage"
 
 

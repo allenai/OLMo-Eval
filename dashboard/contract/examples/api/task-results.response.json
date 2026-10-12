@@ -1,0 +1,217 @@
+{
+  "run_id": "db385601e335",
+  "baseline": {
+    "key": "r:7c1e9a0b42d8",
+    "kind": "run",
+    "label": "Qwen3-8B",
+    "model": {
+      "model_id": "403a845436a6",
+      "name": "Qwen/Qwen3-8B",
+      "model_hash": "a1b2c3d4e5f60718",
+      "series": "Qwen/Qwen3-8B",
+      "series_label": "Qwen3-8B",
+      "family": "qwen3",
+      "step": null,
+      "tokens_seen": null
+    },
+    "run": {
+      "run_id": "7c1e9a0b42d8",
+      "launch_id": null,
+      "experiment_name": "qwen3-8b-omniscience_judge",
+      "experiment_group": "qwen3-8b-omniscience_judge-20260929-101500",
+      "status": "complete",
+      "upload_state": "complete",
+      "stale": false,
+      "model": {
+        "model_id": "403a845436a6",
+        "name": "Qwen/Qwen3-8B",
+        "model_hash": "a1b2c3d4e5f60718",
+        "series": "Qwen/Qwen3-8B",
+        "series_label": "Qwen3-8B",
+        "family": "qwen3",
+        "step": null,
+        "tokens_seen": null
+      },
+      "author": "chrisg",
+      "uploaded_by": "chrisg@allenai.org",
+      "tags": [],
+      "created_at": "2026-09-29T17:15:40+00:00",
+      "started_at": "2026-09-29T17:15:31+00:00",
+      "finished_at": "2026-09-29T17:52:02+00:00",
+      "duration_seconds": 2191.0,
+      "num_tasks": 1,
+      "num_failed_tasks": 0,
+      "num_instances": 600,
+      "headline": {
+        "kind": "task",
+        "name": "omniscience:judge",
+        "score": -21.7,
+        "stderr": null,
+        "display_format": "raw"
+      },
+      "beaker_experiment_id": "01M3B0XC6YQ4D3J7W2F9TEXK8H",
+      "beaker_workspace": "ai2/olmo-eval-debug",
+      "git_commit": "e81a69bf44a4d7a86033d7ccc7fb7d0e41db48a7",
+      "git_branch": "maliam/omniscience",
+      "gcs_prefix": "gs://ai2-skiff2-olmo-eval-results/runs/7c1e9a0b42d8/",
+      "links": {
+        "beaker_experiment": "https://beaker.org/ex/01M3B0XC6YQ4D3J7W2F9TEXK8H",
+        "beaker_result_dataset": "https://beaker.org/ds/01M3TFPE2X873CCF4KMSKRME4D",
+        "beaker_workspace": "https://beaker.org/ws/ai2/olmo-eval-debug",
+        "gcs_console": "https://console.cloud.google.com/storage/browser/ai2-skiff2-olmo-eval-results/runs/db385601e335?project=ai2-skiff2-olmo-eval",
+        "github_commit": "https://github.com/allenai/olmo-eval-internal/commit/e81a69bf44a4d7a86033d7ccc7fb7d0e41db48a7"
+      }
+    },
+    "run_ids": [
+      "7c1e9a0b42d8"
+    ],
+    "latest_at": "2026-09-29T17:52:02+00:00"
+  },
+  "items": [
+    {
+      "task_result_id": 4182,
+      "run_id": "db385601e335",
+      "task_name": "omniscience:judge",
+      "task_hash": "4962f82829afd898",
+      "base_task": "omniscience",
+      "primary_metric": "any__any__omniscience_index:omniscience_judge",
+      "metric_meta": {
+        "any__any__omniscience_index:omniscience_judge": {
+          "higher_is_better": true,
+          "display_format": "raw",
+          "unit": null,
+          "kind": "unbounded"
+        },
+        "any__any__hallucination_rate:omniscience_judge": {
+          "higher_is_better": false,
+          "display_format": "percent",
+          "unit": null,
+          "kind": "binary"
+        },
+        "any__any__accuracy:omniscience_judge": {
+          "higher_is_better": true,
+          "display_format": "percent",
+          "unit": null,
+          "kind": "binary"
+        },
+        "domain__Finance__accuracy:omniscience_judge": {
+          "higher_is_better": true,
+          "display_format": "percent",
+          "unit": null,
+          "kind": "binary"
+        },
+        "domain__Health__accuracy:omniscience_judge": {
+          "higher_is_better": true,
+          "display_format": "percent",
+          "unit": null,
+          "kind": "binary"
+        },
+        "domain__Humanities and Social Sciences__accuracy:omniscience_judge": {
+          "higher_is_better": true,
+          "display_format": "percent",
+          "unit": null,
+          "kind": "binary"
+        },
+        "domain__Law__accuracy:omniscience_judge": {
+          "higher_is_better": true,
+          "display_format": "percent",
+          "unit": null,
+          "kind": "binary"
+        },
+        "domain__Science Engineering and Mathematics__accuracy:omniscience_judge": {
+          "higher_is_better": true,
+          "display_format": "percent",
+          "unit": null,
+          "kind": "binary"
+        },
+        "domain__Software Engineering__accuracy:omniscience_judge": {
+          "higher_is_better": true,
+          "display_format": "percent",
+          "unit": null,
+          "kind": "binary"
+        },
+        "judge_parsing_errors:omniscience_judge": {
+          "higher_is_better": false,
+          "display_format": "raw",
+          "unit": null,
+          "kind": "unbounded"
+        }
+      },
+      "score": -33.44481605351171,
+      "stderr": null,
+      "score_is_mean": false,
+      "instance_scale": 1,
+      "n": 600,
+      "instances_processed": 600,
+      "instances_failed": 0,
+      "instances_stored": 600,
+      "metrics": {
+        "any__any__omniscience_index:omniscience_judge": -33.44481605351171,
+        "any__any__hallucination_rate:omniscience_judge": 0.4509090909090909,
+        "any__any__accuracy:omniscience_judge": 0.0802675585284281,
+        "domain__Finance__accuracy:omniscience_judge": 0.08,
+        "domain__Health__accuracy:omniscience_judge": 0.05,
+        "domain__Humanities and Social Sciences__accuracy:omniscience_judge": 0.08,
+        "domain__Law__accuracy:omniscience_judge": 0.08163265306122448,
+        "domain__Science Engineering and Mathematics__accuracy:omniscience_judge": 0.08,
+        "domain__Software Engineering__accuracy:omniscience_judge": 0.11,
+        "judge_parsing_errors:omniscience_judge": 2.0
+      },
+      "error": null,
+      "error_summary": null,
+      "duration_seconds": 1265.2544946670532,
+      "runtime": {
+        "inference_seconds": 1266.1,
+        "basis": "measured",
+        "startup_seconds": 78.4,
+        "with_startup_seconds": 1344.5,
+        "token_share": 1.0,
+        "prompt_tokens_total": 61234,
+        "completion_tokens_total": 48210,
+        "seconds_per_1k_instances": 2110.1666666666665,
+        "span_start_s": 0.12,
+        "span_end_s": 1265.2544946670532
+      },
+      "completion_tokens_total": 48210,
+      "mean_completion_tokens": 80.35,
+      "truncation_rate": 0.0,
+      "finish_reason_counts": {
+        "stop": 600
+      },
+      "num_fewshot": 0,
+      "limit": null,
+      "split": "train",
+      "suites": [],
+      "predictions_uri": "gs://ai2-skiff2-olmo-eval-results/runs/db385601e335/predictions/meta-llama_Llama-3.1-8B-Instruct/omniscience_judge_afd898-predictions.jsonl",
+      "requests_uri": "gs://ai2-skiff2-olmo-eval-results/runs/db385601e335/requests/meta-llama_Llama-3.1-8B-Instruct/omniscience_judge_afd898-requests.jsonl",
+      "baseline": {
+        "task_result_id": 3977,
+        "run_id": "7c1e9a0b42d8",
+        "task_hash": "4962f82829afd898",
+        "score": -21.7,
+        "stderr": null,
+        "n": 600,
+        "metrics": {
+          "any__any__omniscience_index:omniscience_judge": -21.7,
+          "any__any__accuracy:omniscience_judge": 0.131
+        },
+        "delta": {
+          "delta": -11.744816053511709,
+          "ci_low": null,
+          "ci_high": null,
+          "p_value": null,
+          "n_shared": 600,
+          "method": "none",
+          "significant": false,
+          "improved": false,
+          "hash_mismatch": false,
+          "alpha": 0.05,
+          "n_boot": null,
+          "note": "any__any__omniscience_index is not a per-instance mean; no CI"
+        },
+        "contingency": null
+      }
+    }
+  ],
+  "computed_at": "2026-10-01T16:02:11+00:00"
+}

@@ -72,7 +72,7 @@ def build_predictions(scored: Sequence[Any], metrics: Sequence[Metric] = ()) -> 
                 if num_bytes > 0:
                     out_data["bits_per_byte"] = -sum_logits / (num_bytes * math.log(2))
 
-            for key in ("finish_reason", "completion_tokens"):
+            for key in ("finish_reason", "completion_tokens", "prompt_tokens"):
                 if key in meta:
                     out_data[key] = meta[key]
 

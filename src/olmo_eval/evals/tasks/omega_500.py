@@ -61,6 +61,11 @@ _PREFIX_REGEXES = (
 _ANSWER_REGEXES = (r"[\s\S]*?\\boxed\{(.*?)\}[\s\S]*?", r"(.*)\.?")
 _FORMAT_CORRECT_CUTOFF = 0.4
 
+# Repaired cascade: drop a colon after the prefix ("The answer is: 42") and
+# don't let the catch-all match the empty string.
+_REPAIRED_PREFIX_REGEXES = tuple(prefix + r"\s*:?" for prefix in _PREFIX_REGEXES)
+_REPAIRED_ANSWER_REGEXES = (_ANSWER_REGEXES[0], r"(.+)")
+
 # Mathy delimiters stripped before extraction. Ported verbatim from the
 # reference implementation, whose substitution is unanchored and per-line:
 # on each line the outermost left/right pair is dropped wherever it
@@ -75,7 +80,12 @@ _DELIMITERS_TO_STRIP = (
 )
 
 
-def _extract(continuation: str) -> ExtractedAnswer:
+def _extract(
+    continuation: str,
+    *,
+    prefix_regexes: tuple[str, ...] = _PREFIX_REGEXES,
+    answer_regexes: tuple[str, ...] = _ANSWER_REGEXES,
+) -> ExtractedAnswer:
     """Normalize a continuation and extract the final answer."""
     output = re.sub(r"(\d),(\d)", r"\1\2", continuation)
     res = re.sub(r"\.\s*$", "", output).strip()
@@ -83,12 +93,21 @@ def _extract(continuation: str) -> ExtractedAnswer:
         res = re.sub(f"{re.escape(left)}(.*){re.escape(right)}", "\\1", res).strip()
     # The leading wildcard search is quadratic when no boxed opener exists.
     # Keep its cascade slot (and format score) with an impossible pattern.
-    answer_regexes = _ANSWER_REGEXES if "\\boxed{" in res else (r"(?!)", _ANSWER_REGEXES[1])
+    if "\\boxed{" not in res:
+        answer_regexes = (r"(?!)", answer_regexes[1])
     return extract_answer_with_format(
         res,
         answer_format_regex=_ANSWER_FORMAT_REGEX,
         answer_regexes=answer_regexes,
-        prefix_regexes=_PREFIX_REGEXES,
+        prefix_regexes=prefix_regexes,
+    )
+
+
+def _extract_repaired(continuation: str) -> ExtractedAnswer:
+    return _extract(
+        continuation,
+        prefix_regexes=_REPAIRED_PREFIX_REGEXES,
+        answer_regexes=_REPAIRED_ANSWER_REGEXES,
     )
 
 
@@ -110,8 +129,11 @@ class OmegaExactMatchScorer(Scorer):
         if not self.name:
             object.__setattr__(self, "name", "exact_match_flex" if self.flex else "exact_match")
 
+    def extract(self, text: str) -> ExtractedAnswer:
+        return _extract(text)
+
     def score(self, instance: Instance, output: LMOutput) -> float:
-        answer, format_correct = _extract(output.text or "")
+        answer, format_correct = self.extract(output.text or "")
         # Whether the answer was stated in the requested format, independent
         # of correctness — distinguishes "wrong" from "badly formatted".
         output.metadata["answer_format_correct"] = format_correct
@@ -121,8 +143,18 @@ class OmegaExactMatchScorer(Scorer):
         return 1.0 if answer.lower() == gold.lower() else 0.0
 
 
+@dataclass(frozen=True, slots=True)
+class OmegaRepairedExactMatchScorer(OmegaExactMatchScorer):
+    """Exact match on an answer extracted with the repaired cascade."""
+
+    def extract(self, text: str) -> ExtractedAnswer:
+        return _extract_repaired(text)
+
+
 _STRICT = OmegaExactMatchScorer()
 _FLEX = OmegaExactMatchScorer(flex=True)
+_REPAIRED_STRICT = OmegaRepairedExactMatchScorer()
+_REPAIRED_FLEX = OmegaRepairedExactMatchScorer(flex=True)
 
 
 @register("omega_500")
@@ -135,6 +167,7 @@ class Omega500(Task):
         AccuracyMetric(name="exact_match_flex", scorer=_FLEX),
     )
     primary_metric = AccuracyMetric(name="exact_match_flex", scorer=_FLEX)
+    answer_scorer: OmegaExactMatchScorer = _STRICT
     strip_thinking = True
     # Defaults mirror oe-eval's ``omega_500:0-shot-chat_deepseek`` — the
     # OLMO_3 suite entry and the config the parity certification ran on.
@@ -169,7 +202,7 @@ class Omega500(Task):
         return self.config.formatter.format(instance, self.get_fewshot())
 
     def extract_answer(self, output: LMOutput) -> str:
-        return _extract(output.text or "").answer
+        return self.answer_scorer.extract(output.text or "").answer
 
 
 @register("omega_500:hillclimb")
@@ -177,10 +210,16 @@ class Omega500HillClimb(Omega500):
     """OMEGA-500 on the corrected AllenAI snapshot, scored strictly at a 32K budget.
 
     Instances keep the dataset's own IDs, so they stay stable if rows move.
+    Answers are extracted with the repaired cascade.
     """
 
     data_source = DataSource(path="allenai/omega-500", revision=OMEGA_500_REVISION)
-    primary_metric = AccuracyMetric(name="exact_match", scorer=_STRICT)
+    metrics = (
+        AccuracyMetric(name="exact_match", scorer=_REPAIRED_STRICT),
+        AccuracyMetric(name="exact_match_flex", scorer=_REPAIRED_FLEX),
+    )
+    primary_metric = AccuracyMetric(name="exact_match", scorer=_REPAIRED_STRICT)
+    answer_scorer = _REPAIRED_STRICT
     sampling_params = SamplingParams(max_tokens=32768, temperature=0.6, top_p=0.95)
 
     def process_doc(self, doc: dict[str, Any], index: int = 0) -> Instance | None:

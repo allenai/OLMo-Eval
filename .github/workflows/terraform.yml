@@ -1,0 +1,77 @@
+name: Terraform
+on:
+    pull_request:
+        branches: [main]
+        paths:
+            - infra/terraform/**
+            - .github/workflows/terraform.yml
+    push:
+        branches: [main]
+        paths:
+            - infra/terraform/**
+            - .github/workflows/terraform.yml
+
+# id-token lets the job authenticate to GCP as Skiff2's GitHub Actions service account.
+permissions:
+    contents: read
+    id-token: write
+
+# Applies queue in their own group so a PR plan can never replace a pending apply. Overlapping
+# runs are serialized by the state lock in the GCS backend (see -lock-timeout below).
+concurrency:
+    group: terraform-${{ github.event_name == 'push' && 'apply' || github.ref }}
+    cancel-in-progress: false
+
+jobs:
+    terraform:
+        name: Terraform
+        runs-on: ubuntu-latest
+        defaults:
+            run:
+                working-directory: infra/terraform
+        env:
+            # Fork PRs get no OIDC token, so they only run the offline checks.
+            TRUSTED: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+        steps:
+            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+            - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+              with:
+                  terraform_version: "1.16.x"
+                  terraform_wrapper: false
+            - run: terraform fmt -check -recursive
+            - run: terraform init -backend=false -input=false
+            - run: terraform validate
+
+            - name: Authenticate to Google Cloud
+              if: env.TRUSTED == 'true'
+              uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+              with:
+                  workload_identity_provider: ${{ vars.SKIFF2_WORKLOAD_IDENTITY_PROVIDER }}
+                  service_account: ${{ vars.SKIFF2_SERVICE_ACCOUNT }}
+            - name: Init with the state backend
+              if: env.TRUSTED == 'true'
+              run: terraform init -input=false -reconfigure
+
+            # This repo's Actions logs are public, so only the changed resource addresses and
+            # actions are shown, never attribute values. Run `terraform plan` locally for details.
+            - name: Plan
+              if: env.TRUSTED == 'true' && github.event_name == 'pull_request'
+              run: |
+                  terraform plan -input=false -no-color -lock-timeout=10m -out=plan.bin > /dev/null
+                  {
+                      echo '### Terraform plan'
+                      echo '```'
+                      terraform show -json plan.bin | jq -r '
+                          [(.resource_changes // [])[] | select(.change.actions != ["no-op"])
+                           | "\(.change.actions | join("/")) \(.address)"]
+                          | if length == 0 then "No changes." else .[] end'
+                      echo '```'
+                  } | tee -a "$GITHUB_STEP_SUMMARY"
+                  rm -f plan.bin
+
+            - name: Apply
+              if: env.TRUSTED == 'true' && github.event_name == 'push'
+              run: |
+                  terraform apply -input=false -auto-approve -no-color -lock-timeout=10m > apply.txt
+                  grep -E '^(Apply complete!|No changes)' apply.txt || true
+                  rm -f apply.txt

@@ -44,7 +44,7 @@ from olmo_eval.runners.common.constants import HardFailureRateExceeded
 from olmo_eval.runners.common.types import DEFAULT_MAX_HARD_FAILURE_RATE, TaskResult
 from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
 from olmo_eval.runners.processing.metrics import build_single_model_metrics, log_summary
-from olmo_eval.storage.base import convert_runner_results
+from olmo_eval.upload.uploader import _task_payload
 
 SPEC = "deepscholar_bench:probe"
 PRIMARY_METRIC = "accuracy:exact_match"
@@ -661,38 +661,42 @@ def test_metrics_json_accounting_on_a_clean_run() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Downstream: storage rows and suite averages
+# Downstream: uploaded task rows and suite averages
 # ---------------------------------------------------------------------------
 
 
-def test_stored_task_row_explains_a_gated_task() -> None:
-    """The stored row must say what happened, not just carry empty metrics."""
+def _uploaded_task_row(results: dict, tmp_path) -> dict:
+    metrics_output = build_single_model_metrics(results).to_dict()
+    run_errors = {e["task"]: e["error"] for e in metrics_output["errors"]}
+    row = metrics_output["tasks"][0]
+    return _task_payload(tmp_path, row, None, run_errors, metrics_output["summary"]).payload
+
+
+def test_uploaded_task_row_explains_a_gated_task(tmp_path) -> None:
+    """The uploaded row must say what happened, not just carry empty metrics."""
     results = _aggregate(_synthetic_result(total=63, failures=47))
     results["tasks"][SPEC]["task_hash"] = "deadbeef"
 
-    stored = convert_runner_results(results, experiment_id="exp-1")
-    row = stored.tasks[0]
+    row = _uploaded_task_row(results, tmp_path)
 
-    assert row.num_instances == 16
-    assert row.instances_processed == 63
-    assert row.instances_failed == 47
-    assert row.error_summary is not None
-    # Both halves survive: the classification first, then the instance detail.
-    assert row.error_summary.startswith("Hard failure rate")
-    assert " | " in row.error_summary
-    assert "47 instances failed" in row.error_summary
+    assert row["num_instances"] == 16
+    assert row["instances_processed"] == 63
+    assert row["instances_failed"] == 47
+    assert row["error"].startswith("Hard failure rate")
+    assert "47 instances failed" in row["error_summary"]["summary"]
 
 
-def test_stored_task_row_on_a_clean_run() -> None:
+def test_uploaded_task_row_on_a_clean_run(tmp_path) -> None:
     results = _aggregate(_synthetic_result(total=63, failures=0))
     results["tasks"][SPEC]["task_hash"] = "deadbeef"
 
-    row = convert_runner_results(results, experiment_id="exp-1").tasks[0]
+    row = _uploaded_task_row(results, tmp_path)
 
-    assert row.num_instances == 63
-    assert row.instances_processed == 63
-    assert row.instances_failed == 0
-    assert row.error_summary is None
+    assert row["num_instances"] == 63
+    assert row["instances_processed"] == 63
+    assert row["instances_failed"] == 0
+    assert row["error"] is None
+    assert row["error_summary"] is None
 
 
 def test_suite_average_names_the_task_it_excluded(caplog) -> None:

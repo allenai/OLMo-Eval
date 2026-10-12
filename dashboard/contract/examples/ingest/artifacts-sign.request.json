@@ -1,0 +1,36 @@
+{
+  "artifacts": [
+    {
+      "path": "metrics.json",
+      "size_bytes": 7980,
+      "md5_b64": "atNOG1FGXZIT2pBftXeO7g==",
+      "content_type": "application/json",
+      "kind": "metrics",
+      "task_name": null
+    },
+    {
+      "path": "predictions/meta-llama_Llama-3.1-8B-Instruct/omniscience_judge_afd898-predictions.jsonl",
+      "size_bytes": 4783708,
+      "md5_b64": "jTm/RnEL1k8WrNeEEBxueQ==",
+      "content_type": "application/x-ndjson",
+      "kind": "predictions",
+      "task_name": "omniscience:judge"
+    },
+    {
+      "path": "requests/meta-llama_Llama-3.1-8B-Instruct/omniscience_judge_afd898-requests.jsonl",
+      "size_bytes": 1193030,
+      "md5_b64": "VL5poiXMyMZj1ev+jXzu0g==",
+      "content_type": "application/x-ndjson",
+      "kind": "requests",
+      "task_name": "omniscience:judge"
+    },
+    {
+      "path": "metrics/vllm_server_meta-llama_Llama-3.1-8B-Instruct-inference.jsonl",
+      "size_bytes": 1548445,
+      "md5_b64": "PkJRSMp950TtO6uq28LfzQ==",
+      "content_type": "application/x-ndjson",
+      "kind": "inference_metrics",
+      "task_name": null
+    }
+  ]
+}

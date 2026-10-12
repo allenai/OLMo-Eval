@@ -1,0 +1,78 @@
+{
+    "$schema": "https://storage.googleapis.com/skiff2-general/skiff2-config.schema.json",
+    "services": [
+        {
+            "name": "ui",
+            "cwd": "./dashboard",
+            "dockerFile": "ui/Dockerfile",
+            "isRootService": true,
+            "serviceAccount": "olmo-eval-dashboard@ai2-skiff2-olmo-eval.iam.gserviceaccount.com",
+            "runtimeDependsOn": ["api"],
+            "machine": {
+                "minInstances": 1,
+                "maxInstances": 5,
+                "cpu": 1,
+                "memory": "512Mi"
+            },
+            "startup": {
+                "path": "/healthz",
+                "port": 8080,
+                "periodSeconds": 5,
+                "timeoutSeconds": 3,
+                "failureThreshold": 36
+            },
+            "sidecars": [
+                {
+                    "name": "api",
+                    "cwd": "./dashboard",
+                    "dockerFile": "api/Dockerfile",
+                    "extraBuildArgs": [
+                        "--build-arg",
+                        "API_MODE=dashboard",
+                        "--build-arg",
+                        "GIT_SHA=${COMMIT_SHA}"
+                    ],
+                    "machine": {
+                        "cpu": 1,
+                        "memory": "2Gi"
+                    },
+                    "startup": {
+                        "path": "/health",
+                        "port": 8000,
+                        "periodSeconds": 5,
+                        "timeoutSeconds": 3,
+                        "failureThreshold": 36
+                    }
+                }
+            ]
+        },
+        {
+            "name": "ingest",
+            "cwd": "./dashboard",
+            "dockerFile": "api/Dockerfile",
+            "allowUnauthenticated": true,
+            "serviceAccount": "olmo-eval-api@ai2-skiff2-olmo-eval.iam.gserviceaccount.com",
+            "extraBuildArgs": [
+                "--build-arg",
+                "API_MODE=ingest",
+                "--build-arg",
+                "GIT_SHA=${COMMIT_SHA}"
+            ],
+            "machine": {
+                "minInstances": 0,
+                "maxInstances": 10,
+                "cpu": 1,
+                "memory": "1Gi"
+            },
+            "requestTimeoutSeconds": 600,
+            "maxConcurrentRequests": 20,
+            "startup": {
+                "path": "/health",
+                "port": 8080,
+                "periodSeconds": 5,
+                "timeoutSeconds": 3,
+                "failureThreshold": 36
+            }
+        }
+    ]
+}
