@@ -29,20 +29,14 @@ class ReporterRegistry:
 
             return FileReporter()
 
-        def db_factory() -> MetricsReporter:
-            from ..reporters.db import DbReporter
-
-            return DbReporter()
-
         self._factories["console"] = console_factory
         self._factories["file"] = file_factory
-        self._factories["db"] = db_factory
 
     def register(self, name: str, factory: Callable[[], MetricsReporter]) -> None:
         """Register a reporter factory.
 
         Args:
-            name: Reporter name (e.g., "console", "db").
+            name: Reporter name (e.g., "console", "file").
             factory: Callable that creates a reporter instance.
         """
         self._factories[name] = factory

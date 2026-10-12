@@ -5,7 +5,6 @@ from olmo_eval.runners.common.constants import ValidationError
 from olmo_eval.runners.common.models import (
     MetricsOutput,
     ModelMetadata,
-    S3Config,
     ScoreSummary,
     TaskMetricsEntry,
 )
@@ -17,7 +16,6 @@ __all__ = [
     "ModelMetadata",
     "PREDICTIONS_SUFFIX",
     "REQUESTS_SUFFIX",
-    "S3Config",
     "ScoreSummary",
     "TaskMetricsEntry",
     "TaskResult",

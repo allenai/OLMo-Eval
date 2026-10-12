@@ -1,0 +1,73 @@
+.bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.inputRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.inputWrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.icon {
+  position: absolute;
+  left: 10px;
+  width: 15px;
+  height: 15px;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.input {
+  width: 100%;
+  height: 34px;
+  padding-left: 32px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+
+.input::placeholder {
+  font-family: var(--font-sans);
+  font-size: 13px;
+}
+
+.suggest {
+  position: absolute;
+  top: 38px;
+  left: 0;
+  min-width: 280px;
+  padding: 4px;
+  z-index: 30;
+}
+
+.suggestItem {
+  height: 28px;
+  font-size: 12.5px;
+}
+
+.suggestHint {
+  padding: 4px 8px 2px;
+  font-size: 10.5px;
+  color: var(--muted);
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}

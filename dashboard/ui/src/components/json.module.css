@@ -1,0 +1,186 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 0;
+  flex-wrap: wrap;
+}
+
+.tree {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 19px;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  overflow: auto;
+}
+
+.node {
+  min-width: 0;
+}
+
+.line {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+  white-space: nowrap;
+}
+
+.children {
+  padding-left: 16px;
+  border-left: 1px dotted var(--border-strong);
+  margin-left: 6px;
+}
+
+.close {
+  color: var(--muted);
+  margin-left: -10px;
+}
+
+.toggle {
+  display: inline-grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  align-self: center;
+}
+
+.toggle svg {
+  width: 12px;
+  height: 12px;
+  transition: transform 0.1s ease;
+}
+
+.open svg {
+  transform: rotate(90deg);
+}
+
+.toggleSpacer {
+  width: 14px;
+  flex: none;
+}
+
+.key {
+  color: var(--fg);
+  cursor: copy;
+}
+
+.key:hover {
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+}
+
+.colon {
+  color: var(--muted);
+  margin-right: 4px;
+}
+
+.preview {
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.count {
+  margin: 0 4px;
+  font-size: 11px;
+}
+
+.value {
+  cursor: copy;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.string {
+  color: var(--better);
+}
+
+.number {
+  color: var(--json-number);
+}
+
+.bool {
+  color: var(--cat-5);
+}
+
+.null {
+  color: var(--muted);
+}
+
+.diffTable {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: auto;
+  font-size: 12px;
+}
+
+.diffHead,
+.diffRow {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.2fr) minmax(120px, 1fr) minmax(120px, 1fr);
+  gap: 12px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border);
+  align-items: baseline;
+}
+
+.diffRow > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.diffHead {
+  background: var(--row);
+  font-size: 10.5px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.diffRow:last-child {
+  border-bottom: 0;
+}
+
+.k_changed {
+  background: color-mix(in srgb, var(--warn-soft) 70%, transparent);
+}
+
+.k_added {
+  background: color-mix(in srgb, var(--diff-ins) 60%, transparent);
+}
+
+.k_removed {
+  background: color-mix(in srgb, var(--diff-del) 60%, transparent);
+}
+
+.k_same {
+  color: var(--muted);
+}
+
+.chg {
+  color: var(--warn-fg);
+}
+
+.add {
+  color: var(--better);
+}
+
+.rem {
+  color: var(--worse);
+}

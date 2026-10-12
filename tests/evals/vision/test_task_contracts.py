@@ -67,7 +67,7 @@ class TestDenseCaptionPerInstanceMetrics:
     def test_avg_has_no_per_instance_value(self):
         response = _response(self.RESULT, scores={"dense_caption_judge": 0.123})
         assert DenseCaptionAvgMetric().compute_instance(response) is None
-        assert DenseCaptionAvgMetric().supports_pairwise_scorer_fallback() is False
+        assert DenseCaptionAvgMetric().supports_scorer_fallback() is False
 
     def test_scorer_fallback_disabled(self):
         # no judge result at all: the poisoned scorer channel must NOT leak through
@@ -87,8 +87,8 @@ class TestDenseCaptionPerInstanceMetrics:
 
     def test_legacy_scale_displays_as_raw(self):
         # 0-100 legacy values must not be re-scaled by the percentage renderer
-        assert _metric("recall").pairwise_display_format() == "raw"
-        assert DenseCaptionAvgMetric().pairwise_display_format() == "raw"
+        assert _metric("recall").display_format() == "raw"
+        assert DenseCaptionAvgMetric().display_format() == "raw"
 
 
 class TestPromptFamilyFieldsAreOptIn:
@@ -237,7 +237,7 @@ class TestSubsetMetricsPerInstance:
         r = self._response({"is_human": False}, scorer.name)
         assert human.compute_instance(r) is None  # augmented row, human metric
         assert aug.compute_instance(r) == 1.0
-        assert human.supports_pairwise_scorer_fallback() is False
+        assert human.supports_scorer_fallback() is False
 
     def test_mmmu_pro_setting(self):
         from olmo_eval.evals.vision.benchmarks.mmmu_pro import MmmuProSettingMetric
@@ -247,7 +247,7 @@ class TestSubsetMetricsPerInstance:
         std = MmmuProSettingMetric(name="standard_10", scorer=scorer, setting="standard10")
         r = self._response({"mmmu_pro_setting": "vision"}, scorer.name)
         assert std.compute_instance(r) is None
-        assert std.supports_pairwise_scorer_fallback() is False
+        assert std.supports_scorer_fallback() is False
 
     def test_charxiv_category_and_invalid_flag(self):
         from olmo_eval.evals.vision.benchmarks.charxiv import (
@@ -264,7 +264,7 @@ class TestSubsetMetricsPerInstance:
         assert n_invalid.compute_instance(invalid) == 1.0
         overall = CharxivScoreMetric(name="score", scorer=scorer, category=None)
         assert overall.compute_instance(invalid) == 0.0
-        assert overall.supports_pairwise_scorer_fallback() is False
+        assert overall.supports_scorer_fallback() is False
 
 
 class TestLazyMultiImageRequests:
@@ -307,7 +307,7 @@ class TestMultiImageSubsetMetricsPerInstance:
         counting = self._response({"task": "Counting"}, scorer.name)
         assert ordering.compute_instance(counting) is None
         assert overall.compute_instance(counting) == 1.0
-        assert ordering.supports_pairwise_scorer_fallback() is False
+        assert ordering.supports_scorer_fallback() is False
 
     def test_count_bucket_metric_scopes_to_its_bucket(self):
         from olmo_eval.evals.vision.scoring.multi_image import MultiImageMcScorer
@@ -319,4 +319,4 @@ class TestMultiImageSubsetMetricsPerInstance:
         r = self._response({"num_images": 4}, scorer.name)
         assert small.compute_instance(r) == 1.0
         assert large.compute_instance(r) is None
-        assert large.supports_pairwise_scorer_fallback() is False
+        assert large.supports_scorer_fallback() is False

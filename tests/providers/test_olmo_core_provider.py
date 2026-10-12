@@ -467,6 +467,30 @@ def test_logprob_encoding_adds_prefix_when_context_tokenizes_empty(
     assert rows[0].num_tokens_all == 3
 
 
+def test_logprob_inputs_record_truncated_prompt_tokens(
+    fake_provider: tuple[OlmoCoreProvider, FakeGenerationModule, FakeTokenizer],
+) -> None:
+    provider, _, _ = fake_provider
+
+    def rows_for(max_length: int | None) -> list:
+        return provider._logprob_inputs_for_request(
+            LMRequest(
+                request_type=RequestType.LOGLIKELIHOOD,
+                prompt="Prompt",
+                continuations=("!",),
+                max_length=max_length,
+            )
+        )
+
+    fits = rows_for(None)
+    assert fits[0].prompt_truncated_tokens == 0
+
+    over = rows_for(1)
+    assert over[0].input_ids == [11]
+    assert over[0].continuation_token_ids == [6]
+    assert over[0].prompt_truncated_tokens == 1
+
+
 def test_stop_text_postprocessing_matches_olmes(
     fake_provider: tuple[OlmoCoreProvider, FakeGenerationModule, FakeTokenizer],
 ) -> None:
@@ -584,6 +608,20 @@ class TestMmOlmoUnpickleShim:
             assert hasattr(first, "_StorageInfo")
         finally:
             self._clear()
+
+
+def test_cached_backend_accepts_every_parent_forward_argument() -> None:
+    """OLMo-core's ``Attention`` passes every backend keyword (``sinks`` since #872), so a
+    parameter missing from the cached backend's ``forward`` fails every multimodal request."""
+    import inspect
+
+    pytest.importorskip("torch")
+    backend = pytest.importorskip("olmo_core.nn.attention.backend")
+    from olmo_eval.inference.providers.olmo_core_vlm.cache import _cached_torch_backend_class
+
+    parent = inspect.signature(backend.TorchAttentionBackend.forward).parameters
+    cached = inspect.signature(_cached_torch_backend_class().forward).parameters
+    assert set(parent) <= set(cached)
 
 
 class TestBuildDecodeAttentionMask:
