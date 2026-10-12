@@ -4,9 +4,10 @@ Standard HELMET (https://github.com/princeton-nlp/HELMET) evaluates seven
 task categories at 4k-128k tokens of context: recall, RAG, re-ranking,
 LongQA, summarization, ICL, and citation (ALCE). All seven are registered
 here. The synthetic recall task (`json_kv`) is additionally extended to 2m
-tokens, calibrated against the Olmo 3 tokenizer; the other categories are
-capped at 128k because their length comes from real documents, fixed-depth
-retrieval, or finite demonstration pools.
+tokens, calibrated against the Olmo 3 tokenizer; the other tasks, including
+recall's RULER tasks, are capped at 128k because their length comes from real
+documents, fixed-depth retrieval, finite demonstration pools, or RULER data
+generated only up to 128k.
 
 Pre-generated and pre-retrieved data lives on the ai2-internal
 `allenai/helmet-plus` Hub dataset; the remaining tasks pull their sources

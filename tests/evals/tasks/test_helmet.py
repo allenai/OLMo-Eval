@@ -721,3 +721,14 @@ def test_helmet_ruler_tasks_render_helmets_prompt(tmp_path, monkeypatch):
     assert budgets == {"niah_mk_2": 50, "niah_mk_3": 100, "niah_mv": 50}
     sources = task.config.to_dict()["task_settings"]["sources"]
     assert sources["ruler_data"].startswith("allenai/ruler_data@")
+
+
+def test_recall_suite_is_json_kv_alone_past_standard_lengths():
+    """The RULER recall tasks stop at 128k, so recall's composition changes there."""
+    import olmo_eval.evals.suites.helmet  # noqa: F401 - triggers registration
+    from olmo_eval.evals.suites.registry import get_suite
+
+    longest = max(STANDARD_CONTEXT_SIZES)
+    assert len(get_suite(f"helmet_recall__{longest}").expanded_tasks) == 4
+    for size in (262144, 524288, 1048576, 2097152):
+        assert get_suite(f"helmet_recall__{size}").expanded_tasks == (f"helmet_json_kv__{size}",)

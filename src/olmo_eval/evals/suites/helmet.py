@@ -17,7 +17,10 @@ Three deliberate differences from `suites/ruler.py`:
    would be a rename of `helmet_recall__*` whose composition silently differs
    from the same suite at shorter lengths -- exactly the thing that turns a
    length sweep into a misleading trend line. Use `helmet_recall__*` for the
-   extended tiers.
+   extended tiers, bearing in mind that it changes composition too: through
+   128k it averages `json_kv` with three RULER needle-in-a-haystack tasks, as
+   HELMET does, and above 128k it is `json_kv` alone, since the RULER data
+   stops at 128k. Compare recall across that boundary with `json_kv` itself.
 
 3. Some HELMET tasks are graded by an LLM judge (`narrativeqa` and both
    summarization tasks), so running them needs a judge configured. Following

@@ -1,15 +1,16 @@
 """HELMET task configurations, covering all seven of HELMET's categories.
 
-Recall (json_kv), RAG (KILT), re-ranking (MS MARCO), LongQA (InfiniteBench,
-NarrativeQA), summarization (InfiniteBench, Multi-LexSum), ICL, and citation
-(ALCE). Only the synthetic recall task extends past standard HELMET's 128k
-ceiling (to 2m, calibrated against the Olmo 3 tokenizer); every other
-category is capped by real documents, fixed retrieval depth, or finite
-demonstration pools.
+Recall (json_kv and three RULER needle-in-a-haystack tasks), RAG (KILT),
+re-ranking (MS MARCO), LongQA (InfiniteBench, NarrativeQA), summarization
+(InfiniteBench, Multi-LexSum), ICL, and citation (ALCE). Only the synthetic
+recall task extends past standard HELMET's 128k ceiling (to 2m, calibrated
+against the Olmo 3 tokenizer); every other category is capped by real
+documents, fixed retrieval depth, or finite demonstration pools.
 
 Length coverage is therefore ragged, and each task declares its own
 `context_sizes`: `json_kv` spans the full 4k-2m range, everything else stops
-at standard HELMET's 128k.
+at standard HELMET's 128k. That includes recall's RULER tasks, so above 128k
+the recall category is `json_kv` alone.
 
 Tasks are generated programmatically from base configurations, following the
 same pattern as `ruler_tasks.py`.
