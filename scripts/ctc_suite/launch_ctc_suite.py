@@ -29,11 +29,21 @@ be padded together). ``full``: batch size ``--full-batch-size`` at <=32k, 1 abov
 several 64k+ rows does not fit); its cost uses the same prefill and a batched decode, so the plan is
 an estimate until a full-attention run is timed.
 
+The r256k rung runs with YaRN by default. Through the chat + doc-marker prompt path its prompts run
+to ~272k tokens, past Qwen3.5's 262,144 positions; scored as-is the provider left-truncates 43-100%
+of them (chat header and instruction cut off), which reads as a fake 256k collapse. So every
+``--yarn-rungs`` cell (default ``r256k``) is packed into its own jobs, which apply YaRN factor 2 to
+the checkpoint's RoPE (``preflight.py``), raise ``max_model_len`` to 524,288 and feed prefill in
+131,072-token chunks (a single forward past 262,144 tokens crashes; the chunked path is exact).
+Every other rung runs unchanged. ``--yarn-rungs ''`` turns this off; ``--fit-window`` replaces it by
+shortening distractor documents instead (the two agreed within noise on every r256k cell of the setA
+pair, 2026-10-03).
+
 Requirements. The checkpoint must be an olmo-core step dir (``config.json`` + ``model_and_optim``);
 the job installs this olmo-eval checkout's commit (so push the branch first) and OLMo-core from
-``--olmo-core-ref`` (which must carry the FLA autotune fix, or every new prompt length re-tunes
-kernels for ~25 s). Qwen3.5 has 262,144 positions: some 256k rows of hotpotqa / outlier /
-qdmatch_nq / rerank are longer and get left-truncated -- quote those cells with that caveat.
+``--olmo-core-ref`` (default ``prasann/landmark``), which must carry the FLA autotune fix (or every
+new prompt length re-tunes kernels for ~25 s) and, for the YaRN rungs, chunked prefill
+(``GenerationConfig.prefill_chunk_size``).
 """
 
 from __future__ import annotations
@@ -131,6 +141,12 @@ DEFAULT_POLICY = "r2k-r32k:300,r64k:100,r128k:100,r256k:100"
 #: Per-row caps on top of the policy, for the rows whose answers list every document (grouping) or
 #: every passage (reorder): hundreds to ~1,400 decoded tokens each at bs=1, the bulk of the cost.
 DEFAULT_ROW_LIMITS = {"ctc_grouping": 100, "ctc_reorder": 100}
+#: Rungs evaluated with YaRN by default, and the settings their jobs get (see the module docstring).
+DEFAULT_YARN_RUNGS = "r256k"
+YARN_FACTOR = 2.0
+YARN_MAX_MODEL_LEN = 524288
+YARN_PREFILL_CHUNK = 131072
+BASE_MAX_MODEL_LEN = 262144
 
 
 @dataclass
@@ -142,6 +158,9 @@ class Cell:
     cost_s: float
     batch_size: int
     shard: tuple | None = None
+    #: evaluated with YaRN (its own jobs). Absent from manifests written before this existed, so
+    #: resubmitting an older run reproduces it unchanged.
+    yarn: bool = False
 
     @property
     def task(self) -> str:
@@ -178,6 +197,7 @@ def plan(
     arm: str,
     full_bs: int,
     row_limits: dict[str, int] | None = None,
+    yarn_rungs: frozenset[str] = frozenset(),
 ) -> list[Cell]:
     from olmo_eval.evals.tasks.ctc_suite import OOD_ROSTER, ROSTER
 
@@ -202,13 +222,24 @@ def plan(
             # batched decode is ~bs/2 x faster per example on an H100 at these sizes (estimate)
             decode = DECODE_S_PER_TOKEN * ans / max(1.0, bs / 2)
             cells.append(
-                Cell(name, row.subset, rung, limit, limit * (PREFILL_S[rung] + decode), bs)
+                Cell(
+                    name,
+                    row.subset,
+                    rung,
+                    limit,
+                    limit * (PREFILL_S[rung] + decode),
+                    bs,
+                    yarn=rung in yarn_rungs,
+                )
             )
     return cells
 
 
 def pack(cells: list[Cell], budget_s: float) -> list[list[Cell]]:
-    """Exact-shard cells over budget, then pack into single-GPU bins (one batch size per bin)."""
+    """
+    Exact-shard cells over budget, then pack into single-GPU bins (one batch size, and YaRN either
+    on or off, per bin).
+    """
     pieces = []
     for c in cells:
         n = max(1, math.ceil(c.cost_s / budget_s))
@@ -216,7 +247,7 @@ def pack(cells: list[Cell], budget_s: float) -> list[list[Cell]]:
             [c]
             if n == 1
             else [
-                Cell(c.row, c.subset, c.rung, c.limit, c.cost_s / n, c.batch_size, (i, n))
+                Cell(c.row, c.subset, c.rung, c.limit, c.cost_s / n, c.batch_size, (i, n), c.yarn)
                 for i in range(n)
             ]
         )
@@ -229,6 +260,7 @@ def pack(cells: list[Cell], budget_s: float) -> list[list[Cell]]:
             for i, b in enumerate(bins)
             if loads[i] + p.cost_s <= budget_s
             and b[0].batch_size == p.batch_size
+            and b[0].yarn == p.yarn
             and all(c.task != p.task for c in b)
         ]
         if ok:
@@ -239,6 +271,23 @@ def pack(cells: list[Cell], budget_s: float) -> list[list[Cell]]:
             bins.append([p])
             loads.append(p.cost_s)
     return bins
+
+
+def bin_settings(args, cells: list[Cell]) -> tuple[float, int, int]:
+    """
+    The ``(rope_yarn, max_model_len, prefill_chunk_size)`` a bin runs with: an explicit
+    ``--rope-yarn`` / ``--max-model-len`` / ``--prefill-chunk-size`` applies to every bin; otherwise
+    YaRN bins get the YaRN settings and all others the base window.
+    """
+    yarn = cells[0].yarn
+    rope = args.rope_yarn if args.rope_yarn is not None else (YARN_FACTOR if yarn else 0.0)
+    max_len = args.max_model_len or (YARN_MAX_MODEL_LEN if yarn else BASE_MAX_MODEL_LEN)
+    chunk = (
+        args.prefill_chunk_size
+        if args.prefill_chunk_size is not None
+        else (YARN_PREFILL_CHUNK if yarn else 0)
+    )
+    return rope, max_len, chunk
 
 
 def job_script(
@@ -317,6 +366,7 @@ def submit(args, bins: list[list[Cell]], only: set[int] | None = None) -> None:
     for i, cells in enumerate(bins):
         if only is not None and i not in only:
             continue
+        rope, max_len, chunk = bin_settings(args, cells)
         cmd, env = job_script(
             args.ckpt,
             cells,
@@ -324,9 +374,9 @@ def submit(args, bins: list[list[Cell]], only: set[int] | None = None) -> None:
             args.tokenizer,
             args.doc_markers,
             args.fit_window,
-            args.rope_yarn,
-            args.max_model_len,
-            args.prefill_chunk_size,
+            rope,
+            max_len,
+            chunk,
         )
         argv = [
             "gantry",
@@ -401,6 +451,7 @@ def submit(args, bins: list[list[Cell]], only: set[int] | None = None) -> None:
         "rope_yarn",
         "max_model_len",
         "prefill_chunk_size",
+        "yarn_rungs",
         "olmo_core_ref",
         "cluster",
         "workspace",
@@ -507,6 +558,12 @@ def resubmit(args) -> None:
         # --hostname is a property of this resubmission (e.g. steering around a bad node)
         if k not in ("jobs", "olmo_eval_branch", "hostname"):
             setattr(args, k, v)
+    # Manifests from before per-rung YaRN record no yarn_rungs, and their cells no yarn flag: they
+    # resubmit with exactly the window settings they were launched with.
+    if "yarn_rungs" not in manifest:
+        args.rope_yarn = manifest.get("rope_yarn", 0.0)
+        args.max_model_len = manifest.get("max_model_len", BASE_MAX_MODEL_LEN)
+        args.prefill_chunk_size = manifest.get("prefill_chunk_size", 0)
     bins = [
         [Cell(**{**c, "shard": tuple(c["shard"]) if c["shard"] else None}) for c in b]
         for b in manifest["jobs"]
@@ -569,27 +626,41 @@ def main() -> None:
         "shards (e.g. setA shards_qwen35_256k); leave off for marker-free training data.",
     )
     ap.add_argument(
+        "--yarn-rungs",
+        default=DEFAULT_YARN_RUNGS,
+        help="comma-separated rungs evaluated with YaRN in their own jobs (factor "
+        f"{YARN_FACTOR:g}, max_model_len {YARN_MAX_MODEL_LEN}, prefill chunks of "
+        f"{YARN_PREFILL_CHUNK}); default '{DEFAULT_YARN_RUNGS}', '' for none. Their prompts exceed "
+        "Qwen3.5's 262,144 positions and are otherwise left-truncated",
+    )
+    ap.add_argument(
         "--fit-window",
         action="store_true",
-        help="shorten distractor documents so every prompt fits --max-model-len untruncated "
-        "(fit_to_window.py; refuses oolong). For the r256k rung, whose prompts run to ~272k",
+        help="instead of YaRN, shorten distractor documents so every prompt fits the base window "
+        "untruncated (fit_to_window.py; refuses oolong). Turns --yarn-rungs off",
     )
     ap.add_argument(
         "--rope-yarn",
         type=float,
-        default=0.0,
-        help="YaRN factor applied to the checkpoint's RoPE (preflight.py); pair with a larger "
-        "--max-model-len, e.g. --rope-yarn 2 --max-model-len 524288. Only for rungs that need it",
+        default=None,
+        help="override: YaRN factor for EVERY job (preflight.py); 0 for none. Default: per rung, "
+        "from --yarn-rungs",
     )
-    ap.add_argument("--max-model-len", type=int, default=262144)
+    ap.add_argument(
+        "--max-model-len",
+        type=int,
+        default=0,
+        help=f"override for every job. Default: {BASE_MAX_MODEL_LEN}, or {YARN_MAX_MODEL_LEN} on "
+        "YaRN jobs",
+    )
     ap.add_argument(
         "--prefill-chunk-size",
         type=int,
-        default=0,
-        help="feed prompts to prefill in slices of this many tokens (OLMo-core "
-        "GenerationConfig.prefill_chunk_size; needs an --olmo-core-ref that has it, e.g. "
-        "prasann/landmark-chunked-prefill). Required past 262,144 tokens on Qwen3.5: the GDN "
-        "chunk kernel's one-shot state overflows int32 there",
+        default=None,
+        help="override for every job: feed prompts to prefill in slices of this many tokens "
+        "(OLMo-core GenerationConfig.prefill_chunk_size); 0 for one shot. Default: "
+        f"{YARN_PREFILL_CHUNK} on YaRN jobs, one shot otherwise. A single forward longer than "
+        "262,144 tokens crashes on Qwen3.5 (Triton illegal memory access); chunking is exact",
     )
     ap.add_argument("--olmo-core-ref", default="prasann/landmark")
     ap.add_argument("--cluster", default="ai2/jupiter-cirrascale-2")
@@ -663,7 +734,12 @@ def main() -> None:
         else:
             row_limits[k] = int(v)
     budget_s = args.budget_hours * 3600 - args.setup_minutes * 60
-    cells = plan(rows, parse_policy(args.policy), args.arm, args.full_batch_size, row_limits)
+    if args.fit_window:
+        args.yarn_rungs = ""  # fitting replaces YaRN
+    yarn_rungs = frozenset(r.strip() for r in args.yarn_rungs.split(",") if r.strip())
+    cells = plan(
+        rows, parse_policy(args.policy), args.arm, args.full_batch_size, row_limits, yarn_rungs
+    )
     bins = pack(cells, budget_s)
     total = sum(c.cost_s for b in bins for c in b)
     print(
@@ -676,11 +752,21 @@ def main() -> None:
     )
     for i, b in enumerate(bins):
         print(
-            f"  job{i:02d} {sum(c.cost_s for c in b) / 60:4.0f} min bs={b[0].batch_size}  "
+            f"  job{i:02d} {sum(c.cost_s for c in b) / 60:4.0f} min bs={b[0].batch_size}"
+            f"{' yarn' if b[0].yarn else ''}  "
             + ", ".join(c.task + (f"[{c.shard[0]}/{c.shard[1]}]" if c.shard else "") for c in b)
         )
     risky = sorted(
-        {c.task for b in bins for c in b if c.rung == "r256k" and c.row in OVERFLOW_256K}
+        {
+            c.task
+            for b in bins
+            for c in b
+            if c.rung == "r256k"
+            and c.row in OVERFLOW_256K
+            and not c.yarn
+            and not args.fit_window
+            and bin_settings(args, b)[1] <= BASE_MAX_MODEL_LEN
+        }
     )
     if risky:
         print(f"  ⚠ left-truncated rows (> 262,144 tokens) in: {', '.join(risky)}")
