@@ -195,10 +195,14 @@ vllm = [
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-# Vendored from the BFCL reference implementation. An instance's attributes
-# after a turn are what a multi-turn prediction is graded against, so these
-# files are kept as they are upstream and are neither linted nor reformatted.
-extend-exclude = ["src/olmo_eval/common/scorers/bfcl/multi_turn/api"]
+# Vendored code kept as it is upstream, so it is neither linted nor reformatted:
+# - BFCL: an instance's attributes after a turn are what a multi-turn prediction
+#   is graded against.
+# - ctc-suite: format/spec code is golden-fixture tested upstream.
+extend-exclude = [
+    "src/olmo_eval/common/scorers/bfcl/multi_turn/api",
+    "src/olmo_eval/evals/tasks/ctc_suite/_vendor",
+]
 
 [tool.ruff.lint]
 select = [
