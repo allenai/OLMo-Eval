@@ -341,6 +341,15 @@ harness = Harness(config)
 outputs = harness.generate(requests)  # No scaffold needed
 ```
 
+**Built-in scaffolds:**
+
+| Scaffold | Loop |
+|----------|------|
+| `openai_agents` | OpenAI Agents SDK: any registered tools, optional context compaction |
+| `vanillux` | One `bash` tool in a persistent shell with the mini-swe-agent prompts: THOUGHT plus exactly one command per step, head/tail output truncation, format-error recovery, and a submit marker to finish. Defaults to 64 steps and sampling at temperature 0.7, top_p 0.95, 16384 max tokens, matching the Vanillux2 agent used for Terminal-Bench |
+| `openhands` | OpenHands SDK agent |
+| `bfcl_multi_turn` | BFCL multi-turn rollouts |
+
 #### Inference Metrics
 
 Harness configurations can include `MetricsConfig` to collect inference performance metrics during evaluation:
@@ -1208,6 +1217,63 @@ uv run olmo-eval external-evals
 
 # Run a built-in external eval
 uv run olmo-eval run-external -e tau2_bench --model llama3.1-8b -a domain=airline -a num_tasks=1
+```
+
+### Terminal-Bench
+
+`terminal_bench_2` runs the [Terminal-Bench 2.1](https://github.com/harbor-framework/terminal-bench-2-1)
+release, pinned by commit in the loader. Each trial starts the task's prebuilt image in its own
+container, with the task's CPU and memory limits applied, runs the agent under the task's
+wall-clock timeout, then injects the task's tests and reads the reward they write. The image is
+left pristine: swe-rex is installed into a private virtualenv without touching the task's
+packages, PATH or environment.
+
+The default scaffold is `vanillux`, a port of the agent tmax uses for its Terminal-Bench numbers.
+`openai_agents` remains available for comparison.
+
+```bash
+# Full run, 5 attempts per task, 8 containers at a time
+uv run olmo-eval run-external -e terminal_bench_2 --model my-model \
+    -a n_attempts=5 -a max_concurrency=8
+
+# Smoke test a few tasks with the reference solutions
+uv run olmo-eval run-external -e terminal_bench_2 --model my-model \
+    -a oracle=true -a task_ids=fix-git,build-cython-ext
+```
+
+| Argument | Default | Meaning |
+|----------|---------|---------|
+| `task_ids` | all | Comma-separated task names |
+| `repo_path` / `repo_ref` | clone at pinned commit | Local checkout, or another git ref |
+| `n_attempts` | 1 | Attempts per task; adds `pass@k`, `pass_rate_std` and `pass_rate_sem` |
+| `max_concurrency` | 1 | Containers running at once |
+| `max_turns` | 64 | Agent steps per trial |
+| `command_timeout` | 120 | Seconds a single command may run |
+| `scaffold` | `vanillux` | `vanillux` or `openai_agents` |
+| `resource_limits` | true | Apply each task's `cpus` and `memory_mb` to the container |
+| `temperature`, `top_p`, `max_tokens` | 0.7, 0.95, 16384 | Sampling for the agent |
+| `oracle` | false | Run each task's reference solution instead of the model |
+
+Metrics: `pass_rate` counts every trial, with errored trials as 0; `pass_rate_adjusted` leaves
+errored trials out; `error_rate` is the share of trials where the harness, not the agent, failed
+(no reward file, verifier timeout, container failure). An agent that runs out of time is still
+verified and counted under `num_agent_timeouts`.
+
+Models with hybrid attention such as Qwen3.5 need vLLM's Triton kernels on hosts without a CUDA
+compiler, and the Qwen3.5 family needs its XML tool parser:
+`-K gdn_prefill_backend=triton -K tool_call_parser=qwen3_xml`. On Beaker, where Podman runs with
+cgroups disabled, pass `-A resource_limits=false`.
+
+#### OpenThoughts-TBLite
+
+`openthoughts_tblite` runs [OpenThoughts-TBLite](https://github.com/open-thoughts/OpenThoughts-TBLite),
+100 difficulty-calibrated tasks in the Terminal-Bench format, through the same harness, agent,
+arguments and metrics. Its tasks ship a Dockerfile instead of a prebuilt image, so each task's
+image is built once per run from its environment directory (bounded by the task's build timeout)
+and cached by content hash; the swe-rex layer and any registry caching apply on top.
+
+```bash
+uv run olmo-eval run-external -e openthoughts_tblite --model my-model -a n_attempts=5
 ```
 
 ### ExternalEvalResult
