@@ -40,11 +40,14 @@ from olmo_eval.common.constants.infrastructure import (
 from olmo_eval.common.repr import hide_unset
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from beaker import Beaker, BeakerExperiment, BeakerGroup
 
 log = logging.getLogger(__name__)
 
 __all__ = [
+    "DEFAULT_WEKA_BUCKETS",
     "BeakerEnvSecret",
     "BeakerWekaBucket",
     "BeakerJobConfig",
@@ -58,6 +61,7 @@ __all__ = [
     "print_experiment_config",
     "resolve_clusters",
     "validate_min_runtime",
+    "weka_buckets_with",
 ]
 
 # Rich console for pretty printing
@@ -322,6 +326,19 @@ class BeakerWekaBucket:
             self.mount = f"/weka/{self.bucket}"
 
 
+DEFAULT_WEKA_BUCKETS: tuple[str, ...] = (
+    "oe-training-default",
+    "oe-eval-default",
+    "oe-adapt-default",
+)
+"""Weka buckets mounted on every eval job."""
+
+
+def weka_buckets_with(extra: Iterable[str] = ()) -> list[BeakerWekaBucket]:
+    """Return the default Weka buckets plus ``extra``, each mounted once at /weka/<bucket>."""
+    return [BeakerWekaBucket(name) for name in dict.fromkeys((*DEFAULT_WEKA_BUCKETS, *extra))]
+
+
 @hide_unset()
 @dataclass
 class BeakerJobConfig:
@@ -387,13 +404,7 @@ class BeakerJobConfig:
     description: str | None = None
 
     # Storage - defaults include common eval buckets
-    weka_buckets: list[BeakerWekaBucket] = field(
-        default_factory=lambda: [
-            BeakerWekaBucket("oe-training-default"),
-            BeakerWekaBucket("oe-eval-default"),
-            BeakerWekaBucket("oe-adapt-default"),
-        ]
-    )
+    weka_buckets: list[BeakerWekaBucket] = field(default_factory=weka_buckets_with)
     nfs: bool = False
 
     # Environment - defaults include HuggingFace cache on Weka

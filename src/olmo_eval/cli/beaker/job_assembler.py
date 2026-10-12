@@ -285,6 +285,7 @@ def assemble_external_eval_job(
     base_url: str | None = None,
     user_env_vars: dict[str, str] | None = None,
     force_download_model: bool = False,
+    weka_buckets: list[str] | None = None,
 ) -> Any:
     """Assemble a BeakerJobConfig for running external evaluations.
 
@@ -309,13 +310,14 @@ def assemble_external_eval_job(
         inject_aws_credentials: Whether to inject AWS credentials.
         inject_gcs_credentials: Whether to inject GCS credentials.
         eval_args: Arguments to pass to external evaluations.
+        weka_buckets: Weka buckets to mount in addition to the defaults.
 
     Returns:
         Configured BeakerJobConfig.
     """
     from uuid import uuid4
 
-    from olmo_eval.launch import BeakerEnvSecret, BeakerJobConfig
+    from olmo_eval.launch import BeakerEnvSecret, BeakerJobConfig, weka_buckets_with
 
     upload_args, upload_env = upload_job_settings(
         upload=upload,
@@ -467,6 +469,7 @@ def assemble_external_eval_job(
         extras=extras,
         provider_packages=provider_packages,
         vllm_isolated_venv=vllm_isolated_venv,
+        weka_buckets=weka_buckets_with(weka_buckets or ()),
     )
 
 
@@ -499,7 +502,7 @@ class JobConfigAssembler:
 
     def assemble(self, exp: ExperimentPlan) -> BeakerJobConfig:
         """Assemble a BeakerJobConfig for an experiment."""
-        from olmo_eval.launch import BeakerEnvSecret, BeakerJobConfig
+        from olmo_eval.launch import BeakerEnvSecret, BeakerJobConfig, weka_buckets_with
 
         command = self._build_command(exp)
 
@@ -675,6 +678,7 @@ class JobConfigAssembler:
             setup_registry_mirror=setup_registry_mirror,
             vllm_isolated_venv=vllm_isolated_venv,
             setup_modal_gcp_secret=setup_modal_gcp_secret,
+            weka_buckets=weka_buckets_with(self.config.weka_buckets),
         )
 
     def _upload_settings(self, exp: ExperimentPlan) -> tuple[list[str], dict[str, str]]:
