@@ -172,10 +172,10 @@ class ResearchQAMetricBase(Metric, ABC):
 
     scorer: type[Scorer] = ResearchQAScorer
 
-    def pairwise_display_format(self) -> str:
+    def display_format(self) -> str:
         return "percentage"
 
-    def pairwise_unit(self) -> str:
+    def metric_unit(self) -> str:
         return "proportion"
 
 
@@ -209,7 +209,7 @@ class CoverageTypeMetric(ResearchQAMetricBase):
             item_count += response_item_count
         return weighted_score / item_count if item_count else 0.0
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False
 
 

@@ -138,7 +138,7 @@ class RecallAtKMetric(Metric):
             return 0.0
         return sum(r.scores.get(self.name, 0.0) for r in responses) / len(responses)
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False
 
 

@@ -8,7 +8,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -25,11 +25,10 @@ from olmo_eval.inference.metrics import (
     VLLMMetricsMonitor,
 )
 from olmo_eval.inference.providers.config import ProviderConfig
-from olmo_eval.runners.common.models import S3Config
 from olmo_eval.runners.processing.utils import generate_experiment_id
 
 if TYPE_CHECKING:
-    from olmo_eval.storage import StorageBackend
+    from olmo_eval.upload import UploadConfig
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +48,7 @@ class ExternalEvalRunner:
         container_runtime: Container runtime to use (docker or podman).
         server_port: Port for the vLLM server (when using local provider).
         eval_args: Arguments to pass to external evaluations.
-        s3_config: S3 configuration for uploading results.
-        storages: List of storage backends for persisting results.
+        upload_config: Dashboard upload settings; None skips the upload.
         experiment_name: Human-readable experiment name.
         experiment_group: Experiment group for grouping related experiments.
         metrics: Configuration for metrics collection on the provider.
@@ -62,8 +60,7 @@ class ExternalEvalRunner:
     container_runtime: str = "podman"
     server_port: int = 8000
     eval_args: dict[str, Any] = field(default_factory=dict)
-    s3_config: S3Config | None = None
-    storages: list[StorageBackend] = field(default_factory=list)
+    upload_config: UploadConfig | None = None
     experiment_name: str | None = None
     experiment_group: str | None = None
     metrics: MetricsConfig | None = None
@@ -253,7 +250,7 @@ class ExternalEvalRunner:
         results: dict[str, ExternalEvalResult],
         total_duration: float,
     ) -> None:
-        """Save combined results to local files, S3, and storage backends.
+        """Write metrics.json, predictions and the manifest, then upload the results.
 
         Args:
             results: Dictionary of evaluation results.
@@ -265,10 +262,10 @@ class ExternalEvalRunner:
         # Generate experiment tracking identifiers
         experiment_id = generate_experiment_id()
         model_config = self.provider_config.to_dict()
-        model_hash = compute_model_hash(model_config) or "unknown"
-        timestamp = datetime.now(UTC).isoformat()
+        model_hash = compute_model_hash(model_config)
+        finished = datetime.now(UTC)
+        timestamp = finished.isoformat()
 
-        # Build results in the format expected by convert_runner_results()
         # Each external eval becomes a "task" with its metrics
         runner_results: dict[str, Any] = {
             "model": self.provider_config.alias or self.provider_config.model,
@@ -312,34 +309,95 @@ class ExternalEvalRunner:
         # Write metrics.json in standard runner format
         self._write_metrics_json(runner_results, experiment_id, total_duration)
 
-        # Upload to S3 if configured
-        s3_location = None
-        if self.s3_config:
-            from olmo_eval.runners.io.storage import upload_to_s3
+        self._write_predictions(runner_results)
+        self._write_manifest(
+            runner_results,
+            experiment_id=experiment_id,
+            model_hash=model_hash,
+            started_at=(finished - timedelta(seconds=total_duration)).isoformat(),
+            finished_at=timestamp,
+            total_duration=total_duration,
+        )
+        if self.upload_config is not None and self.upload_config.enabled:
+            from olmo_eval.upload import upload_results_dir
 
-            s3_location = upload_to_s3(
-                output_dir=self.output_dir,
-                s3_config=self.s3_config,
-                model_name=self.provider_config.alias or self.provider_config.model,
-                model_hash=model_hash,
-                experiment_id=experiment_id,
-            )
+            upload_results_dir(self.output_dir, self.upload_config)
 
-        # Save to storage backends if configured
-        if self.storages:
-            from olmo_eval.runners.io.storage import save_results
+    def _write_predictions(self, runner_results: dict[str, Any]) -> None:
+        """Write each external eval's predictions so they can be uploaded and browsed."""
+        from olmo_eval.runners.io.writers import write_predictions_jsonl
 
-            save_results(
-                results=runner_results,
-                storages=self.storages,
-                s3_config=self.s3_config,
-                experiment_id=experiment_id,
-                model_hash=model_hash,
-                s3_location=s3_location,
+        for eval_name, task_data in runner_results["tasks"].items():
+            predictions = task_data.get("predictions")
+            if not predictions:
+                continue
+            try:
+                write_predictions_jsonl(
+                    self.output_dir,
+                    eval_name,
+                    predictions,
+                    self.provider_config.model,
+                    task_hash=task_data.get("task_hash"),
+                )
+            except (OSError, TypeError, ValueError) as e:
+                logger.warning(f"Could not write predictions for {eval_name}: {e}")
+
+    def _write_manifest(
+        self,
+        runner_results: dict[str, Any],
+        experiment_id: str,
+        model_hash: str | None,
+        started_at: str,
+        finished_at: str,
+        total_duration: float,
+    ) -> None:
+        """Write manifest.json describing this run for the uploader."""
+        from olmo_eval.upload.manifest import (
+            build_manifest,
+            build_model_info,
+            build_run_info,
+            build_task_entry,
+            run_status,
+            write_manifest,
+        )
+        from olmo_eval.upload.metadata import metric_meta_from_metrics
+
+        try:
+            tasks = {
+                name: build_task_entry(
+                    name,
+                    metric_meta_from_metrics((), list(data["metrics"])),
+                    data.get("error") if not data.get("success", True) else None,
+                )
+                for name, data in runner_results["tasks"].items()
+            }
+            errors = [
+                {"task": name, "error": t["error"]} for name, t in tasks.items() if t["error"]
+            ]
+            run = build_run_info(
+                run_id=experiment_id,
+                status=run_status({name: t["error"] for name, t in tasks.items()}),
+                started_at=started_at,
+                finished_at=finished_at,
+                duration_seconds=total_duration,
                 experiment_name=self.experiment_name,
                 experiment_group=self.experiment_group,
-                experiment_duration_seconds=total_duration,
+                task_specs=self.external_eval_names,
+                output_dir=self.output_dir,
+                errors=errors,
+                tags=self.upload_config.tags if self.upload_config else (),
             )
+            model = build_model_info(
+                name=runner_results["model"],
+                path=runner_results["model_path"],
+                model_hash=model_hash,
+                revision=self.provider_config.revision,
+                provider_kind=runner_results["provider"],
+                provider_config=runner_results["model_config"],
+            )
+            write_manifest(self.output_dir, build_manifest(run, model, tasks))
+        except Exception as e:
+            logger.warning(f"Could not write the run manifest: {e}")
 
     def _write_metrics_json(
         self,

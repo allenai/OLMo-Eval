@@ -66,8 +66,8 @@ class NGramCopyingBPBMetricByteAvg(Metric):
             return None
         return -total_logprob / (total_bytes * math.log(2))
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False
 
-    def pairwise_higher_is_better(self) -> bool:
+    def higher_is_better(self) -> bool:
         return False

@@ -409,7 +409,7 @@ class BeakerJobConfig:
     # Result path
     result_path: str = "/results"
 
-    # Optional dependency groups to install at runtime (e.g., ["vllm", "postgres"])
+    # Optional dependency groups to install at runtime (e.g., ["vllm", "s3"])
     extras: list[str] = field(default_factory=list)
 
     # Group assignment - experiment will be added to these groups at creation time
@@ -420,6 +420,10 @@ class BeakerJobConfig:
 
     # GCS access - when True, injects user's GCS credentials as env secret
     inject_gcs_credentials: bool = False
+
+    # Results upload - when True, injects the shared uploader service account key so the
+    # job can upload results to the dashboard's ingest service
+    inject_upload_credentials: bool = False
 
     # Provider-specific dependencies (from provider config)
     provider_packages: list[str] | None = None
@@ -435,9 +439,6 @@ class BeakerJobConfig:
 
     # Registry mirror setup script to run during install (for sandbox jobs)
     setup_registry_mirror: bool = False
-
-    # Run setup_store_secrets during install to configure database access
-    setup_store_secrets: bool = False
 
     # Install vLLM in isolated venv (for server mode to avoid dependency conflicts)
     # When True, vLLM is installed in /opt/vllm-venv and VLLM_PYTHON points to it.
@@ -850,6 +851,41 @@ class BeakerLauncher:
         """Return the user-scoped GitHub token secret name for Gantry clones."""
         return f"{self.beaker.user_name}_GITHUB_TOKEN"
 
+    def beaker_token_secret(self, workspace: str, dry_run: bool) -> str | None:
+        """Return the user's BEAKER_TOKEN secret if it exists in ``workspace``.
+
+        The secret is never created: it holds a personal Beaker token, and it only
+        enables cosmetic status updates. A dry run does not query Beaker.
+        """
+        from olmo_eval.launch.beaker.secrets import beaker_token_secret_name, secret_exists
+
+        name = beaker_token_secret_name(self.beaker.user_name)
+        enable_hint = (
+            f"To enable them, create the secret: beaker secret write --workspace {workspace} "
+            f"{name} <your Beaker token>"
+        )
+        if dry_run:
+            _console.print(
+                f"[dim]BEAKER_TOKEN will be injected from secret {name} if it exists in "
+                f"{workspace}; otherwise job status updates in the Beaker UI are disabled. "
+                "Not checked in a dry run.[/dim]"
+            )
+            return None
+        try:
+            exists = secret_exists(
+                self.beaker, name, workspace if workspace != self._workspace else None
+            )
+        except Exception as e:
+            log.debug(f"Could not check for Beaker secret {name}: {e}")
+            exists = False
+        if exists:
+            return name
+        _console.print(
+            f"[yellow]Warning:[/yellow] Secret {name} not found in {workspace}, so job status "
+            f"updates in the Beaker UI are disabled. {enable_hint}"
+        )
+        return None
+
     def _build_install_cmd(
         self,
         extras: list[str],
@@ -858,7 +894,6 @@ class BeakerLauncher:
         task_packages: list[str] | None = None,
         setup_registry_mirror: bool = False,
         enable_sandbox: bool = False,
-        setup_store_secrets: bool = False,
         vllm_isolated_venv: bool = False,
         setup_modal_gcp_secret: bool = False,
     ) -> str:
@@ -879,7 +914,6 @@ class BeakerLauncher:
             task_packages: Optional list of task-specific packages to install.
             setup_registry_mirror: If True, run setup_dockerio_mirror script with MIRROR_HOSTS.
             enable_sandbox: If True, set up /dev/net/tun and Artifact Registry auth.
-            setup_store_secrets: If True, run setup_store_secrets to configure database access.
             vllm_isolated_venv: If True, install vLLM in isolated venv for server mode.
             setup_modal_gcp_secret: If True, run setup_modal_gcp_secret to create Modal secret.
 
@@ -908,7 +942,7 @@ class BeakerLauncher:
             steps.append(f'if [ -n "$MIRROR_HOSTS" ]; then {script} "$MIRROR_HOSTS"; fi')
 
         # Set up Artifact Registry auth for sandbox image caching
-        # Checks for GOOGLE_APPLICATION_CREDENTIALS and exits gracefully if not set
+        # Skips itself unless GOOGLE_APPLICATION_CREDENTIALS holds a service account key
         if enable_sandbox:
             script = "/gantry-runtime/src/olmo_eval/launch/beaker/scripts/setup_artifact_registry"
             steps.append(f"source {script}")
@@ -1030,11 +1064,6 @@ class BeakerLauncher:
             for pkg in task_packages:
                 steps.append(build_install_command(pkg, constraints))
 
-        # Set up database credentials for --store
-        if setup_store_secrets:
-            script = "/gantry-runtime/src/olmo_eval/launch/beaker/scripts/setup_store_secrets"
-            steps.append(f"source {script}")
-
         # Set up Modal secret for GCP Artifact Registry (Modal sandboxes)
         if setup_modal_gcp_secret:
             script = "/gantry-runtime/src/olmo_eval/launch/beaker/scripts/setup_modal_gcp_secret"
@@ -1075,7 +1104,6 @@ class BeakerLauncher:
             config.task_packages,
             config.setup_registry_mirror,
             config.enable_sandbox,
-            config.setup_store_secrets,
             config.vllm_isolated_venv,
             config.setup_modal_gcp_secret,
         )
@@ -1091,10 +1119,12 @@ class BeakerLauncher:
             (secret.name, secret.secret) for secret in config.env_secrets
         ]
 
-        # Inject BEAKER_TOKEN so the running job can post status updates back to
-        # the workload description via BeakerStatusReporter.
+        # BEAKER_TOKEN lets the running job post status updates to the workload
+        # description via BeakerStatusReporter.
         if not any(name == "BEAKER_TOKEN" for name, _ in env_secrets):
-            env_secrets.append(("BEAKER_TOKEN", f"{self.beaker.user_name}_BEAKER_TOKEN"))
+            token_secret = self.beaker_token_secret(config.workspace, dry_run)
+            if token_secret:
+                env_secrets.append(("BEAKER_TOKEN", token_secret))
 
         # Inject AWS credentials if requested
         if config.inject_aws_credentials:
@@ -1106,11 +1136,26 @@ class BeakerLauncher:
 
         # Inject GCS credentials if requested
         google_credentials_secret: str | None = None
-        if config.inject_gcs_credentials:
+        if config.inject_gcs_credentials and dry_run:
+            # A dry run shows the secret name without writing credentials to Beaker.
+            google_credentials_secret = f"{self.beaker.user_name}_GOOGLE_CREDENTIALS"
+        elif config.inject_gcs_credentials:
             from olmo_eval.launch.beaker.gcs import ensure_gcs_secrets
 
             google_credentials_secret = ensure_gcs_secrets(config.workspace)
             log.info("Injecting GCS credentials for GCS access")
+
+        # Inject the uploader key for results upload. A dry run shows the secret name
+        # without reading the key or writing it to Beaker.
+        if config.inject_upload_credentials:
+            from olmo_eval.launch.beaker.uploader import (
+                UPLOADER_SECRET_NAME,
+                ensure_uploader_secret,
+            )
+            from olmo_eval.upload.config import UPLOAD_CREDENTIALS_ENV
+
+            secret = UPLOADER_SECRET_NAME if dry_run else ensure_uploader_secret(config.workspace)
+            env_secrets.append((UPLOAD_CREDENTIALS_ENV, secret))
 
         # Build env vars as tuples: (name, value)
         env_vars: list[tuple[str, str]] = list(config.env_vars.items())
