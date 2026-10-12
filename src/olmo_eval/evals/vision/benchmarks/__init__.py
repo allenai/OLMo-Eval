@@ -21,10 +21,13 @@ from olmo_eval.evals.vision.benchmarks import mmmu_pro as _mmmu_pro  # noqa: F40
 from olmo_eval.evals.vision.benchmarks import muir_bench as _muir_bench  # noqa: F401
 from olmo_eval.evals.vision.benchmarks import olmocr_bench as _olmocr_bench  # noqa: F401
 from olmo_eval.evals.vision.benchmarks import omnidocbench as _omnidocbench  # noqa: F401
+from olmo_eval.evals.vision.benchmarks import os_world_g as _os_world_g  # noqa: F401
 from olmo_eval.evals.vision.benchmarks import pixmo_count as _pixmo_count  # noqa: F401
 from olmo_eval.evals.vision.benchmarks import pixmo_points_eval as _pixmo_points_eval  # noqa: F401
+from olmo_eval.evals.vision.benchmarks import point_bench as _point_bench  # noqa: F401
 from olmo_eval.evals.vision.benchmarks import real_world_qa as _real_world_qa  # noqa: F401
 from olmo_eval.evals.vision.benchmarks import sa_co_gold as _sa_co_gold  # noqa: F401
+from olmo_eval.evals.vision.benchmarks import screen_spot as _screen_spot  # noqa: F401
 from olmo_eval.evals.vision.benchmarks import text_vqa as _text_vqa  # noqa: F401
 from olmo_eval.evals.vision.benchmarks import vqa2 as _vqa2  # noqa: F401
 

@@ -707,16 +707,17 @@ Five families of image tasks are built in:
 
 | Family | Suite | Tasks |
 | --- | --- | --- |
-| Image-QA | `molmo2_imageqa` | `chart_qa`, `vqa2`, `doc_qa`, `info_qa`, `text_vqa`, `real_world_qa`, `mmmu`, `mmmu_pro`, `math_vista`, `countbench_qa`, `pixmo_count`, `ai2d`, `charxiv_descriptive`, `charxiv_reasoning` |
-| Dense caption | `molmo2_imageqa_caption` | the image-QA tasks plus `dense_caption` |
-| Pointing | `molmo2_pointing` | `pixmo_points_eval`, `sa_co_gold_subset` |
-| Pointing (model prompts) | `molmo2_pointing_mp` | `pixmo_points_eval_mp`, `sa_co_gold_subset_mp`, `sa_co_gold_point_4k_mp` |
-| Multi-image | `molmo2_multiimage` | `muir_bench`, `mmiu`, `blink` |
+| Image-QA | `image_qa` | `chart_qa`, `vqa2`, `doc_qa`, `info_qa`, `text_vqa`, `real_world_qa`, `mmmu`, `mmmu_pro`, `math_vista`, `countbench_qa`, `pixmo_count`, `ai2d`, `charxiv_descriptive`, `charxiv_reasoning` |
+| Dense caption | `image_qa_caption` | the image-QA tasks plus `dense_caption` |
+| Pointing | `pointing` | `pixmo_points_eval`, `sa_co_gold_subset`, `point_bench` |
+| Pointing (model prompts) | `pointing_mp` | `pixmo_points_eval_mp`, `sa_co_gold_subset_mp`, `sa_co_gold_point_4k_mp`, `point_bench` |
+| GUI pointing | `gui_pointing` | `screen_spot_v2`, `screen_spot_pro`, `os_world_g` (and `os_world_g_refined`) |
+| Multi-image | `multi_image` | `muir_bench`, `mmiu`, `blink` |
 | Document OCR, English (default for Molmo2) | `ocr_en` | `olmocr_bench`, `cc_ocr_multi_scene_en`, `omnidocbench_en` |
 | Document OCR, every language | `ocr` | `olmocr_bench`, `cc_ocr_multi_scene`, `omnidocbench` |
 
-Image-QA primary metrics are all 0-1, so `molmo2_imageqa` averages them.
-`dense_caption` reports on a 0-100 scale, so `molmo2_imageqa_caption` is display-only
+Image-QA primary metrics are all 0-1, so `image_qa` averages them.
+`dense_caption` reports on a 0-100 scale, so `image_qa_caption` is display-only
 and computes no cross-task average. Pointing tasks score point-in-mask
 precision/recall/f1 by maximum bipartite matching rather than VQA-style answers,
 which is why they are a separate suite. Multi-image tasks attach a *list* of images
@@ -724,6 +725,23 @@ per instance (capped at 20, matching the mm_olmo eval config) and score multiple
 choice answers by MMMU-style option-letter parsing; besides the primary `all`
 accuracy each task reports per-category breakdowns (MuirBench's 12 task types,
 BLINK's 14 subtasks, MMIU's 7 relationship types plus image-count buckets).
+Point-Bench and the GUI pointing tasks follow each benchmark's official scoring: the GUI tasks count a click
+correct when the first predicted point lands in the target (a box, an OSWorld-G polygon, or
+no point at all for OSWorld-G's refusals) and report accuracy over all instances; Point-Bench
+scores the first point (every point, plus the expected count, for `counting`) against the
+mask and reports the mean of its five category success rates. OSWorld-G reads the official
+annotations and screenshots from xlang-ai/OSWorld-G at a pinned commit (downloaded once to
+`$OLMO_EVAL_DOWNLOAD_CACHE`, default `$HF_HOME/olmo-eval-downloads`); its `accuracy_no_refusal`
+is the number closest to mm_olmo's 510-instance cut. GUI instructions are sent as
+`Click <instruction>`, the prompt of the MolmoPoint paper's runs, and as
+`gui_point: <instruction>` under the stage-1 prompt family.
+
+For stage-1 checkpoints (`-o prompt_templates=none -o system_prompt_style=style_and_length_v2`)
+run `pointing_mp` and `gui_pointing`: under that family they send `pointing: <label>`
+(Point-Bench, which has no bare label, sends `pointing: <query>`) and `gui_point: <instruction>`,
+the turns OLMo-core's stage 1 trains on. `pointing` asks `pointing: Point to <label>.` instead,
+which stage 1 never sees. Evaluate at the checkpoint's trained `max_crops`: pointing answers are
+image coordinates, and more crops than training saw degrade them sharply.
 
 Document-OCR tasks hand the model one page image and grade the markdown (or JSON)
 it writes back, each with its benchmark's official scoring:
@@ -795,7 +813,7 @@ absolute paths on another machine are re-anchored under the current root
 automatically.
 
 Four tasks call the OpenAI API and need `OPENAI_API_KEY`, so the
-`molmo2_imageqa` suite needs it as a whole:
+`image_qa` suite needs it as a whole:
 
 - `math_vista` defaults to the official `gpt-4-0613` answer extraction. Use the
   `math_vista:offline` variant for an API-free heuristic instead.
@@ -811,19 +829,19 @@ and prints the `beaker secret write` command to run.
 
 ```bash
 # Released HuggingFace checkpoint, full image-QA suite
-uv run olmo-eval run -m molmo2-4b -t molmo2_imageqa
+uv run olmo-eval run -m molmo2-4b -t image_qa
 
 # A single benchmark
 uv run olmo-eval run -m molmo2-4b -t mmmu_pro
 
 # Pointing benchmarks
-uv run olmo-eval run -m molmo2-4b -t molmo2_pointing
+uv run olmo-eval run -m molmo2-4b -t pointing
 
 # Multi-image benchmarks
-uv run olmo-eval run -m molmo2-4b -t molmo2_multiimage
+uv run olmo-eval run -m molmo2-4b -t multi_image
 
 # Inspect the suite without loading a model
-uv run olmo-eval suite inspect molmo2_imageqa
+uv run olmo-eval suite inspect image_qa
 ```
 
 The `molmo2-4b` preset runs `allenai/Molmo2-4B` with `dtype=float32`,
@@ -915,7 +933,7 @@ installs the text extra and fails at worker init:
 uv run olmo-eval run \
     --harness default -o provider.kind=olmo_core \
     -m /weka/path/to/multimodal-checkpoint \
-    -t molmo2_imageqa
+    -t image_qa
 ```
 
 `-o` must follow `--harness` or `-t`, so the provider override needs an explicit
@@ -942,7 +960,7 @@ cannot be installed together — and beaker jobs install it automatically for
 uv run olmo-eval beaker launch \
     --harness default -o provider.kind=olmo_core_vlm \
     -m /weka/path/to/multimodal-checkpoint \
-    -t molmo2_imageqa
+    -t image_qa
 ```
 
 Once a release includes the multimodal classes, the extras collapse into one and

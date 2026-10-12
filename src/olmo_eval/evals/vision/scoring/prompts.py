@@ -86,6 +86,10 @@ STYLE_PREFIX_STYLES = ("style_and_length", "style_and_length_v2")
 POINTING_STYLE = "pointing"
 #: The formatter's style name for the counting benchmarks (PixMo-Count, CountBenchQA).
 POINT_COUNT_STYLE = "point_count"
+#: Style for GUI click instructions (ScreenSpot, OSWorld-G): OLMo-core's stage 1 trains
+#: MolmoPoint-GUISyn intents as ``gui_point: <instruction>``, kept apart from ``pointing:``,
+#: which is always followed by an object name.
+GUI_POINT_STYLE = "gui_point"
 
 
 def pointing_rng(index: int) -> np.random.RandomState:
