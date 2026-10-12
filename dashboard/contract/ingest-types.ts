@@ -566,7 +566,7 @@ export interface SuiteResultIn {
     /** Direct children from the registered Suite definition (or the contributing tasks when unregistered). */
     children: SuiteChildIn[];
     metrics: NestedMetrics;
-    /** "primary_score:average" for olmo-eval suites. */
+    /** Suite primary metric, such as primary_score:average or primary_score:companion. */
     primary_metric: string | null;
     /** Suite primary score, null for display_only/none. */
     score: number | null;

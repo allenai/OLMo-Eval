@@ -195,10 +195,12 @@ register(Suite(
 ))
 
 # With scores of 0.60 (in) and 0.45 (out):
-# primary_score: reference 0.60, companion 0.45, gap -0.15 (the suite's primary)
+# primary_score: reference 0.60, companion 0.45 (the suite's primary), gap -0.15
 ```
 
 A gap suite is omitted unless both tasks scored on the same primary metric, and it cannot be nested in another suite.
+
+The held-out companion score is the value to rank and optimize. The gap is a diagnostic guard, shown in percentage points in the log summary; reducing the reference score never improves the suite's primary score.
 
 ### Formatters
 

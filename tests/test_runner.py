@@ -1293,7 +1293,7 @@ class TestGapSuiteAggregation:
         assert scores["reference"] == pytest.approx(0.6)
         assert scores["companion"] == pytest.approx(0.45)
         assert scores["gap"] == pytest.approx(-0.15)
-        assert result["primary_metric"] == "primary_score:gap"
+        assert result["primary_metric"] == "primary_score:companion"
         assert result["aggregation"] == "gap"
         assert result["reference_task"] == "task_in"
         assert result["companion_task"] == "task_out"
@@ -1346,7 +1346,9 @@ class TestGapSuiteAggregation:
 
         assert "task_in" in captured
         assert "task_out" in captured
-        assert "-0.1500" in captured
+        assert "companion" in captured
+        assert "-15.00" in captured
+        assert "pp)" in captured
 
 
 class TestGetPrimaryMetric:

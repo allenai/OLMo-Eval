@@ -82,6 +82,10 @@ def score_suite(
     }
     n_inst = {n: int(tr["num_instances"] or 0) for n, tr in present.items()}
     score = aggregate(node, leaf_scores, n_inst)
+    if node.aggregation == "gap" and scores is None:
+        metrics = {tr.get("primary_metric") for tr in present.values()}
+        if len(metrics) != 1 or None in metrics:
+            score = None
     stderr = None
     if score is not None and node.aggregation not in NO_SCORE_AGGREGATIONS:
         scored = {n for n, v in leaf_scores.items() if v is not None}

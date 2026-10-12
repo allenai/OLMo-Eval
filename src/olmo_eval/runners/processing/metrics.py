@@ -322,9 +322,12 @@ def log_summary(results: dict[str, Any], multi_model: bool = False) -> None:
         if error:
             table.add_row(name, "[red]Failed[/red]", instances, metric_name, str(error))
         elif primary:
-            table.add_row(
-                name, "[green]Success[/green]", instances, metric_name, f"{primary[1]:.4f}"
-            )
+            result = f"{primary[1]:.4f}"
+            if task_data.get("aggregation") == "gap":
+                gap = metrics.get("primary_score", {}).get("gap")
+                if gap is not None:
+                    result += f" (gap {gap * 100:+.2f} pp)"
+            table.add_row(name, "[green]Success[/green]", instances, metric_name, result)
         else:
             table.add_row(name, "[green]Success[/green]", instances, metric_name, "-")
 

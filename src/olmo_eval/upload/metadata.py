@@ -176,7 +176,12 @@ def clean_metrics(metrics: Any) -> dict[str, dict[str, float | None]]:
 def _suite_result(raw_name: str, data: Mapping[str, Any]) -> dict[str, Any]:
     name = strip_priority(raw_name)
     metrics = clean_metrics(data.get("metrics"))
-    score = metrics.get("primary_score", {}).get("average")
+    primary = data.get("primary_metric")
+    if isinstance(primary, str) and ":" in primary:
+        metric, scorer = primary.rsplit(":", 1)
+        score = metrics.get(metric, {}).get(scorer)
+    else:
+        score = metrics.get("primary_score", {}).get("average")
     parent = data.get("parent_suite")
     num_tasks = data.get("num_tasks")
     return {

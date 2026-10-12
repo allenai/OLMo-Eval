@@ -37,7 +37,8 @@ class AggregationStrategy(StrEnum):
         AVERAGE_OF_AVERAGES: Average over child suite averages.
         DISPLAY_ONLY: Display child results without computing suite average.
         GAP: Exactly two tasks, a reference then a companion. Reports each
-            task's primary score and the companion minus the reference, or no
+            task's primary score and the companion minus the reference, with the
+            companion as the suite's primary score. Reports no
             aggregate unless both tasks scored on the same primary metric.
     """
 

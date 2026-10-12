@@ -97,9 +97,15 @@ def leaf_weights(
     - average_of_averages: equal weight for each direct child with a present leaf. A child suite
       spreads its share over its own leaves, by instance count when it is weighted_average and
       equally otherwise.
+    - gap: the companion task alone, requiring both tasks to be scored.
     """
     if node.type == "task":
         return {node.name: 1.0} if node.name in present else {}
+    if node.aggregation == "gap":
+        names = leaves(node)
+        if len(names) != 2 or not set(names).issubset(present):
+            return {}
+        return {names[1]: 1.0}
     if node.aggregation != "average_of_averages":
         return _flat_weights(node, n_instances, present)
     child_weights = []

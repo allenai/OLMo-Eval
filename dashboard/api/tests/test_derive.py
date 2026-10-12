@@ -197,3 +197,34 @@ def test_quantile_box_uses_mean_when_sent() -> None:
     assert box is not None and box.mean == 3.0
     box = _quantile_box({**q, "mean": 3.5})
     assert box is not None and box.mean == 3.5
+
+
+def test_gap_suite_ranks_by_companion_and_uses_its_uncertainty() -> None:
+    from olmo_eval_api.services.read_suites import score_suite
+
+    tree = build_tree(
+        "omega:dev",
+        {"omega:dev": ("gap", [{"type": "task", "name": "in"}, {"type": "task", "name": "out"}])},
+    )
+    assert aggregate(tree, {"in": 0.6, "out": 0.45}, {}) == 0.45
+    assert aggregate(tree, {"in": 0.0, "out": 0.0}, {}) == 0.0
+    assert aggregate(tree, {"in": 0.1, "out": 0.45}, {}) == 0.45
+    assert aggregate(tree, {"in": None, "out": 0.45}, {}) is None
+    assert aggregate(tree, {"in": 0.6}, {}) is None
+    weights = leaf_weights(tree, {}, {"in", "out"})
+    assert weights == {"out": 1.0}
+    assert propagate_stderr(weights, {"in": 0.3, "out": 0.02}) == 0.02
+    task_results = {
+        name: {
+            "score": score,
+            "stderr": 0.02,
+            "num_instances": 500,
+            "display_format": "percent",
+            "higher_is_better": True,
+            "primary_metric": "exact_match:exact_match",
+        }
+        for name, score in (("in", 0.6), ("out", 0.45))
+    }
+    assert score_suite(tree, task_results).score == 0.45
+    task_results["in"]["primary_metric"] = "exact_match_flex:exact_match_flex"
+    assert score_suite(tree, task_results).score is None

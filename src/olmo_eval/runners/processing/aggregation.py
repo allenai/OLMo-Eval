@@ -175,7 +175,7 @@ def _compute_gap(
         "reference_task": reference_spec,
         "companion_task": companion_spec,
         "scored_metric": reference_metric,
-        "primary_metric": "primary_score:gap",
+        "primary_metric": "primary_score:companion",
     }
 
 

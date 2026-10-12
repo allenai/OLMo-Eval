@@ -1542,7 +1542,7 @@
           ]
         },
         "primary_metric": {
-          "description": "\"primary_score:average\" for olmo-eval suites.",
+          "description": "Suite primary metric, such as primary_score:average or primary_score:companion.",
           "type": [
             "string",
             "null"
