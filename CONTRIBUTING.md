@@ -86,17 +86,15 @@ missing registration.
 
 ### Task identity
 
-`TaskConfig.to_dict()` in `evals/tasks/common/base.py` is the stored task configuration
-and the source of the task hash.
+A task's serialized configuration (`TaskConfig.to_dict()`) is what gets stored with its
+results and hashed to identify it.
 
-- Every task setting that changes requests or scores must reach `to_dict()`: prompt
-  templates and styles, formatter and scorer settings, few-shot sources, and judge model,
-  reasoning effort, and token budget. Otherwise two different runs share a hash and
-  artifact name. Don't read output-affecting settings from environment variables at
-  scoring time.
-- A new optional field must leave existing hashes unchanged when unused. Follow the
-  conditional serialization used for `prompt_templates`, `strip_thinking`, and the judge
-  settings, and test both that changing the field changes the hash and that an unrelated
+- Every task setting that changes requests or scores must be part of that serialized
+  configuration, including prompt, formatter, scorer, few-shot, and judge settings.
+  Otherwise two different runs share a hash and artifact name. Don't read
+  output-affecting settings from environment variables at scoring time.
+- A new optional field must leave existing hashes unchanged when unused, so serialize it
+  only when set. Test both that changing the field changes the hash and that an unrelated
   existing task keeps its hash.
 - Pin a new dataset's `revision=` when the task is introduced, and pin judge models to
   dated snapshots. Adding a pin later changes the task's identity after results exist.
@@ -113,8 +111,8 @@ and the source of the task hash.
   token budget, extraction, normalization, and aggregation. If settings come from a
   differently named reference configuration, name the variant after that regime.
 - Keep reference bugs under the parity name and put corrections in a new variant.
-- Put prompt suffixes in formatter configuration where the formatter supports it (for
-  example `ChatFormatter(user_template=...)`), not string concatenation in `process_doc`.
+- Put prompt suffixes in formatter configuration where the formatter supports it, not
+  string concatenation in `process_doc`.
 - Compare requests and per-instance scores as well as aggregates, and report our result
   beside the reference under the same model and regime where possible. Say precisely
   whether prompt, code, or numerical parity was checked. A mock run or a similar score
@@ -129,17 +127,16 @@ and the source of the task hash.
   the raw response preserved. Catch narrowly when the recovery is defined.
 - Missing logprobs are never logprob zero. Don't use sentinel scores such as `-1` or NaN
   without an explicit error. A task with no scored responses must fail the run.
-- Diagnostics must reach saved predictions. `build_predictions` in
-  `runners/io/builders.py` copies specific fields, not arbitrary metadata, so check the
-  predictions file for `answer_format_correct`, judge results, and raw output.
-- `Metric.compute_instance()` defaults to the scorer's value. Override it when the metric
-  means something different per instance, and return `None` for out-of-scope instances.
-  Check saved per-instance values as well as the aggregate.
+- Diagnostics such as format correctness, judge results, and raw output must reach saved
+  predictions. Arbitrary instance metadata is not copied automatically, so check the
+  predictions file, not just the logs.
+- A metric whose per-instance value differs from its scorer's value must say so
+  explicitly, and instances outside the metric's scope should have no value. Check saved
+  per-instance values as well as the aggregate.
 - Bounded quality metrics such as accuracy and F1 use a 0-1 scale. Bits per byte and
   perplexity keep their native units.
-- Before writing a scorer, formatter, or extractor, check `MultipleChoiceScorer` (set
-  `answer_extractor`), `MCQAChatFormatter`, `LogprobMCAccuracyMetric`, `evals/extract/`,
-  and `common/scorers/`. Shared extraction goes in `evals/extract/` and its `__all__`.
+- Before writing a scorer, formatter, metric, or extractor, look for an existing one in
+  `common/` and `evals/extract/`. Shared extraction belongs in `evals/extract/`.
 - Test extractors against negative numbers, thousands separators, malformed answers, and
   answers inside `<think>` traces. Treat `num_fewshot=0` as a real value (`is None` means
   unset), keep explicit token budgets within the model's context, and don't let a
@@ -150,8 +147,8 @@ and the source of the task hash.
 - `SamplingParams` and `LMRequest` are shared by every provider. A change must work for
   `vllm`, `vllm_server`, `hf`, `litellm`, `olmo_core`, and the vision providers, or state
   and validate a narrower scope.
-- A new provider kind goes in `ProviderKind` and in every allowlist; search for an existing
-  kind, including `_GPU_PROVIDERS` and `_SEQUENTIAL_ONLY`.
+- A new provider kind must be added everywhere existing kinds are enumerated; search for
+  an existing kind's name.
 - Don't import CUDA-only or optional packages at module import time in shared code. Keep
   heavy or side-effectful imports, such as downloads, inside the code that needs them.
 - Deep-copy presets before applying overrides. Keep multiprocessing payloads small and
@@ -160,8 +157,10 @@ and the source of the task hash.
 - Schema changes ship with a migration in the right chain (`alembic/results` or
   `alembic/metrics`), each chain keeps a single head, and the PR tells users to run
   `make db-upgrade`.
-- Don't put Ai2-specific paths, workspaces, or bucket names in source defaults; the
-  repository is public.
+- Beaker and Ai2 infrastructure are the supported way to run remotely, and Ai2 defaults
+  are fine. Keep credentials, personal values (an individual's image, workspace, or
+  secret names), and internal-only URLs out of source, and keep deployment values
+  configurable where that is cheap.
 
 ### Code and tests
 

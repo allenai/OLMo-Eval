@@ -566,33 +566,24 @@ metric such as `AccuracyMetric(scorer=ExactMatchScorer)`.
 
 ### TaskConfig Reference
 
+Commonly used fields. `TaskConfig` in `src/olmo_eval/evals/tasks/common/base.py`
+documents the rest.
+
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `name` | `str` | Required | Task identifier used in CLI |
 | `data_source` | `DataSource \| str \| None` | `None` | Dataset source (HuggingFace, S3, GCS, local, or URI string) |
-| `fewshot_source` | `DataSource \| str \| None` | `None` | Optional separate source for few-shot examples |
 | `formatter` | `Formatter \| None` | `None` | Request formatter |
 | `metrics` | `tuple[Metric, ...]` | `()` | Evaluation metrics (scorers are inferred from metrics) |
 | `num_fewshot` | `int` | `0` | Number of few-shot examples |
-| `fewshot_seed` | `int` | `42` | Random seed for few-shot selection |
 | `limit` | `int \| None` | `None` | Max instances to evaluate |
-| `seed` | `int` | `42` | General random seed for task |
 | `split` | `Split` | `Split.TEST` | Dataset split to use |
 | `primary_metric` | `MetricName \| Metric \| None` | `None` | Primary metric for ranking (defaults to single metric if only one) |
 | `sampling_params` | `SamplingParams \| None` | `None` | Default sampling parameters for this task |
-| `output_score_aggregation` | `OutputScoreAggregation` | `MAX` | How scores from multiple outputs per instance combine |
-| `max_length` | `int \| None` | `None` | Max prompt tokens for log-likelihood requests; longer prompts are left-truncated |
 | `answer_extractor` | `Callable[[str], str] \| None` | `None` | Function applied to output text by the default `extract_answer` |
 | `strip_thinking` | `bool` | `False` | Drop `<think>...</think>` traces before scoring |
 | `dependencies` | `list[str] \| None` | `None` | Runtime packages to install (e.g., `["pkg==1.0"]`) |
-| `sandbox_env` | `SandboxEnv \| None` | `None` | Sandbox environment for code-execution scoring |
-| `sandbox_allocation_weight` | `float` | `1.0` | Scheduler hint for sharing sandbox capacity |
-| `required_secrets` | `tuple[str, ...]` | `()` | Environment variables the task needs at runtime, such as a judge API key |
 | `judge_model` | `str \| None` | `None` | Judge model for LLM-as-judge scoring |
-| `judge_reasoning_effort` | `str \| None` | `None` | Judge reasoning effort |
-| `judge_max_tokens` | `int \| None` | `None` | Judge token budget |
-| `prompt_templates` | `str \| None` | `None` | Prompt form for tasks that build prompts from a bare label (vision tasks) |
-| `system_prompt_style` | `str \| None` | `None` | System prompt style for those tasks |
 
 ### Data Sources
 
@@ -1287,33 +1278,20 @@ config = SandboxConfig(
 
 ### SandboxConfig Fields
 
+Commonly used fields. `SandboxConfig` in `src/olmo_eval/harness/sandbox/config.py`
+documents the rest, including Modal and SWE-ReX options.
+
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `image` | `str` | Required | Container image |
 | `mode` | `SandboxMode` | Required | `LOCAL`, `DOCKER`, or `MODAL` |
 | `capabilities` | `frozenset[str]` | `Capability.DEFAULT` | Capabilities this sandbox provides, such as `Capability.BASH` or `Capability.PYTHON` |
 | `instances` | `int \| None` | `None` | Executors to create; `None` lets the caller allocate capacity, otherwise one executor |
-| `max_concurrency` | `int` | `4` | Concurrent operations per executor |
-| `min_instances` | `int \| None` | `None` | Executors that must start successfully; `None` requires all |
 | `container_runtime` | `str` | `"podman"` | `"docker"` or `"podman"` |
-| `startup_timeout` | `float` | `60.0` | Container startup timeout (seconds) |
 | `command_timeout` | `float` | `30.0` | Default timeout per command (seconds) |
-| `remove_container` | `bool` | `True` | Remove the container after use |
 | `working_dir` | `str` | `"/workspace"` | Working directory in the container |
 | `environment` | `tuple[tuple[str, str], ...]` | `()` | Environment variables as `(name, value)` pairs |
 | `volumes` | `tuple[tuple[str, str], ...]` | `()` | Volume mounts as `(host_path, container_path)` pairs |
-| `modal_sandbox_kwargs` | `dict \| None` | `None` | Extra Modal sandbox options |
-| `runtime_timeout` | `float` | `3600.0` | Timeout for individual Modal runtime requests (seconds) |
-| `deployment_timeout` | `float` | `21600` | Maximum lifetime of a Modal sandbox (seconds) |
-| `required_secrets` | `tuple[str, ...]` | `()` | Environment variables that must be set |
-| `docker_args` | `tuple[str, ...]` | `()` | Additional Docker/Podman arguments |
-| `log_dir` | `str \| None` | `None` | Directory for container logs |
-| `exec_shell` | `tuple[str, ...] \| None` | `None` | Custom shell for command execution |
-| `enable_diagnostics` | `bool` | `True` | Run the background diagnostics monitor |
-| `inject_swerex` | `bool` | `False` | Build a derived image with SWE-ReX preinstalled |
-| `dockerfile_extra` | `tuple[str, ...]` | `()` | Extra Dockerfile commands for derived images |
-| `image_pull` | `str \| None` | `None` | SWE-ReX image pull policy: `"never"`, `"missing"`, or `"always"` |
-| `registry_auth` | `RegistryAuth \| None` | `None` | Private registry credentials (Modal only) |
 
 ### Using SandboxManager
 

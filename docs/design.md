@@ -122,5 +122,7 @@ when a pin can be lifted. GPU-only dependencies are gated by platform markers so
 repository installs and unit-tests on macOS. Beaker jobs run from a git checkout of a
 pushed commit inside a recorded image.
 
-The repository is public. Defaults in source are generic; deployment-specific values such
-as workspaces, buckets, and cluster paths come from configuration.
+olmo-eval is built for Ai2's model development, and Beaker and Ai2 infrastructure are its
+supported way to run remotely. The source is public so others can use it, but it is not
+designed around other deployments. Credentials, personal values, and internal-only URLs
+stay out of source, and deployment values stay configurable where that is cheap.

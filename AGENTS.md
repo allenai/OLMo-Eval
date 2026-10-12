@@ -61,7 +61,9 @@ uv run pytest tests/ --ignore=tests/integration -v
 - **Parity.** Match the cited reference exactly; keep reference bugs under the parity name
   and put fixes in a new variant.
 - **Boundaries.** Tasks own the measurement; harnesses own execution. Tasks don't import
-  suites or depend on Beaker. No Ai2-specific defaults in source.
+  suites or depend on Beaker. Ai2 infrastructure defaults are fine; credentials,
+  personal values (an individual's image, workspace, or secret names), and internal-only
+  URLs are not.
 
 ## Common mistakes
 
