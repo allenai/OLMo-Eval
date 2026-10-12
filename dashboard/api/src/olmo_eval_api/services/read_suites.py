@@ -64,11 +64,13 @@ def score_suite(
     trs: Mapping[str, Mapping[Any, Any]],
     scores: Mapping[str, float | None] | None = None,
     stderrs: Mapping[str, float | None] | None = None,
+    metric_keys: Mapping[str, str | None] | None = None,
 ) -> SuiteScore:
     """Aggregate a subject's task results over a suite tree.
 
     ``scores``/``stderrs`` override the task results' primary score and stderr (used for a
-    non-primary metric).
+    selected metric). ``metric_keys`` identifies each selected metric so gap
+    suites can verify that both tasks report the same one.
     """
     names = leaves(node)
     present = {n: trs[n] for n in names if n in trs}
@@ -82,8 +84,12 @@ def score_suite(
     }
     n_inst = {n: int(tr["num_instances"] or 0) for n, tr in present.items()}
     score = aggregate(node, leaf_scores, n_inst)
-    if node.aggregation == "gap" and scores is None:
-        metrics = {tr.get("primary_metric") for tr in present.values()}
+    if node.aggregation == "gap":
+        metrics = {
+            metric_keys.get(name) if metric_keys is not None else tr.get("primary_metric")
+            for name, tr in present.items()
+            if leaf_scores[name] is not None
+        }
         if len(metrics) != 1 or None in metrics:
             score = None
     stderr = None

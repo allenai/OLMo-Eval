@@ -242,7 +242,11 @@ async def compare_matrix(
                 )
             else:
                 assert spec.node is not None
-                out_rows.append(_matrix_suite_row(spec, subjects, baseline, sides, body, stats))
+                out_rows.append(
+                    _matrix_suite_row(
+                        spec, subjects, baseline, sides, body, stats, metric_keys=metric_keys
+                    )
+                )
 
     # Bootstraps are CPU-bound; a worker thread keeps the event loop serving other requests.
     await asyncio.to_thread(build_rows)
@@ -373,6 +377,8 @@ def _matrix_suite_row(
     sides: Mapping[str, Mapping[str, Side | None]],
     body: a.MatrixRequest,
     stats: Any,
+    *,
+    metric_keys: Mapping[str, str | None] | None = None,
 ) -> a.MatrixRow:
     node = spec.node
     assert node is not None
@@ -386,11 +392,11 @@ def _matrix_suite_row(
                 sd = sides.get(n, {}).get(s.key)
                 scores[n] = sd.score if sd is not None else None
                 stderrs[n] = sd.stderr if sd is not None else None
-        results[s.key] = score_suite(node, s.trs, scores, stderrs)
+        results[s.key] = score_suite(node, s.trs, scores, stderrs, metric_keys=metric_keys)
     hib_set = {r.higher_is_better for r in results.values() if r.present}
     hib = hib_set.pop() if len(hib_set) == 1 else None
     deltas: dict[str, a.DeltaStats] = {}
-    if baseline is not None:
+    if baseline is not None and results[baseline.key].score is not None:
         others = [s.key for s in subjects if s.key != baseline.key]
         tasks = [(n, {k: v for k, v in sides.get(n, {}).items() if v is not None}) for n in names]
         n_inst = {n: int(baseline.trs[n]["num_instances"] or 0) for n in names if n in baseline.trs}
@@ -406,6 +412,8 @@ def _matrix_suite_row(
         base_score = results[baseline.key].score
         for k in others:
             sc = results[k].score
+            if sc is None:
+                continue
             corpus = sc - base_score if sc is not None and base_score is not None else None
             deltas[k] = accumulator_delta(acc[(k, baseline.key)], stats, corpus, hib)
     cells = []

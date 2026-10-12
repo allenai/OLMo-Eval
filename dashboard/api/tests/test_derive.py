@@ -237,3 +237,57 @@ def test_gap_suite_ranks_by_companion_and_uses_its_uncertainty() -> None:
     assert score_suite(tree, task_results).score == 0.45
     task_results["in"]["primary_metric"] = "exact_match_flex:exact_match_flex"
     assert score_suite(tree, task_results).score is None
+    overrides = {"in": 0.6, "out": 0.45}
+    assert score_suite(tree, task_results, overrides).score is None
+    assert (
+        score_suite(
+            tree,
+            task_results,
+            overrides,
+            metric_keys={"in": "exact_match:exact_match", "out": "exact_match:exact_match"},
+        ).score
+        == 0.45
+    )
+
+
+def test_gap_matrix_overrides_validate_metrics_before_scores_and_deltas() -> None:
+    from olmo_eval_api.routers.api.compare import RowSpec, _matrix_suite_row
+    from olmo_eval_api.schemas.api import MatrixRequest
+    from olmo_eval_api.services.subjects import Subject
+    from olmo_eval_api.stats.paired import Side
+
+    node = build_tree(
+        "pair", {"pair": ("gap", [{"type": "task", "name": "in"}, {"type": "task", "name": "out"}])}
+    )
+    subject = Subject(
+        key="r:model001",
+        kind="run",
+        model={},
+        run={"run_id": "model001"},
+        trs={
+            name: {
+                "score": score,
+                "stderr": 0.02,
+                "num_instances": 500,
+                "display_format": "percent",
+                "higher_is_better": True,
+                "primary_metric": metric,
+            }
+            for name, score, metric in (("in", 0.6, "strict"), ("out", 0.45, "flex"))
+        },
+    )
+    sides = {
+        name: {subject.key: Side(name, "hash", tr["score"], 0.02, False)}
+        for name, tr in subject.trs.items()
+    }
+    spec = RowSpec("suite:pair", "suite", "pair", 0, None, "gap", node)
+    body = MatrixRequest(subjects=[subject.key], scope="suite:pair", metric="primary")
+    row = _matrix_suite_row(
+        spec, [subject], subject, sides, body, None, metric_keys={"in": "strict", "out": "flex"}
+    )
+    assert row.cells[0].score is None
+    assert row.cells[0].delta is None
+    row = _matrix_suite_row(
+        spec, [subject], None, sides, body, None, metric_keys={"in": "strict", "out": "strict"}
+    )
+    assert row.cells[0].score == 0.45
