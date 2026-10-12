@@ -1,0 +1,6526 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "ActivityItem": {
+      "additionalProperties": false,
+      "properties": {
+        "created_at": {
+          "$ref": "#/definitions/DateTime"
+        },
+        "failure_reason": {
+          "description": "First task error message when any task failed.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "key": {
+          "description": "launch_id, or \"run:<run_id>\" for runs without a launch.",
+          "type": "string"
+        },
+        "launch_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "n_failed_tasks": {
+          "$ref": "#/definitions/Count"
+        },
+        "n_tasks": {
+          "$ref": "#/definitions/Count"
+        },
+        "runs": {
+          "items": {
+            "$ref": "#/definitions/RunSummary"
+          },
+          "type": "array"
+        },
+        "status": {
+          "$ref": "#/definitions/RunStatus",
+          "description": "Worst status among the runs (failed > partial > running > complete)."
+        },
+        "user": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "key",
+        "launch_id",
+        "user",
+        "created_at",
+        "runs",
+        "n_tasks",
+        "n_failed_tasks",
+        "status",
+        "failure_reason"
+      ],
+      "type": "object"
+    },
+    "ActivityResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/definitions/ActivityItem"
+          },
+          "type": "array"
+        },
+        "next_cursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "items",
+        "next_cursor"
+      ],
+      "type": "object"
+    },
+    "ArtifactKind": {
+      "enum": [
+        "metrics",
+        "manifest",
+        "predictions",
+        "requests",
+        "inference_metrics",
+        "logs",
+        "traces",
+        "other"
+      ],
+      "type": "string"
+    },
+    "ArtifactRow": {
+      "additionalProperties": false,
+      "properties": {
+        "console_url": {
+          "type": "string"
+        },
+        "gs_uri": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/definitions/ArtifactKind"
+        },
+        "path": {
+          "type": "string"
+        },
+        "size_bytes": {
+          "$ref": "#/definitions/Count"
+        },
+        "task_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "updated_at": {
+          "$ref": "#/definitions/DateTime"
+        },
+        "uploaded": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "path",
+        "kind",
+        "task_name",
+        "size_bytes",
+        "uploaded",
+        "updated_at",
+        "gs_uri",
+        "console_url"
+      ],
+      "type": "object"
+    },
+    "ArtifactsResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "beaker": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/BeakerDetail"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "gcs_console": {
+          "type": "string"
+        },
+        "gcs_prefix": {
+          "type": "string"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/definitions/ArtifactRow"
+          },
+          "type": "array"
+        },
+        "links": {
+          "$ref": "#/definitions/RunLinks"
+        },
+        "run_id": {
+          "$ref": "#/definitions/RunId"
+        }
+      },
+      "required": [
+        "run_id",
+        "gcs_prefix",
+        "gcs_console",
+        "items",
+        "beaker",
+        "links"
+      ],
+      "type": "object"
+    },
+    "BaselineCell": {
+      "additionalProperties": false,
+      "properties": {
+        "contingency": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Contingency"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Null for unbounded metrics or when instances do not pair."
+        },
+        "delta": {
+          "$ref": "#/definitions/DeltaStats"
+        },
+        "metrics": {
+          "$ref": "#/definitions/FlatMetrics"
+        },
+        "n": {
+          "$ref": "#/definitions/Count"
+        },
+        "run_id": {
+          "$ref": "#/definitions/RunId"
+        },
+        "score": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "stderr": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "task_hash": {
+          "type": "string"
+        },
+        "task_result_id": {
+          "$ref": "#/definitions/TaskResultId"
+        }
+      },
+      "required": [
+        "task_result_id",
+        "run_id",
+        "task_hash",
+        "score",
+        "stderr",
+        "n",
+        "metrics",
+        "delta",
+        "contingency"
+      ],
+      "type": "object"
+    },
+    "BaselineSuggestion": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "model": {
+          "$ref": "#/definitions/ModelRef"
+        },
+        "reason": {
+          "enum": [
+            "previous_checkpoint",
+            "same_group",
+            "previous_run_same_tasks"
+          ],
+          "type": "string"
+        },
+        "run": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RunSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "subject": {
+          "$ref": "#/definitions/SubjectKey"
+        }
+      },
+      "required": [
+        "subject",
+        "reason",
+        "label",
+        "model",
+        "run"
+      ],
+      "type": "object"
+    },
+    "BaselineSuggestionsResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/definitions/BaselineSuggestion"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "BeakerDetail": {
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cluster": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cpu_count": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "experiment_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "gpu_count": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "image": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "job_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "node_hostname": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "priority": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "result_dataset_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "task_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workload_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workspace": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workspace_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "experiment_id",
+        "workload_id",
+        "job_id",
+        "task_id",
+        "workspace",
+        "workspace_id",
+        "result_dataset_id",
+        "node_hostname",
+        "cluster",
+        "priority",
+        "image",
+        "budget",
+        "gpu_count",
+        "cpu_count"
+      ],
+      "type": "object"
+    },
+    "BoxStats": {
+      "additionalProperties": false,
+      "properties": {
+        "mean": {
+          "type": "number"
+        },
+        "n": {
+          "$ref": "#/definitions/Count"
+        },
+        "p25": {
+          "type": "number"
+        },
+        "p5": {
+          "type": "number"
+        },
+        "p50": {
+          "type": "number"
+        },
+        "p75": {
+          "type": "number"
+        },
+        "p95": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "p5",
+        "p25",
+        "p50",
+        "p75",
+        "p95",
+        "mean",
+        "n"
+      ],
+      "type": "object"
+    },
+    "BulkTagRequest": {
+      "additionalProperties": false,
+      "description": "POST /api/runs/tags",
+      "properties": {
+        "add": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "remove": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "run_ids": {
+          "items": {
+            "$ref": "#/definitions/RunId"
+          },
+          "maxItems": 500,
+          "type": "array"
+        }
+      },
+      "required": [
+        "run_ids",
+        "add",
+        "remove"
+      ],
+      "type": "object"
+    },
+    "BulkTagResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "updated": {
+          "$ref": "#/definitions/Count"
+        }
+      },
+      "required": [
+        "updated"
+      ],
+      "type": "object"
+    },
+    "CellStatus": {
+      "enum": [
+        "ok",
+        "missing",
+        "failed",
+        "partial"
+      ],
+      "type": "string"
+    },
+    "CheckpointRow": {
+      "additionalProperties": false,
+      "properties": {
+        "latest_run_at": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DateTime"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model": {
+          "$ref": "#/definitions/ModelRef"
+        },
+        "run_ids": {
+          "items": {
+            "$ref": "#/definitions/RunId"
+          },
+          "type": "array"
+        },
+        "settings_hash": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "model",
+        "settings_hash",
+        "run_ids",
+        "latest_run_at"
+      ],
+      "type": "object"
+    },
+    "CompareInstanceRow": {
+      "additionalProperties": false,
+      "properties": {
+        "correct": {
+          "items": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "type": "array"
+        },
+        "n_correct": {
+          "$ref": "#/definitions/Count"
+        },
+        "n_present": {
+          "$ref": "#/definitions/Count"
+        },
+        "native_id": {
+          "type": "string"
+        },
+        "output_previews": {
+          "anyOf": [
+            {
+              "items": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "prompt_preview": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "scores": {
+          "description": "Aligned with subjects; null when the subject lacks the instance.",
+          "items": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "native_id",
+        "scores",
+        "correct",
+        "n_correct",
+        "n_present",
+        "prompt_preview",
+        "output_previews"
+      ],
+      "type": "object"
+    },
+    "CompareInstancesRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "a": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SubjectKey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "b": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SubjectKey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "baseline": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SubjectKey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cell": {
+          "description": "Required when filter is \"cell\"; uses a and b.",
+          "enum": [
+            "both_right",
+            "only_a",
+            "only_b",
+            "both_wrong",
+            null
+          ],
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "filter": {
+          "enum": [
+            "all",
+            "disagree",
+            "all_wrong",
+            "baseline_wrong",
+            "cell"
+          ],
+          "type": "string"
+        },
+        "group": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "include_previews": {
+          "type": "boolean"
+        },
+        "limit": {
+          "$ref": "#/definitions/Count",
+          "description": "Max 1,000 with previews, 20,000 without."
+        },
+        "metric": {
+          "type": "string"
+        },
+        "sort": {
+          "enum": [
+            "disagreement",
+            "native_id",
+            "n_correct"
+          ],
+          "type": "string"
+        },
+        "subjects": {
+          "items": {
+            "$ref": "#/definitions/SubjectKey"
+          },
+          "maxItems": 30,
+          "minItems": 1,
+          "type": "array"
+        },
+        "task_name": {
+          "type": "string"
+        },
+        "threshold": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "subjects",
+        "task_name",
+        "metric",
+        "filter"
+      ],
+      "type": "object"
+    },
+    "CompareInstancesResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "counts_by_n_correct": {
+          "description": "Index i = number of instances (after filtering) with i subjects correct.",
+          "items": {
+            "$ref": "#/definitions/Count"
+          },
+          "type": "array"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/definitions/CompareInstanceRow"
+          },
+          "type": "array"
+        },
+        "kind": {
+          "$ref": "#/definitions/MetricKind"
+        },
+        "next_cursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "subjects": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "key": {
+                "$ref": "#/definitions/SubjectKey"
+              },
+              "run_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/RunId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "task_result_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/TaskResultId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "key",
+              "task_result_id",
+              "run_id"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "threshold": {
+          "type": "number"
+        },
+        "total": {
+          "$ref": "#/definitions/Count"
+        }
+      },
+      "required": [
+        "subjects",
+        "kind",
+        "threshold",
+        "items",
+        "counts_by_n_correct",
+        "total",
+        "next_cursor"
+      ],
+      "type": "object"
+    },
+    "CompareRequestBase": {
+      "additionalProperties": false,
+      "description": "scope: \"all\" (union of tasks), \"shared\" (tasks every subject has), \"suite:<suite_name>\", or \"task:<task_name>\". metric: \"primary\" or a \"metric:scorer\" key.",
+      "properties": {
+        "alpha": {
+          "type": "number"
+        },
+        "group": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "metric": {
+          "description": "\"primary\" (each task's primary metric), \"metric:scorer\", or a runtime metric: \"runtime:inference\" or \"runtime:with_startup\" (seconds, lower is better; no instance-level pairing, so pairwise significance is not available for them).",
+          "type": "string"
+        },
+        "n_boot": {
+          "$ref": "#/definitions/Count"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "seed": {
+          "$ref": "#/definitions/Integer"
+        },
+        "shared_only": {
+          "type": "boolean"
+        },
+        "subjects": {
+          "items": {
+            "$ref": "#/definitions/SubjectKey"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "subjects",
+        "scope",
+        "metric"
+      ],
+      "type": "object"
+    },
+    "Contingency": {
+      "additionalProperties": false,
+      "description": "2x2 counts; \"a\" is this run/subject, \"b\" the reference (baseline).",
+      "properties": {
+        "both_right": {
+          "$ref": "#/definitions/Count"
+        },
+        "both_wrong": {
+          "$ref": "#/definitions/Count"
+        },
+        "n_shared": {
+          "$ref": "#/definitions/Count"
+        },
+        "net": {
+          "$ref": "#/definitions/Integer",
+          "description": "only_a - only_b"
+        },
+        "only_a": {
+          "$ref": "#/definitions/Count"
+        },
+        "only_b": {
+          "$ref": "#/definitions/Count"
+        },
+        "threshold": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "both_right",
+        "only_a",
+        "only_b",
+        "both_wrong",
+        "n_shared",
+        "net",
+        "threshold"
+      ],
+      "type": "object"
+    },
+    "ContingencyRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "a": {
+          "$ref": "#/definitions/SubjectKey"
+        },
+        "b": {
+          "$ref": "#/definitions/SubjectKey"
+        },
+        "group": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "metric": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "threshold": {
+          "description": "Correctness threshold for bounded metrics (default 0.5).",
+          "type": "number"
+        }
+      },
+      "required": [
+        "a",
+        "b",
+        "scope",
+        "metric"
+      ],
+      "type": "object"
+    },
+    "ContingencyResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "a": {
+          "$ref": "#/definitions/SubjectKey"
+        },
+        "b": {
+          "$ref": "#/definitions/SubjectKey"
+        },
+        "items": {
+          "description": "Sorted by net, most negative first.",
+          "items": {
+            "$ref": "#/definitions/ContingencyTaskRow"
+          },
+          "type": "array"
+        },
+        "totals": {
+          "$ref": "#/definitions/Contingency"
+        }
+      },
+      "required": [
+        "a",
+        "b",
+        "items",
+        "totals"
+      ],
+      "type": "object"
+    },
+    "ContingencyTaskRow": {
+      "additionalProperties": false,
+      "properties": {
+        "contingency": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Contingency"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "delta": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "kind": {
+          "$ref": "#/definitions/MetricKind"
+        },
+        "task_hash_a": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "task_hash_b": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "task_name": {
+          "type": "string"
+        },
+        "task_result_id_a": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TaskResultId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "task_result_id_b": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TaskResultId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "task_name",
+        "kind",
+        "task_hash_a",
+        "task_hash_b",
+        "task_result_id_a",
+        "task_result_id_b",
+        "contingency",
+        "delta"
+      ],
+      "type": "object"
+    },
+    "Count": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "Coverage": {
+      "additionalProperties": false,
+      "properties": {
+        "complete": {
+          "$ref": "#/definitions/Count"
+        },
+        "failed": {
+          "$ref": "#/definitions/Count"
+        },
+        "hash_mismatch": {
+          "$ref": "#/definitions/Count"
+        },
+        "missing": {
+          "$ref": "#/definitions/Count"
+        },
+        "n_subjects": {
+          "$ref": "#/definitions/Count"
+        },
+        "n_tasks": {
+          "$ref": "#/definitions/Count"
+        }
+      },
+      "required": [
+        "n_subjects",
+        "n_tasks",
+        "complete",
+        "missing",
+        "failed",
+        "hash_mismatch"
+      ],
+      "type": "object"
+    },
+    "CoverageCell": {
+      "additionalProperties": false,
+      "properties": {
+        "run_id": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RunId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "enum": [
+            "ok",
+            "failed",
+            "missing"
+          ],
+          "type": "string"
+        },
+        "subject": {
+          "$ref": "#/definitions/SubjectKey"
+        },
+        "task_name": {
+          "type": "string"
+        },
+        "task_result_id": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TaskResultId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "subject",
+        "task_name",
+        "status",
+        "task_result_id",
+        "run_id"
+      ],
+      "type": "object"
+    },
+    "CreateViewRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "maxLength": 120,
+          "minLength": 1,
+          "type": "string"
+        },
+        "page": {
+          "type": "string"
+        },
+        "query": {
+          "maxLength": 4000,
+          "type": "string"
+        },
+        "shared": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "page",
+        "query",
+        "shared"
+      ],
+      "type": "object"
+    },
+    "DailyStat": {
+      "additionalProperties": false,
+      "properties": {
+        "date": {
+          "$ref": "#/definitions/DateString"
+        },
+        "instances": {
+          "$ref": "#/definitions/Count"
+        },
+        "models": {
+          "$ref": "#/definitions/Count"
+        },
+        "runs": {
+          "$ref": "#/definitions/Count"
+        }
+      },
+      "required": [
+        "date",
+        "runs",
+        "models",
+        "instances"
+      ],
+      "type": "object"
+    },
+    "DateString": {
+      "description": "YYYY-MM-DD in UTC.",
+      "type": "string"
+    },
+    "DateTime": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "DeltaMethod": {
+      "enum": [
+        "paired_bootstrap",
+        "unpaired",
+        "insufficient",
+        "none"
+      ],
+      "type": "string"
+    },
+    "DeltaStats": {
+      "additionalProperties": false,
+      "description": "Difference \"this minus reference\" with uncertainty. See spec section 5.",
+      "properties": {
+        "alpha": {
+          "type": "number"
+        },
+        "ci_high": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "ci_low": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "delta": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "hash_mismatch": {
+          "description": "Task hashes differ between the two sides.",
+          "type": "boolean"
+        },
+        "improved": {
+          "description": "True when delta is in the better direction, null when direction unknown or delta is 0/null.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "method": {
+          "$ref": "#/definitions/DeltaMethod"
+        },
+        "n_boot": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "n_shared": {
+          "$ref": "#/definitions/Count"
+        },
+        "note": {
+          "description": "Human-readable reason when method is insufficient or none.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "p_value": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "significant": {
+          "description": "CI excludes zero (paired_bootstrap or unpaired only).",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "delta",
+        "ci_low",
+        "ci_high",
+        "p_value",
+        "n_shared",
+        "method",
+        "significant",
+        "improved",
+        "hash_mismatch",
+        "alpha",
+        "n_boot",
+        "note"
+      ],
+      "type": "object"
+    },
+    "DisplayFormat": {
+      "enum": [
+        "percent",
+        "raw"
+      ],
+      "type": "string"
+    },
+    "Distribution": {
+      "additionalProperties": false,
+      "properties": {
+        "higher_is_better": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "is_quantiles": {
+          "type": "boolean"
+        },
+        "metric": {
+          "type": "string"
+        },
+        "n": {
+          "$ref": "#/definitions/Count"
+        },
+        "scores": {
+          "description": "Sorted ascending; all scores when n <= 500, else 500 evenly spaced quantiles.",
+          "items": {
+            "type": "number"
+          },
+          "type": "array"
+        },
+        "task_hash": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "task_name": {
+          "type": "string"
+        },
+        "top": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "model": {
+                  "$ref": "#/definitions/ModelRef"
+                },
+                "run_id": {
+                  "$ref": "#/definitions/RunId"
+                },
+                "score": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "run_id",
+                "model",
+                "score"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "task_name",
+        "task_hash",
+        "metric",
+        "n",
+        "scores",
+        "is_quantiles",
+        "higher_is_better",
+        "top"
+      ],
+      "type": "object"
+    },
+    "DistributionKey": {
+      "additionalProperties": false,
+      "properties": {
+        "metric": {
+          "type": "string"
+        },
+        "task_hash": {
+          "description": "Null pools every variant of the task.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "task_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_name",
+        "task_hash",
+        "metric"
+      ],
+      "type": "object"
+    },
+    "DistributionsRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/definitions/DistributionKey"
+          },
+          "maxItems": 200,
+          "type": "array"
+        },
+        "per_model": {
+          "enum": [
+            "latest",
+            "all"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "DistributionsResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/definitions/Distribution"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "EnvironmentDetail": {
+      "additionalProperties": false,
+      "properties": {
+        "cuda_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "gpu_count": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "gpu_type": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "hostname": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "packages": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "platform": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "python_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "hostname",
+        "platform",
+        "python_version",
+        "packages",
+        "cuda_version",
+        "gpu_type",
+        "gpu_count"
+      ],
+      "type": "object"
+    },
+    "ErrorBody": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "details": {},
+        "message": {
+          "type": "string"
+        },
+        "request_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "request_id"
+      ],
+      "type": "object"
+    },
+    "ErrorResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "$ref": "#/definitions/ErrorBody"
+        }
+      },
+      "required": [
+        "error"
+      ],
+      "type": "object"
+    },
+    "FacetValue": {
+      "additionalProperties": false,
+      "properties": {
+        "count": {
+          "$ref": "#/definitions/Count"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "count"
+      ],
+      "type": "object"
+    },
+    "FlatMetrics": {
+      "additionalProperties": {
+        "type": [
+          "number",
+          "null"
+        ]
+      },
+      "description": "Flat metrics keyed by \"metric_name:scorer_name\".",
+      "type": "object"
+    },
+    "GitDetail": {
+      "additionalProperties": false,
+      "properties": {
+        "branch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "commit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dirty": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "repo": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "repo",
+        "commit",
+        "branch",
+        "dirty"
+      ],
+      "type": "object"
+    },
+    "GroupDetailResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "coverage": {
+          "items": {
+            "$ref": "#/definitions/CoverageCell"
+          },
+          "type": "array"
+        },
+        "first_run_at": {
+          "$ref": "#/definitions/DateTime"
+        },
+        "last_run_at": {
+          "$ref": "#/definitions/DateTime"
+        },
+        "n_models": {
+          "$ref": "#/definitions/Count"
+        },
+        "n_runs": {
+          "$ref": "#/definitions/Count"
+        },
+        "n_tasks": {
+          "$ref": "#/definitions/Count"
+        },
+        "name": {
+          "type": "string"
+        },
+        "subjects": {
+          "description": "One model subject per model in the group.",
+          "items": {
+            "$ref": "#/definitions/SubjectInfo"
+          },
+          "type": "array"
+        },
+        "tasks": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "users": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "n_runs",
+        "n_models",
+        "n_tasks",
+        "users",
+        "first_run_at",
+        "last_run_at",
+        "subjects",
+        "tasks",
+        "coverage"
+      ],
+      "type": "object"
+    },
+    "GroupRow": {
+      "additionalProperties": false,
+      "properties": {
+        "first_run_at": {
+          "$ref": "#/definitions/DateTime"
+        },
+        "heatmap": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/MiniHeatmap"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_run_at": {
+          "$ref": "#/definitions/DateTime"
+        },
+        "n_models": {
+          "$ref": "#/definitions/Count"
+        },
+        "n_runs": {
+          "$ref": "#/definitions/Count"
+        },
+        "n_tasks": {
+          "$ref": "#/definitions/Count"
+        },
+        "name": {
+          "type": "string"
+        },
+        "users": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "n_runs",
+        "n_models",
+        "n_tasks",
+        "users",
+        "first_run_at",
+        "last_run_at",
+        "heatmap"
+      ],
+      "type": "object"
+    },
+    "GroupsListResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/definitions/GroupRow"
+          },
+          "type": "array"
+        },
+        "next_cursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "total": {
+          "$ref": "#/definitions/Count"
+        }
+      },
+      "required": [
+        "items",
+        "next_cursor",
+        "total"
+      ],
+      "type": "object"
+    },
+    "Headline": {
+      "additionalProperties": false,
+      "properties": {
+        "display_format": {
+          "$ref": "#/definitions/DisplayFormat"
+        },
+        "kind": {
+          "enum": [
+            "suite",
+            "task",
+            "mean"
+          ],
+          "type": "string"
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "score": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "stderr": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "name",
+        "score",
+        "stderr",
+        "display_format"
+      ],
+      "type": "object"
+    },
+    "HealthResponse": {
+      "additionalProperties": false,
+      "description": "GET /health and GET /api/health",
+      "properties": {
+        "db": {
+          "const": "ok",
+          "type": "string"
+        },
+        "git_sha": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mode": {
+          "enum": [
+            "dashboard",
+            "ingest",
+            "all"
+          ],
+          "type": "string"
+        },
+        "skiff_env": {
+          "type": "string"
+        },
+        "status": {
+          "const": "ok",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "mode",
+        "git_sha",
+        "skiff_env",
+        "db"
+      ],
+      "type": "object"
+    },
+    "Histogram": {
+      "additionalProperties": false,
+      "properties": {
+        "counts": {
+          "items": {
+            "$ref": "#/definitions/Count"
+          },
+          "type": "array"
+        },
+        "edges": {
+          "items": {
+            "type": "number"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "edges",
+        "counts"
+      ],
+      "type": "object"
+    },
+    "HistogramsResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "baseline_score": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Histogram"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "completion_tokens": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/LengthHistograms"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "delta": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Histogram"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Per-instance (this - baseline) over shared instances."
+        },
+        "finish_reasons": {
+          "additionalProperties": {
+            "$ref": "#/definitions/Count"
+          },
+          "type": "object"
+        },
+        "kind": {
+          "$ref": "#/definitions/MetricKind"
+        },
+        "max_tokens": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Count"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "sampling_params.max_tokens from the task config."
+        },
+        "metric": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "score": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Histogram"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "task_result_id": {
+          "$ref": "#/definitions/TaskResultId"
+        }
+      },
+      "required": [
+        "task_result_id",
+        "metric",
+        "kind",
+        "score",
+        "baseline_score",
+        "delta",
+        "completion_tokens",
+        "finish_reasons",
+        "max_tokens"
+      ],
+      "type": "object"
+    },
+    "InferenceBatchOut": {
+      "additionalProperties": false,
+      "properties": {
+        "failed_requests": {
+          "$ref": "#/definitions/Count"
+        },
+        "mean_latency_s": {
+          "type": "number"
+        },
+        "output_tokens_per_second": {
+          "type": "number"
+        },
+        "seq": {
+          "$ref": "#/definitions/Count"
+        },
+        "t": {
+          "type": "number"
+        },
+        "task_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "total_completion_tokens": {
+          "$ref": "#/definitions/Count"
+        },
+        "total_prompt_tokens": {
+          "$ref": "#/definitions/Count"
+        },
+        "total_requests": {
+          "$ref": "#/definitions/Count"
+        },
+        "wall_clock_time_s": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "seq",
+        "t",
+        "task_name",
+        "total_requests",
+        "failed_requests",
+        "total_prompt_tokens",
+        "total_completion_tokens",
+        "wall_clock_time_s",
+        "output_tokens_per_second",
+        "mean_latency_s"
+      ],
+      "type": "object"
+    },
+    "InferenceKpis": {
+      "additionalProperties": false,
+      "properties": {
+        "completion_tokens": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "failed_requests": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "gpu_hours": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "gpu_memory_max_mb": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "gpu_utilization_mean_pct": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "mean_latency_s": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "output_tokens_per_second": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "prompt_tokens": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "total_requests": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ttft_p50_s": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "ttft_p95_s": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "wall_clock_s": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "wall_clock_s",
+        "total_requests",
+        "failed_requests",
+        "prompt_tokens",
+        "completion_tokens",
+        "output_tokens_per_second",
+        "mean_latency_s",
+        "ttft_p50_s",
+        "ttft_p95_s",
+        "gpu_utilization_mean_pct",
+        "gpu_memory_max_mb",
+        "gpu_hours"
+      ],
+      "type": "object"
+    },
+    "InferenceResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "baseline_kpis": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/InferenceKpis"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "batch_latency": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/BoxStats"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Distribution of batch mean latency (per task when batches carry task_name)."
+        },
+        "batch_latency_by_task": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "box": {
+                "$ref": "#/definitions/BoxStats"
+              },
+              "task_name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "task_name",
+              "box"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "batches": {
+          "description": "Up to 2,000 batches, downsampled evenly when there are more.",
+          "items": {
+            "$ref": "#/definitions/InferenceBatchOut"
+          },
+          "type": "array"
+        },
+        "gpu_devices": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "device_id": {
+                "$ref": "#/definitions/Count"
+              },
+              "memory_total_mb": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "device_id",
+              "name",
+              "memory_total_mb"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "kpis": {
+          "$ref": "#/definitions/InferenceKpis"
+        },
+        "per_task": {
+          "items": {
+            "$ref": "#/definitions/InferenceTaskRow"
+          },
+          "type": "array"
+        },
+        "request_latency": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "end_to_end_s": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/definitions/BoxStats"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "tpot_s": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/definitions/BoxStats"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "ttft_s": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/definitions/BoxStats"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "end_to_end_s",
+                "ttft_s",
+                "tpot_s"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "run_id": {
+          "$ref": "#/definitions/RunId"
+        },
+        "series": {
+          "items": {
+            "$ref": "#/definitions/SeriesOut"
+          },
+          "type": "array"
+        },
+        "started_at": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DateTime"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "run_id",
+        "available",
+        "kpis",
+        "baseline_kpis",
+        "per_task",
+        "batch_latency",
+        "batch_latency_by_task",
+        "request_latency",
+        "batches",
+        "series",
+        "gpu_devices",
+        "started_at"
+      ],
+      "type": "object"
+    },
+    "InferenceTaskRow": {
+      "additionalProperties": false,
+      "properties": {
+        "completion_tokens": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "completion_tokens_box": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/BoxStats"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "duration_seconds": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "instances": {
+          "$ref": "#/definitions/Count"
+        },
+        "mean_completion_tokens": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "prompt_tokens": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "task_name": {
+          "type": "string"
+        },
+        "task_result_id": {
+          "$ref": "#/definitions/TaskResultId"
+        },
+        "truncation_rate": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "task_name",
+        "task_result_id",
+        "instances",
+        "completion_tokens",
+        "prompt_tokens",
+        "mean_completion_tokens",
+        "truncation_rate",
+        "duration_seconds",
+        "completion_tokens_box"
+      ],
+      "type": "object"
+    },
+    "InstanceDetailResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "doc_id": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "metrics": {
+          "$ref": "#/definitions/FlatMetrics"
+        },
+        "native_id": {
+          "type": "string"
+        },
+        "prediction": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/JsonObject"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Full prediction record (one predictions JSONL line), null when unavailable."
+        },
+        "predictions_uri": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "primary_score": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "request": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/JsonObject"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Full request record (one requests JSONL line), null when unavailable."
+        },
+        "requests_uri": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "run_id": {
+          "$ref": "#/definitions/RunId"
+        },
+        "task_name": {
+          "type": "string"
+        },
+        "task_result_id": {
+          "$ref": "#/definitions/TaskResultId"
+        },
+        "unavailable_reason": {
+          "description": "Why prediction or request is null (missing offsets, record over 25 MiB, ...).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "task_result_id",
+        "run_id",
+        "task_name",
+        "native_id",
+        "doc_id",
+        "primary_score",
+        "metrics",
+        "prediction",
+        "request",
+        "predictions_uri",
+        "requests_uri",
+        "unavailable_reason"
+      ],
+      "type": "object"
+    },
+    "InstanceRow": {
+      "additionalProperties": false,
+      "properties": {
+        "baseline_correct": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "baseline_score": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "completion_tokens": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "correct": {
+          "description": "Null for unbounded metrics.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "delta": {
+          "description": "primary_score - baseline_score",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "doc_id": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extracted_answer": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "finish_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "has_execution_result": {
+          "type": "boolean"
+        },
+        "has_judge_result": {
+          "type": "boolean"
+        },
+        "has_scoring_error": {
+          "type": "boolean"
+        },
+        "has_trajectory": {
+          "type": "boolean"
+        },
+        "judge_verdict": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "metrics": {
+          "$ref": "#/definitions/FlatMetrics"
+        },
+        "native_id": {
+          "type": "string"
+        },
+        "num_outputs": {
+          "$ref": "#/definitions/Count"
+        },
+        "output_preview": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "primary_score": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "prompt_preview": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "prompt_tokens": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "native_id",
+        "doc_id",
+        "primary_score",
+        "correct",
+        "metrics",
+        "label",
+        "extracted_answer",
+        "finish_reason",
+        "completion_tokens",
+        "prompt_tokens",
+        "num_outputs",
+        "prompt_preview",
+        "output_preview",
+        "judge_verdict",
+        "has_scoring_error",
+        "has_execution_result",
+        "has_judge_result",
+        "has_trajectory",
+        "baseline_score",
+        "baseline_correct",
+        "delta"
+      ],
+      "type": "object"
+    },
+    "InstancesResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "baseline_task_result_id": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TaskResultId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "items": {
+          "items": {
+            "$ref": "#/definitions/InstanceRow"
+          },
+          "type": "array"
+        },
+        "kind": {
+          "$ref": "#/definitions/MetricKind"
+        },
+        "next_cursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "task_result_id": {
+          "$ref": "#/definitions/TaskResultId"
+        },
+        "threshold": {
+          "type": "number"
+        },
+        "total": {
+          "$ref": "#/definitions/Count"
+        }
+      },
+      "required": [
+        "task_result_id",
+        "baseline_task_result_id",
+        "kind",
+        "threshold",
+        "items",
+        "next_cursor",
+        "total"
+      ],
+      "type": "object"
+    },
+    "Integer": {
+      "type": "integer"
+    },
+    "JsonObject": {
+      "additionalProperties": {},
+      "type": "object"
+    },
+    "LeaderboardResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "children": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/definitions/SuiteChild"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Suite leaderboards only."
+        },
+        "items": {
+          "items": {
+            "$ref": "#/definitions/LeaderboardRow"
+          },
+          "type": "array"
+        },
+        "kind": {
+          "enum": [
+            "task",
+            "suite"
+          ],
+          "type": "string"
+        },
+        "meta": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/MetricMeta"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "metric": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "next_cursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "task_hash": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "total": {
+          "$ref": "#/definitions/Count"
+        }
+      },
+      "required": [
+        "kind",
+        "name",
+        "task_hash",
+        "metric",
+        "meta",
+        "children",
+        "items",
+        "next_cursor",
+        "total"
+      ],
+      "type": "object"
+    },
+    "LeaderboardRow": {
+      "additionalProperties": false,
+      "properties": {
+        "author": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "child_scores": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Suite leaderboards only: child score by child key (\"task:<name>\" or \"suite:<name>\")."
+        },
+        "ci_high": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "ci_low": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "date": {
+          "$ref": "#/definitions/DateTime"
+        },
+        "experiment_group": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "gpu_count": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "gpu_type": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "$ref": "#/definitions/ModelRef"
+        },
+        "n": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "rank": {
+          "$ref": "#/definitions/Count"
+        },
+        "run_id": {
+          "$ref": "#/definitions/RunId"
+        },
+        "runtime": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TaskRuntime"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Task leaderboards only; null for suites."
+        },
+        "score": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "stderr": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "subject": {
+          "$ref": "#/definitions/SubjectKey"
+        },
+        "task_hash": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "task_result_id": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TaskResultId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tied_with_leader": {
+          "description": "95% CI overlaps the leader's.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "rank",
+        "subject",
+        "model",
+        "run_id",
+        "task_result_id",
+        "task_hash",
+        "score",
+        "stderr",
+        "ci_low",
+        "ci_high",
+        "n",
+        "date",
+        "experiment_group",
+        "author",
+        "tied_with_leader",
+        "child_scores",
+        "runtime",
+        "gpu_type",
+        "gpu_count"
+      ],
+      "type": "object"
+    },
+    "LengthHistograms": {
+      "additionalProperties": false,
+      "properties": {
+        "all": {
+          "$ref": "#/definitions/Histogram"
+        },
+        "correct": {
+          "$ref": "#/definitions/Histogram"
+        },
+        "incorrect": {
+          "$ref": "#/definitions/Histogram"
+        }
+      },
+      "required": [
+        "correct",
+        "incorrect",
+        "all"
+      ],
+      "type": "object"
+    },
+    "MatrixCell": {
+      "additionalProperties": false,
+      "properties": {
+        "children_missing": {
+          "$ref": "#/definitions/Count",
+          "description": "Suite rows: children with no result."
+        },
+        "delta": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DeltaStats"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Vs baseline; null when no baseline or this is the baseline column."
+        },
+        "n": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RunId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "score": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/definitions/CellStatus"
+        },
+        "stderr": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "task_hash": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "task_result_id": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TaskResultId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "status",
+        "score",
+        "stderr",
+        "n",
+        "task_result_id",
+        "run_id",
+        "task_hash",
+        "delta",
+        "children_missing"
+      ],
+      "type": "object"
+    },
+    "MatrixRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "alpha": {
+          "type": "number"
+        },
+        "baseline": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SubjectKey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "group": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "metric": {
+          "description": "\"primary\" (each task's primary metric), \"metric:scorer\", or a runtime metric: \"runtime:inference\" or \"runtime:with_startup\" (seconds, lower is better; no instance-level pairing, so pairwise significance is not available for them).",
+          "type": "string"
+        },
+        "n_boot": {
+          "$ref": "#/definitions/Count"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "seed": {
+          "$ref": "#/definitions/Integer"
+        },
+        "shared_only": {
+          "type": "boolean"
+        },
+        "subjects": {
+          "items": {
+            "$ref": "#/definitions/SubjectKey"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "metric",
+        "scope",
+        "subjects"
+      ],
+      "type": "object"
+    },
+    "MatrixResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "alpha": {
+          "type": "number"
+        },
+        "baseline": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SubjectKey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "computed_at": {
+          "$ref": "#/definitions/DateTime"
+        },
+        "coverage": {
+          "$ref": "#/definitions/Coverage"
+        },
+        "mde80": {
+          "description": "Minimum detectable effect at 80% power, raw metric units.",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "metric": {
+          "type": "string"
+        },
+        "rows": {
+          "description": "Display order: suites pre-order with their tasks; rows for missing tasks are kept.",
+          "items": {
+            "$ref": "#/definitions/MatrixRow"
+          },
+          "type": "array"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "subjects": {
+          "items": {
+            "$ref": "#/definitions/SubjectInfo"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "subjects",
+        "baseline",
+        "scope",
+        "metric",
+        "rows",
+        "coverage",
+        "mde80",
+        "alpha",
+        "computed_at"
+      ],
+      "type": "object"
+    },
+    "MatrixRow": {
+      "additionalProperties": false,
+      "properties": {
+        "aggregation": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cells": {
+          "description": "Aligned with MatrixResponse.subjects.",
+          "items": {
+            "$ref": "#/definitions/MatrixCell"
+          },
+          "type": "array"
+        },
+        "depth": {
+          "$ref": "#/definitions/Count"
+        },
+        "key": {
+          "description": "\"task:<name>\" or \"suite:<name>\"",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "task",
+            "suite"
+          ],
+          "type": "string"
+        },
+        "meta": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/MetricMeta"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "metric_key": {
+          "description": "Resolved \"metric:scorer\" for task rows.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "parent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "key",
+        "kind",
+        "name",
+        "depth",
+        "parent",
+        "aggregation",
+        "metric_key",
+        "meta",
+        "cells"
+      ],
+      "type": "object"
+    },
+    "MeResponse": {
+      "additionalProperties": false,
+      "description": "GET /api/me",
+      "properties": {
+        "dev_mode": {
+          "description": "True when the identity came from DASHBOARD_DEV_USER (local development only).",
+          "type": "boolean"
+        },
+        "email": {
+          "type": "string"
+        },
+        "username": {
+          "description": "Local part of the email; what `user=me` filters resolve to.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "email",
+        "username",
+        "dev_mode"
+      ],
+      "type": "object"
+    },
+    "MetricKind": {
+      "enum": [
+        "binary",
+        "bounded",
+        "unbounded"
+      ],
+      "type": "string"
+    },
+    "MetricMeta": {
+      "additionalProperties": false,
+      "properties": {
+        "display_format": {
+          "$ref": "#/definitions/DisplayFormat"
+        },
+        "higher_is_better": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "kind": {
+          "$ref": "#/definitions/MetricKind"
+        },
+        "unit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "higher_is_better",
+        "display_format",
+        "unit",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "MiniHeatmap": {
+      "additionalProperties": false,
+      "properties": {
+        "columns": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "key",
+              "label"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "rows": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "key": {
+                "$ref": "#/definitions/SubjectKey"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "key",
+              "label"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "values": {
+          "description": "rows x columns",
+          "items": {
+            "items": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "type": "array"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "rows",
+        "columns",
+        "values"
+      ],
+      "type": "object"
+    },
+    "ModelDetail": {
+      "additionalProperties": false,
+      "properties": {
+        "family": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model_hash": {
+          "type": "string"
+        },
+        "model_id": {
+          "$ref": "#/definitions/ModelId"
+        },
+        "name": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "provider_config": {
+          "$ref": "#/definitions/JsonObject"
+        },
+        "provider_kind": {
+          "type": "string"
+        },
+        "revision": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "series": {
+          "type": "string"
+        },
+        "series_label": {
+          "description": "Short display label for the series (basename when the series is a path).",
+          "type": "string"
+        },
+        "settings_hash": {
+          "description": "Hash of provider_config without path-like keys; groups checkpoints with the same settings.",
+          "type": "string"
+        },
+        "step": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tokens_seen": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "family",
+        "model_hash",
+        "model_id",
+        "name",
+        "path",
+        "provider_config",
+        "provider_kind",
+        "revision",
+        "series",
+        "series_label",
+        "settings_hash",
+        "step",
+        "tokens_seen"
+      ],
+      "type": "object"
+    },
+    "ModelId": {
+      "description": "12 hex chars: sha256(name + \"\\u0000\" + model_hash)[:12].",
+      "pattern": "^[0-9a-f]{12}$",
+      "type": "string"
+    },
+    "ModelRef": {
+      "additionalProperties": false,
+      "properties": {
+        "family": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model_hash": {
+          "type": "string"
+        },
+        "model_id": {
+          "$ref": "#/definitions/ModelId"
+        },
+        "name": {
+          "type": "string"
+        },
+        "series": {
+          "type": "string"
+        },
+        "series_label": {
+          "description": "Short display label for the series (basename when the series is a path).",
+          "type": "string"
+        },
+        "step": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tokens_seen": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "model_id",
+        "name",
+        "model_hash",
+        "series",
+        "series_label",
+        "family",
+        "step",
+        "tokens_seen"
+      ],
+      "type": "object"
+    },
+    "ModelSeriesDetailResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "checkpoints": {
+          "description": "Sorted by step ascending (null steps last).",
+          "items": {
+            "$ref": "#/definitions/CheckpointRow"
+          },
+          "type": "array"
+        },
+        "family": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "n_runs": {
+          "$ref": "#/definitions/Count"
+        },
+        "series": {
+          "type": "string"
+        },
+        "series_label": {
+          "type": "string"
+        },
+        "variants": {
+          "items": {
+            "$ref": "#/definitions/VariantInfo"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "series",
+        "series_label",
+        "family",
+        "n_runs",
+        "checkpoints",
+        "variants"
+      ],
+      "type": "object"
+    },
+    "ModelSeriesRow": {
+      "additionalProperties": false,
+      "properties": {
+        "family": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last_run_at": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DateTime"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "latest_run": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RunSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "latest_step": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "n_checkpoints": {
+          "$ref": "#/definitions/Count"
+        },
+        "n_runs": {
+          "$ref": "#/definitions/Count"
+        },
+        "series": {
+          "type": "string"
+        },
+        "series_label": {
+          "type": "string"
+        },
+        "variants": {
+          "items": {
+            "$ref": "#/definitions/VariantCount"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "series",
+        "series_label",
+        "family",
+        "n_checkpoints",
+        "n_runs",
+        "latest_step",
+        "last_run_at",
+        "latest_run",
+        "variants"
+      ],
+      "type": "object"
+    },
+    "ModelsListResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/definitions/ModelSeriesRow"
+          },
+          "type": "array"
+        },
+        "next_cursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "total": {
+          "$ref": "#/definitions/Count"
+        }
+      },
+      "required": [
+        "items",
+        "next_cursor",
+        "total"
+      ],
+      "type": "object"
+    },
+    "PairStats": {
+      "additionalProperties": false,
+      "properties": {
+        "ci_high": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "ci_low": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "col": {
+          "$ref": "#/definitions/SubjectKey"
+        },
+        "delta": {
+          "description": "row minus col, raw units.",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "losses": {
+          "$ref": "#/definitions/Count"
+        },
+        "method": {
+          "$ref": "#/definitions/DeltaMethod"
+        },
+        "n_contested": {
+          "$ref": "#/definitions/Count"
+        },
+        "n_shared": {
+          "$ref": "#/definitions/Count"
+        },
+        "p_bootstrap": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "p_sign": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "prob_row_better": {
+          "description": "Share of bootstrap resamples where row is better.",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "row": {
+          "$ref": "#/definitions/SubjectKey"
+        },
+        "significant": {
+          "type": "boolean"
+        },
+        "ties": {
+          "$ref": "#/definitions/Count"
+        },
+        "win_rate": {
+          "description": "wins / (wins + losses); 0.5 when nothing is contested.",
+          "type": "number"
+        },
+        "wins": {
+          "$ref": "#/definitions/Count"
+        }
+      },
+      "required": [
+        "row",
+        "col",
+        "n_shared",
+        "n_contested",
+        "wins",
+        "losses",
+        "ties",
+        "win_rate",
+        "delta",
+        "ci_low",
+        "ci_high",
+        "p_bootstrap",
+        "p_sign",
+        "prob_row_better",
+        "significant",
+        "method"
+      ],
+      "type": "object"
+    },
+    "PairwiseRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "alpha": {
+          "type": "number"
+        },
+        "group": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "margin": {
+          "description": "Instance-level tie margin in raw metric units.",
+          "type": "number"
+        },
+        "metric": {
+          "description": "\"primary\" (each task's primary metric), \"metric:scorer\", or a runtime metric: \"runtime:inference\" or \"runtime:with_startup\" (seconds, lower is better; no instance-level pairing, so pairwise significance is not available for them).",
+          "type": "string"
+        },
+        "n_boot": {
+          "$ref": "#/definitions/Count"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "seed": {
+          "$ref": "#/definitions/Integer"
+        },
+        "shared_only": {
+          "type": "boolean"
+        },
+        "subjects": {
+          "items": {
+            "$ref": "#/definitions/SubjectKey"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "metric",
+        "scope",
+        "subjects"
+      ],
+      "type": "object"
+    },
+    "PairwiseResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "alpha": {
+          "type": "number"
+        },
+        "computed_at": {
+          "$ref": "#/definitions/DateTime"
+        },
+        "display_format": {
+          "$ref": "#/definitions/DisplayFormat"
+        },
+        "higher_is_better": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "margin": {
+          "type": "number"
+        },
+        "mde80": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "pairs": {
+          "description": "Every ordered pair (row != col).",
+          "items": {
+            "$ref": "#/definitions/PairStats"
+          },
+          "type": "array"
+        },
+        "rows": {
+          "items": {
+            "$ref": "#/definitions/PairwiseRowSummary"
+          },
+          "type": "array"
+        },
+        "subjects": {
+          "description": "Ordered by mean win rate, best first.",
+          "items": {
+            "$ref": "#/definitions/SubjectInfo"
+          },
+          "type": "array"
+        },
+        "tasks_used": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "subjects",
+        "pairs",
+        "rows",
+        "tasks_used",
+        "mde80",
+        "alpha",
+        "margin",
+        "higher_is_better",
+        "display_format",
+        "warnings",
+        "computed_at"
+      ],
+      "type": "object"
+    },
+    "PairwiseRowSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "ci_high": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "ci_low": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "mean_delta": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "mean_win_rate": {
+          "type": "number"
+        },
+        "subject": {
+          "$ref": "#/definitions/SubjectKey"
+        }
+      },
+      "required": [
+        "subject",
+        "mean_win_rate",
+        "ci_low",
+        "ci_high",
+        "mean_delta"
+      ],
+      "type": "object"
+    },
+    "ProgressionPanel": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "description": "\"task:<name>\" or \"suite:<name>\"",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "task",
+            "suite"
+          ],
+          "type": "string"
+        },
+        "meta": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/MetricMeta"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "points": {
+          "items": {
+            "$ref": "#/definitions/ProgressionPoint"
+          },
+          "type": "array"
+        },
+        "references": {
+          "items": {
+            "$ref": "#/definitions/ProgressionReference"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "key",
+        "kind",
+        "name",
+        "meta",
+        "points",
+        "references"
+      ],
+      "type": "object"
+    },
+    "ProgressionPoint": {
+      "additionalProperties": false,
+      "properties": {
+        "date": {
+          "$ref": "#/definitions/DateTime"
+        },
+        "model_id": {
+          "$ref": "#/definitions/ModelId"
+        },
+        "n": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "run_id": {
+          "$ref": "#/definitions/RunId"
+        },
+        "score": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "stderr": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "step": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "task_result_id": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TaskResultId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tokens_seen": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "model_id",
+        "run_id",
+        "task_result_id",
+        "step",
+        "tokens_seen",
+        "date",
+        "score",
+        "stderr",
+        "n"
+      ],
+      "type": "object"
+    },
+    "ProgressionReference": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "score": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "stderr": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "subject": {
+          "$ref": "#/definitions/SubjectKey"
+        }
+      },
+      "required": [
+        "subject",
+        "label",
+        "score",
+        "stderr"
+      ],
+      "type": "object"
+    },
+    "ProgressionResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "metric": {
+          "type": "string"
+        },
+        "panels": {
+          "items": {
+            "$ref": "#/definitions/ProgressionPanel"
+          },
+          "type": "array"
+        },
+        "series": {
+          "type": "string"
+        },
+        "settings_hash": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "series",
+        "settings_hash",
+        "metric",
+        "panels"
+      ],
+      "type": "object"
+    },
+    "ResolveSubjectsRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "group": {
+          "description": "Restrict model-subject merging to runs in this group.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "subjects": {
+          "items": {
+            "$ref": "#/definitions/SubjectKey"
+          },
+          "maxItems": 50,
+          "type": "array"
+        }
+      },
+      "required": [
+        "subjects"
+      ],
+      "type": "object"
+    },
+    "ResolveSubjectsResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/definitions/SubjectInfo"
+          },
+          "type": "array"
+        },
+        "missing": {
+          "items": {
+            "$ref": "#/definitions/SubjectKey"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "items",
+        "missing"
+      ],
+      "type": "object"
+    },
+    "RunConfigsResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "argv": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "environment": {
+          "$ref": "#/definitions/EnvironmentDetail"
+        },
+        "harness_config": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/JsonObject"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model_config": {
+          "$ref": "#/definitions/JsonObject"
+        },
+        "run_id": {
+          "$ref": "#/definitions/RunId"
+        },
+        "task_configs": {
+          "items": {
+            "$ref": "#/definitions/TaskConfigEntry"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "run_id",
+        "model_config",
+        "harness_config",
+        "environment",
+        "argv",
+        "task_configs"
+      ],
+      "type": "object"
+    },
+    "RunDetail": {
+      "additionalProperties": false,
+      "properties": {
+        "argv": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "author": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "beaker": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/BeakerDetail"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "beaker_experiment_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "beaker_workspace": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "created_at": {
+          "$ref": "#/definitions/DateTime"
+        },
+        "duration_seconds": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "environment": {
+          "$ref": "#/definitions/EnvironmentDetail"
+        },
+        "errors": {
+          "items": {
+            "$ref": "#/definitions/RunError"
+          },
+          "type": "array"
+        },
+        "experiment_group": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "experiment_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "finished_at": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DateTime"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "gcs_prefix": {
+          "type": "string"
+        },
+        "git": {
+          "$ref": "#/definitions/GitDetail"
+        },
+        "git_branch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "git_commit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "headline": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Headline"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "launch_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "links": {
+          "$ref": "#/definitions/RunLinks"
+        },
+        "model": {
+          "$ref": "#/definitions/ModelRef"
+        },
+        "model_detail": {
+          "$ref": "#/definitions/ModelDetail"
+        },
+        "notes": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "num_failed_tasks": {
+          "$ref": "#/definitions/Count"
+        },
+        "num_instances": {
+          "$ref": "#/definitions/Count"
+        },
+        "num_tasks": {
+          "$ref": "#/definitions/Count"
+        },
+        "olmo_eval_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "output_dir": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "processing_seconds": {
+          "description": "Seconds from processing_started_at until the last task finished.",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "processing_started_at": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DateTime"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When every inference worker was ready."
+        },
+        "provider_init_seconds": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "number"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reproduce_command": {
+          "description": "shlex-joined argv, ready to copy.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "run_id": {
+          "$ref": "#/definitions/RunId"
+        },
+        "siblings": {
+          "description": "Other runs with the same launch_id.",
+          "items": {
+            "$ref": "#/definitions/RunSummary"
+          },
+          "type": "array"
+        },
+        "stale": {
+          "description": "status is \"running\" and the run has not been updated for 24 hours.",
+          "type": "boolean"
+        },
+        "started_at": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DateTime"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "startup_seconds": {
+          "description": "See TaskRuntime.startup_seconds. Null for runs that predate runtime recording.",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/definitions/RunStatus"
+        },
+        "suites_used": {
+          "description": "Definitions of the suites stored with this run, outermost first.",
+          "items": {
+            "$ref": "#/definitions/SuiteDef"
+          },
+          "type": "array"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "task_specs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "updated_at": {
+          "$ref": "#/definitions/DateTime"
+        },
+        "upload_state": {
+          "$ref": "#/definitions/UploadState"
+        },
+        "uploaded_by": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "argv",
+        "author",
+        "beaker",
+        "beaker_experiment_id",
+        "beaker_workspace",
+        "created_at",
+        "duration_seconds",
+        "environment",
+        "errors",
+        "experiment_group",
+        "experiment_name",
+        "finished_at",
+        "gcs_prefix",
+        "git",
+        "git_branch",
+        "git_commit",
+        "headline",
+        "launch_id",
+        "links",
+        "model",
+        "model_detail",
+        "notes",
+        "num_failed_tasks",
+        "num_instances",
+        "num_tasks",
+        "olmo_eval_version",
+        "output_dir",
+        "processing_seconds",
+        "processing_started_at",
+        "provider_init_seconds",
+        "reproduce_command",
+        "run_id",
+        "siblings",
+        "stale",
+        "started_at",
+        "startup_seconds",
+        "status",
+        "suites_used",
+        "tags",
+        "task_specs",
+        "updated_at",
+        "upload_state",
+        "uploaded_by"
+      ],
+      "type": "object"
+    },
+    "RunError": {
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "type": "string"
+        },
+        "task": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "task",
+        "error"
+      ],
+      "type": "object"
+    },
+    "RunId": {
+      "pattern": "^[a-z0-9]{6,32}$",
+      "type": "string"
+    },
+    "RunLinks": {
+      "additionalProperties": false,
+      "properties": {
+        "beaker_experiment": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "beaker_result_dataset": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "beaker_workspace": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "gcs_console": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "github_commit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "beaker_experiment",
+        "beaker_result_dataset",
+        "beaker_workspace",
+        "gcs_console",
+        "github_commit"
+      ],
+      "type": "object"
+    },
+    "RunPatchRequest": {
+      "additionalProperties": false,
+      "description": "PATCH /api/runs/{run_id}",
+      "properties": {
+        "notes": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "RunRow": {
+      "additionalProperties": false,
+      "properties": {
+        "author": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "beaker_experiment_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "beaker_workspace": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "created_at": {
+          "$ref": "#/definitions/DateTime"
+        },
+        "duration_seconds": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "experiment_group": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "experiment_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "finished_at": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DateTime"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "gcs_prefix": {
+          "type": "string"
+        },
+        "git_branch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "git_commit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "headline": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Headline"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "launch_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "links": {
+          "$ref": "#/definitions/RunLinks"
+        },
+        "model": {
+          "$ref": "#/definitions/ModelRef"
+        },
+        "num_failed_tasks": {
+          "$ref": "#/definitions/Count"
+        },
+        "num_instances": {
+          "$ref": "#/definitions/Count"
+        },
+        "num_tasks": {
+          "$ref": "#/definitions/Count"
+        },
+        "run_id": {
+          "$ref": "#/definitions/RunId"
+        },
+        "scores": {
+          "additionalProperties": {
+            "$ref": "#/definitions/ScoreColumnValue"
+          },
+          "description": "Keyed by ScoreColumnMeta.key.",
+          "type": "object"
+        },
+        "stale": {
+          "description": "status is \"running\" and the run has not been updated for 24 hours.",
+          "type": "boolean"
+        },
+        "started_at": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DateTime"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "$ref": "#/definitions/RunStatus"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "upload_state": {
+          "$ref": "#/definitions/UploadState"
+        },
+        "uploaded_by": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "author",
+        "beaker_experiment_id",
+        "beaker_workspace",
+        "created_at",
+        "duration_seconds",
+        "experiment_group",
+        "experiment_name",
+        "finished_at",
+        "gcs_prefix",
+        "git_branch",
+        "git_commit",
+        "headline",
+        "launch_id",
+        "links",
+        "model",
+        "num_failed_tasks",
+        "num_instances",
+        "num_tasks",
+        "run_id",
+        "scores",
+        "stale",
+        "started_at",
+        "status",
+        "tags",
+        "upload_state",
+        "uploaded_by"
+      ],
+      "type": "object"
+    },
+    "RunStatus": {
+      "enum": [
+        "running",
+        "complete",
+        "partial",
+        "failed"
+      ],
+      "type": "string"
+    },
+    "RunSuitesResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "baseline": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SubjectInfo"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "computed_at": {
+          "$ref": "#/definitions/DateTime"
+        },
+        "items": {
+          "description": "Pre-order traversal (parents before children).",
+          "items": {
+            "$ref": "#/definitions/SuiteResultRow"
+          },
+          "type": "array"
+        },
+        "run_id": {
+          "$ref": "#/definitions/RunId"
+        },
+        "unsuited_tasks": {
+          "description": "Task names in the run that belong to no stored suite.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "run_id",
+        "baseline",
+        "items",
+        "unsuited_tasks",
+        "computed_at"
+      ],
+      "type": "object"
+    },
+    "RunSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "author": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "beaker_experiment_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "beaker_workspace": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "created_at": {
+          "$ref": "#/definitions/DateTime"
+        },
+        "duration_seconds": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "experiment_group": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "experiment_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "finished_at": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DateTime"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "gcs_prefix": {
+          "type": "string"
+        },
+        "git_branch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "git_commit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "headline": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Headline"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "launch_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "links": {
+          "$ref": "#/definitions/RunLinks"
+        },
+        "model": {
+          "$ref": "#/definitions/ModelRef"
+        },
+        "num_failed_tasks": {
+          "$ref": "#/definitions/Count"
+        },
+        "num_instances": {
+          "$ref": "#/definitions/Count"
+        },
+        "num_tasks": {
+          "$ref": "#/definitions/Count"
+        },
+        "run_id": {
+          "$ref": "#/definitions/RunId"
+        },
+        "stale": {
+          "description": "status is \"running\" and the run has not been updated for 24 hours.",
+          "type": "boolean"
+        },
+        "started_at": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DateTime"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "$ref": "#/definitions/RunStatus"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "upload_state": {
+          "$ref": "#/definitions/UploadState"
+        },
+        "uploaded_by": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "launch_id",
+        "experiment_name",
+        "experiment_group",
+        "status",
+        "upload_state",
+        "stale",
+        "model",
+        "author",
+        "uploaded_by",
+        "tags",
+        "created_at",
+        "started_at",
+        "finished_at",
+        "duration_seconds",
+        "num_tasks",
+        "num_failed_tasks",
+        "num_instances",
+        "headline",
+        "beaker_experiment_id",
+        "beaker_workspace",
+        "git_commit",
+        "git_branch",
+        "gcs_prefix",
+        "links"
+      ],
+      "type": "object"
+    },
+    "RunTaskResultsResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "baseline": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SubjectInfo"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "computed_at": {
+          "$ref": "#/definitions/DateTime"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/definitions/TaskResultRow"
+          },
+          "type": "array"
+        },
+        "run_id": {
+          "$ref": "#/definitions/RunId"
+        }
+      },
+      "required": [
+        "run_id",
+        "baseline",
+        "items",
+        "computed_at"
+      ],
+      "type": "object"
+    },
+    "RunsFacetsResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "family": {
+          "items": {
+            "$ref": "#/definitions/FacetValue"
+          },
+          "type": "array"
+        },
+        "group": {
+          "items": {
+            "$ref": "#/definitions/FacetValue"
+          },
+          "type": "array"
+        },
+        "model": {
+          "items": {
+            "$ref": "#/definitions/FacetValue"
+          },
+          "type": "array"
+        },
+        "status": {
+          "items": {
+            "$ref": "#/definitions/FacetValue"
+          },
+          "type": "array"
+        },
+        "tag": {
+          "items": {
+            "$ref": "#/definitions/FacetValue"
+          },
+          "type": "array"
+        },
+        "user": {
+          "items": {
+            "$ref": "#/definitions/FacetValue"
+          },
+          "type": "array"
+        },
+        "workspace": {
+          "items": {
+            "$ref": "#/definitions/FacetValue"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "user",
+        "family",
+        "group",
+        "workspace",
+        "tag",
+        "status",
+        "model"
+      ],
+      "type": "object"
+    },
+    "RunsListResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "baseline": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SubjectInfo"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "columns": {
+          "items": {
+            "$ref": "#/definitions/ScoreColumnMeta"
+          },
+          "type": "array"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/definitions/RunRow"
+          },
+          "type": "array"
+        },
+        "next_cursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "total": {
+          "$ref": "#/definitions/Count"
+        }
+      },
+      "required": [
+        "items",
+        "next_cursor",
+        "total",
+        "columns",
+        "baseline"
+      ],
+      "type": "object"
+    },
+    "RuntimeBasis": {
+      "description": "How inference_seconds was obtained:\n- measured: the run contained only this task, so its processing time is the task's time.\n- attributed: from per-batch inference metrics split by the task's share of each batch.\n- estimated: the run's processing time times the task's share of the run's tokens.\n- not_recorded: the run predates runtime recording or lacks token counts.",
+      "enum": [
+        "measured",
+        "attributed",
+        "estimated",
+        "not_recorded"
+      ],
+      "type": "string"
+    },
+    "RuntimeMode": {
+      "description": "Selects which runtime a view shows.",
+      "enum": [
+        "inference",
+        "with_startup"
+      ],
+      "type": "string"
+    },
+    "RuntimeStats": {
+      "additionalProperties": false,
+      "properties": {
+        "max": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "median": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "min": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "n": {
+          "$ref": "#/definitions/Count"
+        },
+        "p90": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "n",
+        "median",
+        "p90",
+        "min",
+        "max"
+      ],
+      "type": "object"
+    },
+    "SavedView": {
+      "additionalProperties": false,
+      "properties": {
+        "created_at": {
+          "$ref": "#/definitions/DateTime"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "owner_email": {
+          "type": "string"
+        },
+        "page": {
+          "description": "UI page the query belongs to, e.g. \"runs\" or \"compare\".",
+          "type": "string"
+        },
+        "query": {
+          "description": "URL query string without the leading \"?\".",
+          "type": "string"
+        },
+        "shared": {
+          "type": "boolean"
+        },
+        "updated_at": {
+          "$ref": "#/definitions/DateTime"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "owner_email",
+        "shared",
+        "page",
+        "query",
+        "created_at",
+        "updated_at"
+      ],
+      "type": "object"
+    },
+    "SavedViewsResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "mine": {
+          "items": {
+            "$ref": "#/definitions/SavedView"
+          },
+          "type": "array"
+        },
+        "shared": {
+          "items": {
+            "$ref": "#/definitions/SavedView"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "mine",
+        "shared"
+      ],
+      "type": "object"
+    },
+    "ScoreColumnMeta": {
+      "additionalProperties": false,
+      "properties": {
+        "display_format": {
+          "$ref": "#/definitions/DisplayFormat"
+        },
+        "higher_is_better": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "key": {
+          "description": "\"task:<task_name>\" or \"suite:<suite_name>\" as requested in `cols`.",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "task",
+            "suite"
+          ],
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "kind",
+        "name",
+        "display_format",
+        "higher_is_better"
+      ],
+      "type": "object"
+    },
+    "ScoreColumnValue": {
+      "additionalProperties": false,
+      "properties": {
+        "delta": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DeltaStats"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Vs `baseline` when given. Runs-list deltas are always method \"unpaired\"."
+        },
+        "n": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "score": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "stderr": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "task_result_id": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TaskResultId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "score",
+        "stderr",
+        "n",
+        "task_result_id",
+        "delta"
+      ],
+      "type": "object"
+    },
+    "SearchGroup": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/definitions/SearchResult"
+          },
+          "type": "array"
+        },
+        "type": {
+          "$ref": "#/definitions/SearchResultType"
+        }
+      },
+      "required": [
+        "type",
+        "items"
+      ],
+      "type": "object"
+    },
+    "SearchResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "groups": {
+          "items": {
+            "$ref": "#/definitions/SearchGroup"
+          },
+          "type": "array"
+        },
+        "query": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "query",
+        "groups"
+      ],
+      "type": "object"
+    },
+    "SearchResult": {
+      "additionalProperties": false,
+      "properties": {
+        "href": {
+          "description": "UI route to open, e.g. \"/runs/3f2a1b4c5d6e\".",
+          "type": "string"
+        },
+        "key": {
+          "description": "Stable key: run_id, model series, task name, suite name, group, username.",
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "secondary": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "subject": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SubjectKey"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Subject key when the result can be added to compare or set as baseline."
+        },
+        "type": {
+          "$ref": "#/definitions/SearchResultType"
+        }
+      },
+      "required": [
+        "type",
+        "key",
+        "label",
+        "secondary",
+        "href",
+        "subject"
+      ],
+      "type": "object"
+    },
+    "SearchResultType": {
+      "enum": [
+        "run",
+        "model",
+        "task",
+        "suite",
+        "group",
+        "user",
+        "id"
+      ],
+      "type": "string"
+    },
+    "SeriesOut": {
+      "additionalProperties": false,
+      "properties": {
+        "device": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "points": {
+          "description": "[seconds since run start, value]",
+          "items": {
+            "items": {
+              "type": "number"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "type": "array"
+          },
+          "type": "array"
+        },
+        "unit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "unit",
+        "device",
+        "points"
+      ],
+      "type": "object"
+    },
+    "SignDownloadRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "gs_uri": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "gs_uri"
+      ],
+      "type": "object"
+    },
+    "SignDownloadResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "expires_at": {
+          "$ref": "#/definitions/DateTime"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "url",
+        "expires_at"
+      ],
+      "type": "object"
+    },
+    "StatsSummaryResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "daily": {
+          "items": {
+            "$ref": "#/definitions/DailyStat"
+          },
+          "type": "array"
+        },
+        "instances": {
+          "$ref": "#/definitions/Count"
+        },
+        "models": {
+          "$ref": "#/definitions/Count"
+        },
+        "runs": {
+          "$ref": "#/definitions/Count"
+        },
+        "window_days": {
+          "$ref": "#/definitions/Count"
+        }
+      },
+      "required": [
+        "window_days",
+        "runs",
+        "models",
+        "instances",
+        "daily"
+      ],
+      "type": "object"
+    },
+    "SubjectInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "$ref": "#/definitions/SubjectKey"
+        },
+        "kind": {
+          "enum": [
+            "run",
+            "model"
+          ],
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "latest_at": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DateTime"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model": {
+          "$ref": "#/definitions/ModelRef"
+        },
+        "run": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RunSummary"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Set for run subjects."
+        },
+        "run_ids": {
+          "description": "Runs that contribute task results (one for run subjects).",
+          "items": {
+            "$ref": "#/definitions/RunId"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "key",
+        "kind",
+        "label",
+        "model",
+        "run",
+        "run_ids",
+        "latest_at"
+      ],
+      "type": "object"
+    },
+    "SubjectKey": {
+      "pattern": "^(r:[a-z0-9]{6,32}|m:[0-9a-f]{12})$",
+      "type": "string"
+    },
+    "SubjectTaskResultResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "run_id": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RunId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "subject": {
+          "$ref": "#/definitions/SubjectKey"
+        },
+        "task_hash": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "task_name": {
+          "type": "string"
+        },
+        "task_result_id": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TaskResultId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "subject",
+        "task_name",
+        "task_result_id",
+        "run_id",
+        "task_hash"
+      ],
+      "type": "object"
+    },
+    "SuiteBaselineCell": {
+      "additionalProperties": false,
+      "properties": {
+        "delta": {
+          "$ref": "#/definitions/DeltaStats"
+        },
+        "score": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "stderr": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "score",
+        "stderr",
+        "delta"
+      ],
+      "type": "object"
+    },
+    "SuiteChild": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "task",
+            "suite"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ],
+      "type": "object"
+    },
+    "SuiteDef": {
+      "additionalProperties": false,
+      "properties": {
+        "aggregation": {
+          "type": "string"
+        },
+        "children": {
+          "items": {
+            "$ref": "#/definitions/SuiteChild"
+          },
+          "type": "array"
+        },
+        "definition_hash": {
+          "type": "string"
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "aggregation",
+        "description",
+        "children",
+        "definition_hash"
+      ],
+      "type": "object"
+    },
+    "SuiteDetailResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "aggregation": {
+          "type": "string"
+        },
+        "definition_hash": {
+          "type": "string"
+        },
+        "definitions_seen": {
+          "$ref": "#/definitions/Count",
+          "description": "Number of distinct definitions seen for this name."
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "n_runs": {
+          "$ref": "#/definitions/Count"
+        },
+        "suite_name": {
+          "type": "string"
+        },
+        "tree": {
+          "$ref": "#/definitions/SuiteTreeNode"
+        }
+      },
+      "required": [
+        "suite_name",
+        "aggregation",
+        "description",
+        "definition_hash",
+        "definitions_seen",
+        "tree",
+        "n_runs"
+      ],
+      "type": "object"
+    },
+    "SuiteResultRow": {
+      "additionalProperties": false,
+      "properties": {
+        "aggregation": {
+          "type": "string"
+        },
+        "baseline": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SuiteBaselineCell"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "children": {
+          "items": {
+            "$ref": "#/definitions/SuiteChild"
+          },
+          "type": "array"
+        },
+        "depth": {
+          "$ref": "#/definitions/Count"
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "display_format": {
+          "$ref": "#/definitions/DisplayFormat"
+        },
+        "higher_is_better": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "n_instances": {
+          "$ref": "#/definitions/Count"
+        },
+        "name": {
+          "type": "string"
+        },
+        "num_tasks": {
+          "$ref": "#/definitions/Count"
+        },
+        "parent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "score": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "stderr": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "tasks_missing": {
+          "description": "Child tasks the run has no result for.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "parent",
+        "depth",
+        "aggregation",
+        "description",
+        "children",
+        "score",
+        "stderr",
+        "num_tasks",
+        "n_instances",
+        "display_format",
+        "higher_is_better",
+        "tasks_missing",
+        "baseline"
+      ],
+      "type": "object"
+    },
+    "SuiteRow": {
+      "additionalProperties": false,
+      "properties": {
+        "aggregation": {
+          "type": "string"
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last_run_at": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DateTime"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "n_children": {
+          "$ref": "#/definitions/Count"
+        },
+        "n_runs": {
+          "$ref": "#/definitions/Count"
+        },
+        "n_tasks": {
+          "$ref": "#/definitions/Count"
+        },
+        "suite_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "suite_name",
+        "aggregation",
+        "description",
+        "n_children",
+        "n_tasks",
+        "n_runs",
+        "last_run_at"
+      ],
+      "type": "object"
+    },
+    "SuiteTreeNode": {
+      "additionalProperties": false,
+      "properties": {
+        "aggregation": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "children": {
+          "items": {
+            "$ref": "#/definitions/SuiteTreeNode"
+          },
+          "type": "array"
+        },
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "task",
+            "suite"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "name",
+        "aggregation",
+        "children"
+      ],
+      "type": "object"
+    },
+    "SuitesListResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/definitions/SuiteRow"
+          },
+          "type": "array"
+        },
+        "next_cursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "total": {
+          "$ref": "#/definitions/Count"
+        }
+      },
+      "required": [
+        "items",
+        "next_cursor",
+        "total"
+      ],
+      "type": "object"
+    },
+    "TaskConfigEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "config": {
+          "$ref": "#/definitions/JsonObject"
+        },
+        "task_hash": {
+          "type": "string"
+        },
+        "task_name": {
+          "type": "string"
+        },
+        "task_result_id": {
+          "$ref": "#/definitions/TaskResultId"
+        }
+      },
+      "required": [
+        "task_result_id",
+        "task_name",
+        "task_hash",
+        "config"
+      ],
+      "type": "object"
+    },
+    "TaskDetailResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "base_task": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "suites": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "task_name": {
+          "type": "string"
+        },
+        "variants": {
+          "description": "Most runs first.",
+          "items": {
+            "$ref": "#/definitions/TaskVariantInfo"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "task_name",
+        "base_task",
+        "suites",
+        "variants"
+      ],
+      "type": "object"
+    },
+    "TaskResultId": {
+      "$ref": "#/definitions/Integer",
+      "description": "Database ID of a task result."
+    },
+    "TaskResultRow": {
+      "additionalProperties": false,
+      "properties": {
+        "base_task": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "baseline": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/BaselineCell"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "completion_tokens_total": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "duration_seconds": {
+          "description": "Seconds from the run's processing start until this task finished (shared workers).",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error_summary": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/JsonObject"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "finish_reason_counts": {
+          "additionalProperties": {
+            "$ref": "#/definitions/Count"
+          },
+          "type": "object"
+        },
+        "instance_scale": {
+          "type": "number"
+        },
+        "instances_failed": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "instances_processed": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "instances_stored": {
+          "$ref": "#/definitions/Count"
+        },
+        "limit": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mean_completion_tokens": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "metric_meta": {
+          "additionalProperties": {
+            "$ref": "#/definitions/MetricMeta"
+          },
+          "description": "Keyed by \"metric:scorer\" for every key in metrics.",
+          "type": "object"
+        },
+        "metrics": {
+          "$ref": "#/definitions/FlatMetrics"
+        },
+        "n": {
+          "$ref": "#/definitions/Count"
+        },
+        "num_fewshot": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "predictions_uri": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "primary_metric": {
+          "description": "\"metric:scorer\" used as the score.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "requests_uri": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "run_id": {
+          "$ref": "#/definitions/RunId"
+        },
+        "runtime": {
+          "$ref": "#/definitions/TaskRuntime"
+        },
+        "score": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "score_is_mean": {
+          "description": "The corpus score equals the mean of per-instance values (times instance_scale).",
+          "type": "boolean"
+        },
+        "split": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "stderr": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "suites": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "task_hash": {
+          "type": "string"
+        },
+        "task_name": {
+          "type": "string"
+        },
+        "task_result_id": {
+          "$ref": "#/definitions/TaskResultId"
+        },
+        "truncation_rate": {
+          "description": "Share of instances with finish_reason \"length\".",
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "task_result_id",
+        "run_id",
+        "task_name",
+        "task_hash",
+        "base_task",
+        "primary_metric",
+        "metric_meta",
+        "score",
+        "stderr",
+        "score_is_mean",
+        "instance_scale",
+        "n",
+        "instances_processed",
+        "instances_failed",
+        "instances_stored",
+        "metrics",
+        "error",
+        "error_summary",
+        "duration_seconds",
+        "runtime",
+        "completion_tokens_total",
+        "mean_completion_tokens",
+        "truncation_rate",
+        "finish_reason_counts",
+        "num_fewshot",
+        "limit",
+        "split",
+        "suites",
+        "predictions_uri",
+        "requests_uri",
+        "baseline"
+      ],
+      "type": "object"
+    },
+    "TaskRow": {
+      "additionalProperties": false,
+      "properties": {
+        "base_task": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last_run_at": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DateTime"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "n_models": {
+          "$ref": "#/definitions/Count"
+        },
+        "n_runs": {
+          "$ref": "#/definitions/Count"
+        },
+        "n_variants": {
+          "$ref": "#/definitions/Count"
+        },
+        "primary_metric": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "suites": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "task_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_name",
+        "base_task",
+        "n_variants",
+        "n_runs",
+        "n_models",
+        "suites",
+        "primary_metric",
+        "last_run_at"
+      ],
+      "type": "object"
+    },
+    "TaskRuntime": {
+      "additionalProperties": false,
+      "properties": {
+        "basis": {
+          "$ref": "#/definitions/RuntimeBasis"
+        },
+        "completion_tokens_total": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "inference_seconds": {
+          "description": "Inference time for this task alone.",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "prompt_tokens_total": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "seconds_per_1k_instances": {
+          "description": "inference_seconds per 1,000 instances.",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "span_end_s": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "span_start_s": {
+          "description": "Wall-clock span within the run, in seconds after processing started.",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "startup_seconds": {
+          "description": "The run's startup (model load, server start); excludes Beaker queueing.",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "token_share": {
+          "description": "The task's share of the run's prompt plus completion tokens, 0 to 1.",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "with_startup_seconds": {
+          "description": "inference_seconds plus the run's full startup: about what running this task alone takes.",
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "inference_seconds",
+        "basis",
+        "startup_seconds",
+        "with_startup_seconds",
+        "token_share",
+        "prompt_tokens_total",
+        "completion_tokens_total",
+        "seconds_per_1k_instances",
+        "span_start_s",
+        "span_end_s"
+      ],
+      "type": "object"
+    },
+    "TaskRuntimeModelRow": {
+      "additionalProperties": false,
+      "properties": {
+        "gpu_count": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "gpu_type": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "inference": {
+          "$ref": "#/definitions/RuntimeStats"
+        },
+        "latest_score": {
+          "description": "Score of the model's latest run in this group.",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "model": {
+          "$ref": "#/definitions/ModelRef"
+        },
+        "runs": {
+          "$ref": "#/definitions/Count"
+        },
+        "seconds_per_1k_instances": {
+          "$ref": "#/definitions/RuntimeStats"
+        },
+        "with_startup": {
+          "$ref": "#/definitions/RuntimeStats"
+        }
+      },
+      "required": [
+        "model",
+        "gpu_type",
+        "gpu_count",
+        "runs",
+        "inference",
+        "with_startup",
+        "seconds_per_1k_instances",
+        "latest_score"
+      ],
+      "type": "object"
+    },
+    "TaskRuntimePoint": {
+      "additionalProperties": false,
+      "properties": {
+        "date": {
+          "$ref": "#/definitions/DateTime"
+        },
+        "gpu_count": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "gpu_type": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "$ref": "#/definitions/ModelRef"
+        },
+        "n": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "run_id": {
+          "$ref": "#/definitions/RunId"
+        },
+        "runtime": {
+          "$ref": "#/definitions/TaskRuntime"
+        },
+        "score": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "task_result_id": {
+          "$ref": "#/definitions/TaskResultId"
+        }
+      },
+      "required": [
+        "run_id",
+        "task_result_id",
+        "model",
+        "date",
+        "gpu_type",
+        "gpu_count",
+        "score",
+        "n",
+        "runtime"
+      ],
+      "type": "object"
+    },
+    "TaskRuntimeResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "gpu_types": {
+          "description": "GPU types present, most runs first (for the filter).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "meta": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/MetricMeta"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "not_recorded": {
+          "$ref": "#/definitions/Count",
+          "description": "Runs of this variant whose runtime is not recorded."
+        },
+        "points": {
+          "description": "One point per finalized run with any runtime data, newest first, at most 2,000.",
+          "items": {
+            "$ref": "#/definitions/TaskRuntimePoint"
+          },
+          "type": "array"
+        },
+        "rows": {
+          "description": "One row per (model, GPU type, GPU count).",
+          "items": {
+            "$ref": "#/definitions/TaskRuntimeModelRow"
+          },
+          "type": "array"
+        },
+        "task_hash": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "task_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_name",
+        "task_hash",
+        "meta",
+        "gpu_types",
+        "rows",
+        "points",
+        "not_recorded"
+      ],
+      "type": "object"
+    },
+    "TaskVariantInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "config": {
+          "$ref": "#/definitions/JsonObject"
+        },
+        "first_seen_at": {
+          "$ref": "#/definitions/DateTime"
+        },
+        "last_seen_at": {
+          "$ref": "#/definitions/DateTime"
+        },
+        "limit": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "metric_meta": {
+          "additionalProperties": {
+            "$ref": "#/definitions/MetricMeta"
+          },
+          "type": "object"
+        },
+        "n_instances": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Count"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Median stored instances across runs."
+        },
+        "n_runs": {
+          "$ref": "#/definitions/Count"
+        },
+        "num_fewshot": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "primary_metric": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "split": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "task_hash": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_hash",
+        "n_runs",
+        "primary_metric",
+        "metric_meta",
+        "num_fewshot",
+        "limit",
+        "split",
+        "n_instances",
+        "first_seen_at",
+        "last_seen_at",
+        "config"
+      ],
+      "type": "object"
+    },
+    "TasksListResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/definitions/TaskRow"
+          },
+          "type": "array"
+        },
+        "next_cursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "total": {
+          "$ref": "#/definitions/Count"
+        }
+      },
+      "required": [
+        "items",
+        "next_cursor",
+        "total"
+      ],
+      "type": "object"
+    },
+    "UpdateViewRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "query": {
+          "type": "string"
+        },
+        "shared": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "UploadState": {
+      "enum": [
+        "uploading",
+        "complete"
+      ],
+      "type": "string"
+    },
+    "VariantCount": {
+      "additionalProperties": false,
+      "properties": {
+        "n_runs": {
+          "$ref": "#/definitions/Count"
+        },
+        "settings_hash": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "settings_hash",
+        "n_runs"
+      ],
+      "type": "object"
+    },
+    "VariantInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "differs": {
+          "$ref": "#/definitions/JsonObject",
+          "description": "Provider-config keys whose values differ from the most common variant."
+        },
+        "n_runs": {
+          "$ref": "#/definitions/Count"
+        },
+        "settings_hash": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "settings_hash",
+        "n_runs",
+        "differs"
+      ],
+      "type": "object"
+    }
+  }
+}

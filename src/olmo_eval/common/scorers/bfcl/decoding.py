@@ -1,7 +1,8 @@
 """Turn a model's reply into the list of calls the BFCL checker compares.
 
-A reply is the ``[func(arg=value)]`` text BFCL asks for, and decoding ends at
-the shape the checker compares::
+Whatever regime produced the reply — native tool calls from an OpenAI-style
+endpoint, or the ``[func(arg=value)]`` text BFCL asks a prompted model for —
+decoding ends at the same shape::
 
     [{"function_name": {"param": value, ...}}, ...]
 
@@ -103,22 +104,26 @@ def resolve_ast_by_type(value: ast.AST) -> Any:
     raise DecodeError(f"Unsupported AST type: {type(value)}")
 
 
+def call_name(node: ast.Call) -> str:
+    """The dotted name a call node calls, e.g. ``math.factorial``."""
+    parts: list[str] = []
+    func: ast.expr = node.func
+    while isinstance(func, ast.Attribute):
+        parts.append(func.attr)
+        func = func.value
+    if isinstance(func, ast.Name):
+        parts.append(func.id)
+    return ".".join(reversed(parts))
+
+
 def resolve_ast_call(elem: ast.Call) -> dict[str, dict[str, Any]]:
     """Convert one call node to ``{name: {param: value}}``."""
-    func_parts: list[str] = []
-    func_part: ast.expr = elem.func
-    while isinstance(func_part, ast.Attribute):
-        func_parts.append(func_part.attr)
-        func_part = func_part.value
-    if isinstance(func_part, ast.Name):
-        func_parts.append(func_part.id)
-    func_name = ".".join(reversed(func_parts))
     args = {
         keyword.arg: resolve_ast_by_type(keyword.value)
         for keyword in elem.keywords
         if keyword.arg is not None
     }
-    return {func_name: args}
+    return {call_name(elem): args}
 
 
 def parse_python_calls(input_str: str) -> list[dict[str, Any]]:
@@ -236,6 +241,31 @@ def decode_text_lenient(text: str, language: Language = Language.PYTHON) -> list
             return calls
 
     raise first_error
+
+
+def decode_tool_calls(
+    tool_calls: list[Any] | None,
+    name_map: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    """Decode native tool calls returned by an OpenAI-compatible endpoint.
+
+    ``name_map`` restores the function names as the dataset spells them, since
+    the schemas sent to the endpoint use names an OpenAI tool name must match.
+    """
+    calls: list[dict[str, Any]] = []
+    for tool_call in tool_calls or []:
+        name = tool_call.function.name or ""
+        raw_arguments = tool_call.function.arguments or "{}"
+        try:
+            arguments = (
+                json.loads(raw_arguments) if isinstance(raw_arguments, str) else raw_arguments
+            )
+        except json.JSONDecodeError as exc:
+            raise DecodeError(f"Arguments for {name!r} are not valid JSON: {exc}") from exc
+        if not isinstance(arguments, dict):
+            raise DecodeError(f"Arguments for {name!r} are not an object.")
+        calls.append({(name_map or {}).get(name, name): arguments})
+    return calls
 
 
 def is_function_calling_format(decoded: Any) -> bool:

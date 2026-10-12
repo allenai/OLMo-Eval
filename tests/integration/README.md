@@ -146,20 +146,3 @@ pytest tests/integration/ -v --integration --vllm-model "Qwen/Qwen2-0.5B"
 
 # Or reduce GPU memory utilization in docker-compose.yml
 ```
-
-## CI/CD Integration
-
-For CI pipelines with GPU runners:
-
-```yaml
-# GitHub Actions example
-jobs:
-  integration-tests:
-    runs-on: [self-hosted, gpu]
-    steps:
-      - uses: actions/checkout@v4
-      - name: Run integration tests
-        run: |
-          pip install -e ".[dev]"
-          pytest tests/integration/ -v --integration
-```

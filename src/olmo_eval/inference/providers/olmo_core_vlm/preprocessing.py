@@ -87,10 +87,48 @@ def resolve_max_crops(info: MultimodalCheckpointInfo, explicit_max_crops: int | 
     return DEFAULT_MAX_CROPS
 
 
+#: Per-image crop budget for multi-image prompts when the checkpoint names none: the
+#: released Molmo2 ``max_multi_image_crops``, which mm_olmo's ``MultiImagePreprocessor``
+#: uses whenever an example has more than one image.
+DEFAULT_MAX_MULTI_IMAGE_CROPS = 8
+
+#: The sequence length mm_olmo's ``eval_molmo2.py`` evaluates Molmo2 models at. A
+#: checkpoint's training window is often shorter (16,384 for Molmo2-4B), and many-image
+#: prompts such as MMIU's exceed it.
+EVAL_MAX_LENGTH = 64_000
+
+
+def resolve_max_multi_image_crops(
+    info: MultimodalCheckpointInfo, explicit_max_multi_image_crops: int | None
+) -> int:
+    """Pick the per-image crop budget for multi-image prompts: explicit > checkpoint hint > 8."""
+    if explicit_max_multi_image_crops is not None:
+        return explicit_max_multi_image_crops
+    if info.format == "mm_olmo_dcp":
+        image_cfg = (info.model_config.get("mm_preprocessor") or {}).get("image") or {}
+        max_crops = image_cfg.get("max_multi_image_crops")
+    else:
+        dataset = info.config.get("dataset")
+        max_crops = dataset.get("max_multi_image_crops") if isinstance(dataset, dict) else None
+    if isinstance(max_crops, int) and max_crops > 0:
+        return max_crops
+    return DEFAULT_MAX_MULTI_IMAGE_CROPS
+
+
 def resolve_max_length(info: MultimodalCheckpointInfo, explicit_max_length: int | None) -> int:
-    """Pick the max sequence length: explicit > checkpoint hint > 4096."""
+    """Pick the max sequence length: explicit, else the longer of the checkpoint's training
+    window and :data:`EVAL_MAX_LENGTH`.
+
+    Only prompts longer than the training window see the difference: they are answered,
+    as mm_olmo answers them, instead of failing their instance.
+    """
     if explicit_max_length is not None:
         return explicit_max_length
+    return max(_checkpoint_max_length(info), EVAL_MAX_LENGTH)
+
+
+def _checkpoint_max_length(info: MultimodalCheckpointInfo) -> int:
+    """The checkpoint's training sequence length, or 4096 when it records none."""
     if info.format == "mm_olmo_dcp":
         max_length = (info.model_config.get("llm") or {}).get("max_sequence_length")
         if isinstance(max_length, int) and max_length > 0:

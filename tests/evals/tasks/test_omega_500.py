@@ -5,6 +5,7 @@ from __future__ import annotations
 import unittest
 
 from olmo_eval.common.types import Instance, LMOutput, RequestType
+from olmo_eval.evals.tasks import omega_500
 from olmo_eval.evals.tasks.common import get_task
 from olmo_eval.evals.tasks.omega_500 import _FLEX, _STRICT
 
@@ -25,6 +26,21 @@ class TestOmega500Task(unittest.TestCase):
         primary = task.config.get_primary_metric()
         assert primary is not None
         self.assertEqual(primary.name, "exact_match_flex")
+        self.assertIsNone(task.config.sampling_params.max_tokens)
+        self.assertEqual(task.config.data_source.path, "saumyamalik/omega-500")
+
+    def test_hillclimb_registered(self) -> None:
+        base = get_task("omega_500")
+        hillclimb = get_task("omega_500:hillclimb")
+        self.assertEqual(hillclimb.config.name, "omega_500:hillclimb")
+        self.assertEqual(hillclimb.config.get_primary_metric().name, "exact_match")
+        self.assertEqual(hillclimb.config.get_data_source().path, "allenai/omega-500")
+        self.assertEqual(hillclimb.config.get_data_source().revision, omega_500.OMEGA_500_REVISION)
+        self.assertEqual(hillclimb.config.sampling_params.max_tokens, 32768)
+        self.assertEqual(hillclimb.config.sampling_params.temperature, 0.6)
+        self.assertEqual(hillclimb.config.sampling_params.top_p, 0.95)
+        self.assertEqual(hillclimb.config.metrics, base.config.metrics)
+        self.assertEqual(hillclimb.config.formatter, base.config.formatter)
 
     def test_process_doc(self) -> None:
         task = get_task("omega_500")
@@ -117,6 +133,42 @@ class TestOmegaScorers(unittest.TestCase):
 
         self.assertEqual(OmegaExactMatchScorer(flex=True).name, "exact_match_flex")
         self.assertEqual(OmegaExactMatchScorer().name, "exact_match")
+
+
+class TestOmegaDocIds(unittest.TestCase):
+    DOC = {
+        "id": "omega_500_001",
+        "ground_truth": "42",
+        "family": "arithmetic_gcd",
+        "messages": [{"role": "user", "content": "q"}],
+    }
+
+    def test_historical_task_keeps_positional_id(self):
+        """Stored omega_500 results pair by (task_hash, native_id); the ID must not drift."""
+        instance = get_task("omega_500").process_doc(dict(self.DOC), index=99)
+        self.assertEqual(instance.metadata["id"], 99)
+        self.assertEqual(instance.metadata["family"], "arithmetic_gcd")
+
+    def test_hillclimb_uses_dataset_id(self):
+        instance = get_task("omega_500:hillclimb").process_doc(dict(self.DOC), index=99)
+        self.assertEqual(instance.metadata["id"], "omega_500_001")
+        self.assertEqual(instance.metadata["family"], "arithmetic_gcd")
+
+
+def test_unboxed_fast_path_matches_reference_cascade(monkeypatch):
+    cases = [
+        "reasoning\n" * 200 + ending
+        for ending in ("", "answer: 42", "Therefore, the final answer is 42", "answer is:\n42")
+    ] + [r"\boxed{4}", r"first \boxed{3} then \boxed{4}", r"unfinished \boxed{"]
+    actual = [omega_500._extract(text) for text in cases]
+    original = omega_500.extract_answer_with_format
+
+    def reference(text, **kwargs):
+        kwargs["answer_regexes"] = omega_500._ANSWER_REGEXES
+        return original(text, **kwargs)
+
+    monkeypatch.setattr(omega_500, "extract_answer_with_format", reference)
+    assert actual == [omega_500._extract(text) for text in cases]
 
 
 if __name__ == "__main__":

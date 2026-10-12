@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, fields, replace
@@ -155,7 +156,11 @@ class HarnessConfig:
         if self.sandboxes:
             d["sandboxes"] = [s.to_dict() for s in self.sandboxes]
         if self.scaffold_kwargs:
-            d["scaffold_kwargs"] = self.scaffold_kwargs
+            # Copied so a caller that writes into the result cannot change
+            # this config. Presets are cached for the life of the process, so
+            # sharing the dict would let one caller's edits leak into every
+            # later config built from the same preset.
+            d["scaffold_kwargs"] = copy.deepcopy(self.scaffold_kwargs)
         if self.sandbox_pool_instances is not None:
             d["sandbox_pool_instances"] = self.sandbox_pool_instances
         if self.sandbox_pool_min_instances is not None:

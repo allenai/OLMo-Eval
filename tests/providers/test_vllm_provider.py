@@ -78,7 +78,9 @@ class FakeLLM:
                 "use_tqdm": use_tqdm,
             }
         )
-        completion = SimpleNamespace(text="ok", logprobs=None)
+        completion = SimpleNamespace(
+            text="ok", logprobs=None, finish_reason="length", token_ids=[7]
+        )
         return [SimpleNamespace(outputs=[completion]) for _ in prompts]
 
 
@@ -149,3 +151,11 @@ def test_generate_keeps_completion_prompt_unchanged(
 
     assert tokenizer.template_calls == []
     assert llm.generate_calls[0]["prompts"] == ["Complete me"]
+
+
+def test_generate_preserves_termination_without_logprobs(fake_provider) -> None:
+    provider, _, _ = fake_provider
+    request = LMRequest(request_type=RequestType.COMPLETION, prompt="Q")
+    output = provider.generate([request], SamplingParams(max_tokens=1))[0][0]
+    assert output.metadata["finish_reason"] == "length"
+    assert output.metadata["completion_tokens"] == 1

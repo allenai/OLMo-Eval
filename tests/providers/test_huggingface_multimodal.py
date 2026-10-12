@@ -67,6 +67,32 @@ def _build_provider(processor, model):
     return provider, fake_transformers
 
 
+def test_multimodal_multi_image_request_uses_multi_image_crops():
+    processor = MagicMock()
+    processor.tokenizer = MagicMock()
+    processor.tokenizer.decode = MagicMock(return_value="A")
+    processor.apply_chat_template = MagicMock(return_value="<formatted-chat>")
+    processor.return_value = {"input_ids": np.array([[1, 2, 3]])}
+    model = MagicMock()
+    model.named_modules.return_value = []
+    model.generate.return_value = np.array([[1, 2, 3, 7]])
+
+    provider, _ = _build_provider(processor, model)
+    images = (SimpleNamespace(mode="RGB"), SimpleNamespace(mode="RGB"))
+    request = LMRequest(
+        request_type=RequestType.CHAT,
+        messages=({"role": "user", "content": "Which image?"},),
+        images=images,
+    )
+    with patch.dict("sys.modules", {"torch": _fake_torch()}):
+        provider.generate([request], SamplingParams(temperature=0.0, max_tokens=4))
+
+    # mm_olmo crops each image of a multi-image prompt to max_multi_image_crops (8),
+    # not the single-image budget the preset raises to 24.
+    _, proc_kwargs = processor.call_args
+    assert proc_kwargs["max_crops"] == 8
+
+
 def test_multimodal_init_uses_processor_and_image_text_model():
     processor = MagicMock()
     processor.tokenizer = MagicMock()
@@ -149,3 +175,47 @@ def test_multimodal_logprobs_not_supported():
     )
     with pytest.raises(NotImplementedError):
         provider.logprobs([request])
+
+
+def test_masking_kwargs_shim_matches_the_installed_signature():
+    """The Molmo2 remote code's ``input_embeds``/``cache_position`` kwargs reach transformers
+    in whatever form the installed ``masking_utils`` accepts."""
+    from olmo_eval.inference.providers.huggingface import _patch_masking_kwargs
+
+    calls: dict[str, dict] = {}
+
+    def create_causal_mask(
+        config, inputs_embeds, attention_mask, past_key_values, position_ids=None
+    ):
+        calls["causal"] = {"inputs_embeds": inputs_embeds, "position_ids": position_ids}
+
+    def create_masks_for_generate(config, inputs_embeds, attention_mask, past_key_values, **kwargs):
+        calls["generate"] = {"inputs_embeds": inputs_embeds, **kwargs}
+
+    fake = SimpleNamespace(
+        create_causal_mask=create_causal_mask, create_masks_for_generate=create_masks_for_generate
+    )
+    with patch.dict("sys.modules", {"transformers.masking_utils": fake}):
+        _patch_masking_kwargs()
+        _patch_masking_kwargs()  # idempotent: the second call must not wrap the wrapper
+        assert fake.create_causal_mask.__wrapped__ is create_causal_mask
+        fake.create_causal_mask(
+            config=None,
+            input_embeds="x",
+            attention_mask=None,
+            cache_position=3,
+            past_key_values=None,
+            position_ids="p",
+        )
+        fake.create_masks_for_generate(
+            config=None,
+            input_embeds="y",
+            attention_mask=None,
+            cache_position=3,
+            past_key_values=None,
+        )
+
+    # create_causal_mask lost cache_position in 5.9, so it is dropped there ...
+    assert calls["causal"] == {"inputs_embeds": "x", "position_ids": "p"}
+    # ... while create_masks_for_generate still takes **kwargs, so it keeps it.
+    assert calls["generate"] == {"inputs_embeds": "y", "cache_position": 3}

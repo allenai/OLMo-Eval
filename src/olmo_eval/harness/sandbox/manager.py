@@ -51,6 +51,12 @@ class ExecutorBinding:
             raise RuntimeError("Binding has been released")
         return await self.executor.execute_in_session(command, timeout)
 
+    async def interrupt_session(self) -> None:
+        """Interrupt the command running in the bound executor's bash session."""
+        if self._released:
+            raise RuntimeError("Binding has been released")
+        await self.executor.interrupt_session()
+
     async def release(self) -> None:
         if not self._released:
             self._released = True
@@ -314,6 +320,14 @@ class SandboxManager:
         self._round_robin_indices.clear()
         self._active_operations.clear()
         self._logger.info("All sandboxes stopped")
+
+        if self._modal_app_name is not None:
+            from .modal_deployment import stop_modal_app
+
+            try:
+                await stop_modal_app(self._modal_app_name)
+            except Exception as e:
+                self._logger.warning(f"Failed to stop Modal app {self._modal_app_name}: {e}")
 
         with contextlib.suppress(Exception):
             atexit.unregister(self._atexit_cleanup)

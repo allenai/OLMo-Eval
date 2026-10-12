@@ -14,11 +14,18 @@ from typing import Any
 
 
 def resolve_image(entry: Any) -> Any:
-    """Resolve one images entry to a PIL image (returns ``None`` unchanged)."""
+    """Resolve one images entry to a PIL image, or a list of them.
+
+    A callable may return a whole image list (the multi-image tasks attach one
+    lazy loader for the example's list); its items are resolved recursively.
+    Returns ``None`` unchanged.
+    """
     if entry is None:
         return None
     if callable(entry):
         entry = entry()
+    if isinstance(entry, (list, tuple)):
+        return [resolve_image(item) for item in entry]
     if isinstance(entry, (str, Path)):
         from PIL import Image
 
@@ -27,7 +34,20 @@ def resolve_image(entry: Any) -> Any:
 
 
 def resolve_images(images: tuple[Any, ...] | None) -> tuple[Any, ...] | None:
-    """Resolve a request's images tuple; ``None`` stays ``None``."""
+    """Resolve a request's images tuple, flattening lists and dropping empty slots.
+
+    A benchmark with a variable image count per example (MMMU-Pro interleaves up
+    to seven) attaches one lazy reference per slot, and the multi-image tasks
+    attach a single lazy loader for the whole list. Unused slots resolve to
+    ``None`` and must not reach the provider as holes in the image list.
+    """
     if not images:
         return None
-    return tuple(resolve_image(entry) for entry in images)
+    resolved: list[Any] = []
+    for entry in images:
+        item = resolve_image(entry)
+        if isinstance(item, (list, tuple)):
+            resolved.extend(image for image in item if image is not None)
+        elif item is not None:
+            resolved.append(item)
+    return tuple(resolved) or None

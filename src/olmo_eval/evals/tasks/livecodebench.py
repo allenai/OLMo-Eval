@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from olmo_eval.common.execution import ExecutionEnvironment
 
 LIVECODEBENCH_REPO = "livecodebench/code_generation_lite"
+LIVECODEBENCH_REVISION = "0fe84c3912ea0c4d4a78037083943e8f0c4dd505"
 
 # Each release adds one data file; a window of files is one contest date range.
 RELEASE_V3_FILES: tuple[str, ...] = ("test.jsonl", "test2.jsonl", "test3.jsonl")
@@ -88,17 +89,18 @@ _TEST_CASE_ROWS_LOCK = threading.Lock()
 
 
 @lru_cache(maxsize=4)
-def _open_test_case_rows(repo: str, files: tuple[str, ...]) -> Any:
+def _open_test_case_rows(repo: str, files: tuple[str, ...], revision: str | None = None) -> Any:
     from datasets import load_dataset
 
+    at_revision = f"@{revision}" if revision else ""
     return load_dataset(
         "json",
-        data_files={"train": [f"hf://datasets/{repo}/{name}" for name in files]},
+        data_files={"train": [f"hf://datasets/{repo}{at_revision}/{name}" for name in files]},
         split="train",
     )
 
 
-def _test_case_rows(repo: str, files: tuple[str, ...]) -> Any:
+def _test_case_rows(repo: str, files: tuple[str, ...], revision: str | None = None) -> Any:
     """Open a release's data files for random access by row.
 
     Test payloads run to gigabytes per release, so they are read here when a
@@ -108,7 +110,7 @@ def _test_case_rows(repo: str, files: tuple[str, ...]) -> Any:
     thread that finds the cache empty.
     """
     with _TEST_CASE_ROWS_LOCK:
-        return _open_test_case_rows(repo, files)
+        return _open_test_case_rows(repo, files, revision)
 
 
 def _stage_problem(metadata: dict[str, Any], timeout: float) -> str:
@@ -117,7 +119,9 @@ def _stage_problem(metadata: dict[str, Any], timeout: float) -> str:
     Reading the row and encoding it can take most of a second for the largest
     problems, so callers run this off the event loop.
     """
-    row = _test_case_rows(metadata["test_repo"], tuple(metadata["test_files"]))[metadata["row"]]
+    row = _test_case_rows(
+        metadata["test_repo"], tuple(metadata["test_files"]), metadata.get("test_revision")
+    )[metadata["row"]]
     if row["question_id"] != metadata["id"]:
         # Grading against another problem's tests would score every
         # solution wrong while still looking like a plausible result.
@@ -345,6 +349,7 @@ class LiveCodeBench(Task):
 
     data_source = DataSource(
         path=LIVECODEBENCH_REPO,
+        revision=LIVECODEBENCH_REVISION,
         data_files=RELEASE_V3_FILES,
         split="train",
     )
@@ -375,6 +380,9 @@ class LiveCodeBench(Task):
         if hasattr(contest_date, "isoformat"):
             contest_date = contest_date.isoformat()
 
+        # The grader reads test cases from the same repository and revision
+        # the prompts came from, so an overridden source stays consistent.
+        source = self.config.get_data_source()
         return Instance(
             question=doc["question_content"],
             metadata={
@@ -382,7 +390,8 @@ class LiveCodeBench(Task):
                 # Located by row so the scorer can read this problem's test
                 # cases without them travelling on the instance.
                 "row": index,
-                "test_repo": LIVECODEBENCH_REPO,
+                "test_repo": source.path.removeprefix("hf://"),
+                "test_revision": source.revision,
                 "test_files": self.release_files,
                 "format_instruction": format_instruction,
                 "fn_name": problem_metadata.get("func_name"),
@@ -412,6 +421,7 @@ class LiveCodeBenchHidden(LiveCodeBench):
 
     data_source = DataSource(
         path=LIVECODEBENCH_REPO,
+        revision=LIVECODEBENCH_REVISION,
         data_files=RELEASE_V4_V6_FILES,
         split="train",
     )

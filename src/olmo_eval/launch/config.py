@@ -131,7 +131,8 @@ class EvalConfig:
     max_gpus_per_node: int = DEFAULT_MAX_GPUS_PER_NODE
 
     priority: str = "normal"
-    preemptible: bool = True
+    preemptible: bool | None = None
+    min_runtime: str | None = None
     timeout: str = "24h"
     retries: int | None = None
 

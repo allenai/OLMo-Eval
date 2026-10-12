@@ -10,6 +10,8 @@ Two levels:
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any
 from unittest.mock import patch
 
@@ -21,6 +23,7 @@ from olmo_eval.evals.vision.benchmarks.dense_caption import (
     _DEFAULT_METRICS,
     DenseCaptionAvgMetric,
 )
+from olmo_eval.evals.vision.scoring import judges
 from olmo_eval.evals.vision.scoring.judges import (
     DenseCaptionJudgeScorer,
     parse_consistency_output,
@@ -76,6 +79,17 @@ class TestParseRecallOutput:
         covered, total = parse_recall_output(text)
         assert total == 2
         assert covered == 1
+
+
+class TestLegacyCacheKey:
+    def test_key_matches_mm_olmo_gpt4_with_cache(self):
+        # The shared gpt4-cache/ is only reusable while the key stays byte-identical to
+        # mm_olmo's Gpt4WithCache: model, JSON-encoded prompt, sorted kwargs.
+        prompt = 'Here is the caption: "a cat"'
+        expected = hashlib.sha256(
+            ("gpt-4o-2024-05-13::::" + json.dumps(prompt) + '::::{"temperature": 0}').encode()
+        ).hexdigest()
+        assert judges._cache_key("gpt-4o-2024-05-13", prompt) == expected
 
 
 # ---------------------------------------------------------------------------

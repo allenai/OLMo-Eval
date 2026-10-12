@@ -30,3 +30,19 @@ def molmo_data_dir() -> Path:
 
 def torch_datasets_dir() -> Path:
     return molmo_data_dir() / "torch_datasets"
+
+
+def rebase_data_path(path: str) -> str:
+    """Rebase an absolute path recorded on another machine onto the current root.
+
+    mm_olmo's prepared datasets store absolute image paths from the machine that
+    built them; if the stored path does not exist locally but contains
+    ``torch_datasets/``, re-anchor it under the current data root.
+    """
+    if os.path.exists(path):
+        return path
+    marker = "torch_datasets/"
+    if marker in path:
+        suffix = path.split(marker, 1)[1]
+        return str(torch_datasets_dir() / suffix)
+    return path

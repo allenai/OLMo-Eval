@@ -50,3 +50,46 @@ def load_instance_image(instance: Instance):
     if image is None:
         image = instance.metadata.get("image_path")
     return resolve_image(image)
+
+
+def _decode_hf_image_list_cell(dataset: Any, index: int, column: str) -> list:
+    """Decode one list-of-images cell of a no-decode HF dataset (module-level so it
+    is picklable)."""
+    import io
+
+    from PIL import Image
+
+    out = []
+    for rec in dataset[index][column]:
+        if isinstance(rec, dict):
+            if rec.get("bytes"):
+                rec = Image.open(io.BytesIO(rec["bytes"]))
+            elif rec.get("path"):
+                rec = Image.open(rec["path"])
+        out.append(rec)
+    return out
+
+
+def lazy_hf_image_list(dataset, index: int, column: str):
+    """A picklable zero-arg callable that decodes one list-of-images cell.
+
+    ``dataset`` should have ``column`` cast to a sequence of
+    ``datasets.Image(decode=False)`` so building instances never decodes pixels.
+    """
+    return functools.partial(_decode_hf_image_list_cell, dataset, index, column)
+
+
+def _capped_image_list(images: Any, max_images: int) -> list:
+    """Resolve a metadata ``images`` value and cap it (module-level so it is picklable)."""
+    if callable(images):
+        images = images()
+    return list(images)[:max_images]
+
+
+def capped_image_list(images: Any, max_images: int):
+    """A picklable zero-arg callable yielding the example's image list, capped.
+
+    The returned entries may still be paths or callables; providers resolve them
+    (``olmo_eval.common.images.resolve_images``) at inference time.
+    """
+    return functools.partial(_capped_image_list, images, max_images)

@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": "forbidden",
+    "message": "someone@gmail.com is not allowed to upload results",
+    "request_id": "6f1c0e2b8a7d4b1e9c3a5d7f0b2e4c6a"
+  }
+}

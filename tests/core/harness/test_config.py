@@ -306,3 +306,53 @@ class TestHarnessConfigFactory:
         assert config.scoring_process_pools == {"cpu": ProcessScoringPoolConfig(workers=4)}
         assert config.scaffold == "openai_agents"
         assert config.required_secrets == ("SECRET",)
+
+
+class TestScaffoldKwargsIsolation:
+    """to_dict must not hand out the config's own scaffold_kwargs dict.
+
+    The override path writes into the dict to_dict returns, and presets are
+    cached for the life of the process, so an alias let one launch's overrides
+    survive into every later config built from the same preset.
+    """
+
+    def _config(self) -> HarnessConfig:
+        """A config carrying nested scaffold_kwargs, which is what aliases."""
+        return HarnessConfig(
+            name="test",
+            scaffold="openai_agents",
+            scaffold_kwargs={"model_settings": {"temperature": 0.0}},
+        )
+
+    def test_mutating_the_returned_dict_leaves_the_config_alone(self):
+        """to_dict returns a copy, not the config's own nested dict."""
+        config = self._config()
+
+        serialized = config.to_dict()
+        serialized["scaffold_kwargs"]["model_settings"]["temperature"] = 1.0
+
+        assert config.scaffold_kwargs["model_settings"]["temperature"] == 0.0
+
+    def test_an_override_does_not_mutate_the_config_it_was_applied_to(self):
+        """Applying -o overrides leaves the config they were applied to intact."""
+        from olmo_eval.cli.run.config import _apply_harness_overrides
+
+        config = self._config()
+
+        applied = _apply_harness_overrides(
+            config, ["scaffold_kwargs.model_settings.reasoning_effort=none"]
+        )
+
+        assert applied.scaffold_kwargs["model_settings"]["reasoning_effort"] == "none"
+        assert "reasoning_effort" not in config.scaffold_kwargs["model_settings"]
+
+    def test_two_overrides_of_one_config_do_not_accumulate(self):
+        """A second launch must not inherit the first launch's overrides."""
+        from olmo_eval.cli.run.config import _apply_harness_overrides
+
+        config = self._config()
+
+        _apply_harness_overrides(config, ["scaffold_kwargs.model_settings.reasoning_effort=none"])
+        second = _apply_harness_overrides(config, ["scaffold_kwargs.model_settings.top_p=0.9"])
+
+        assert "reasoning_effort" not in second.scaffold_kwargs["model_settings"]

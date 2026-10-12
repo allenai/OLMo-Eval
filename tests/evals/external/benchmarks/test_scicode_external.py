@@ -233,3 +233,34 @@ class TestRunProblemCascade(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestRunProblemContextOverflow(unittest.IsolatedAsyncioTestCase):
+    async def test_a_context_overflow_fails_the_problem_instead_of_scoring_empty_code(
+        self,
+    ) -> None:
+        from olmo_eval.inference.providers.vllm_server import VLLMServerProvider
+
+        # A server that rejects the prompt as too long. The provider hands that back
+        # as a marked reply, which a caller reading the text directly must not take
+        # for an empty answer.
+        provider = object.__new__(VLLMServerProvider)
+        provider._tool_calls_parsed = None
+        provider.max_concurrency = 1
+        provider.max_retries = 0
+
+        async def overflow(*_args: Any, **_kwargs: Any) -> list[LMOutput]:
+            raise ValueError("This model's maximum context length is 40960 tokens.")
+
+        provider._generate_single_async = overflow  # ty: ignore[invalid-assignment]
+        evaluator = scicode_eval.SciCodeExternalEval()
+        sc_args = scicode_eval.SciCodeConfig(max_concurrency=1, with_background=True)
+
+        with self.assertRaisesRegex(RuntimeError, "maximum context length"):
+            await evaluator._run_problem(
+                problem=_make_problem(problem_id="99", num_steps=1),
+                provider=provider,
+                sampling_params=SamplingParams(max_tokens=16),
+                sc_args=sc_args,
+                container_runtime="podman",
+            )

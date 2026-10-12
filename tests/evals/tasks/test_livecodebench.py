@@ -9,6 +9,7 @@ import sys
 import tempfile
 from collections.abc import Mapping
 from typing import Any
+from unittest import mock
 
 import pytest
 
@@ -16,13 +17,17 @@ from olmo_eval.common.execution import ExecutionResult
 from olmo_eval.common.scorers import SandboxRequiredError, ScoringIncompleteError
 from olmo_eval.common.scorers.code_execution.scripts import get_script
 from olmo_eval.common.types import Instance, LMOutput, RequestType
+from olmo_eval.data import DataSource
 from olmo_eval.evals.tasks.common import get_task
 from olmo_eval.evals.tasks.livecodebench import (
+    LIVECODEBENCH_REPO,
+    LIVECODEBENCH_REVISION,
     RELEASE_V3_FILES,
     RELEASE_V4_V6_FILES,
     SYSTEM_PROMPT,
     VERDICT_PREFIX,
     LiveCodeBenchScorer,
+    _open_test_case_rows,
 )
 
 STDIN_DOC = {
@@ -293,8 +298,8 @@ def stub_rows(monkeypatch: pytest.MonkeyPatch) -> None:
         "private_test_cases": "",
     }
 
-    def fake_rows(repo: str, files: tuple[str, ...]) -> Any:
-        del repo, files
+    def fake_rows(repo: str, files: tuple[str, ...], revision: str | None = None) -> Any:
+        del repo, files, revision
         return rows
 
     monkeypatch.setattr(
@@ -645,3 +650,52 @@ class TestGraderPayloads:
     def test_case_count_is_reported(self) -> None:
         solution = "a, b = map(int, input().split())\nprint(a + b)\n"
         assert _grade(solution, SUM_TESTS)["num_tests"] == len(SUM_TESTS)
+
+
+def test_prompt_and_grader_use_same_dataset_revision():
+    for name in ("livecodebench", "livecodebench_hidden"):
+        task = get_task(name)
+        assert task.config.data_source.revision == LIVECODEBENCH_REVISION
+        instance = task.process_doc(STDIN_DOC)
+        assert instance.metadata["test_revision"] == LIVECODEBENCH_REVISION
+
+
+def test_grader_revision_is_part_of_download_url():
+    _open_test_case_rows.cache_clear()
+    try:
+        with mock.patch("datasets.load_dataset", return_value=[]) as load:
+            _open_test_case_rows("org/repo", ("test.jsonl",), "revision-a")
+            _open_test_case_rows("org/repo", ("test.jsonl",), "revision-b")
+        assert load.call_count == 2
+        assert load.call_args_list[0].kwargs["data_files"] == {
+            "train": ["hf://datasets/org/repo@revision-a/test.jsonl"]
+        }
+        assert load.call_args_list[1].kwargs["data_files"] == {
+            "train": ["hf://datasets/org/repo@revision-b/test.jsonl"]
+        }
+    finally:
+        _open_test_case_rows.cache_clear()
+
+
+def test_process_doc_accepts_uri_data_source():
+    task = get_task("livecodebench", {"data_source": "hf://livecodebench/code_generation_lite"})
+    instance = task.process_doc(STDIN_DOC)
+    assert instance.metadata["test_revision"] == task.config.get_data_source().revision
+
+
+def test_grader_reads_tests_from_the_configured_repository():
+    mirror = DataSource(
+        path="hf://org/lcb-mirror",
+        revision="mirror-rev",
+        data_files=RELEASE_V3_FILES,
+        split="train",
+    )
+    instance = get_task("livecodebench", {"data_source": mirror}).process_doc(STDIN_DOC)
+    assert instance.metadata["test_repo"] == "org/lcb-mirror"
+    assert instance.metadata["test_revision"] == "mirror-rev"
+
+    uri_task = get_task("livecodebench", {"data_source": "hf://org/lcb-mirror"})
+    assert uri_task.process_doc(STDIN_DOC).metadata["test_repo"] == "org/lcb-mirror"
+
+    instance = get_task("livecodebench").process_doc(STDIN_DOC)
+    assert instance.metadata["test_repo"] == LIVECODEBENCH_REPO

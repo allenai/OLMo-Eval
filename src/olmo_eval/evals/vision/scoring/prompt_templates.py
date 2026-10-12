@@ -155,8 +155,8 @@ def dense_caption_question(idx: int, seed: int = DENSE_CAPTION_LOADER_SEED) -> s
     not the image-QA loader seed used for :func:`pixmo_count_question`.
 
     Checkpoints trained with ``prompt_templates="none"`` + ``system_prompt=
-    "style_and_length_v2"`` (mm_olmo's captioner family) do not sample a template at all —
-    their eval prompt is the constant ``"long_caption {default_inference_len}:"``; see the
+    "style_and_length_v2"`` (the captioner / stage-1 family) do not sample a template at all:
+    their eval prompt is the constant bare tag ``"long_caption:"``; see the
     ``dense_caption_captioner`` task.
     """
     rng = np.random.RandomState((seed * 195172 + idx) % (2**32 - 1))

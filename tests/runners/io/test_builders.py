@@ -203,6 +203,21 @@ def test_build_predictions_normalizes_logprobs_by_original_text() -> None:
     assert output["bits_per_byte"] == 5.0 / (len(original.encode("utf-8")) * math.log(2))
 
 
+def test_build_predictions_preserves_termination_without_logprobs() -> None:
+    response = Response(
+        instance=Instance(question="Q", gold_answer="A"),
+        request=LMRequest(request_type=RequestType.COMPLETION, prompt="Q"),
+        outputs=[
+            LMOutput(text="", metadata={"finish_reason": "length", "completion_tokens": 32768})
+        ],
+    )
+    output = build_predictions([response])[0]["model_output"][0]
+    assert output["finish_reason"] == "length"
+    assert output["completion_tokens"] == 32768
+    assert output["text"] == ""
+    assert "sum_logits" not in output
+
+
 def test_build_predictions_includes_answer_format_correct() -> None:
     response = Response(
         instance=Instance(question="Q", gold_answer="B"),

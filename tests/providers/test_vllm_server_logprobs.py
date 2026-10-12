@@ -6,7 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from olmo_eval.common.types import LMRequest, RequestType, SamplingParams
+from olmo_eval.common.types import Instance, LMRequest, RequestType, Response, SamplingParams
+from olmo_eval.runners.io.builders import build_predictions
 
 
 class TestVLLMServerProviderLogprobs:
@@ -297,6 +298,82 @@ class TestVLLMServerProviderLogprobs:
         assert "extra_body" not in call_kwargs
 
     @pytest.mark.anyio
+    async def test_chat_logprobs_preserve_termination_and_usage(self, provider):
+        provider.chat_template_kwargs = None
+        response = self._make_chat_response()
+        response.usage = SimpleNamespace(prompt_tokens=12, completion_tokens=1)
+        choice = response.choices[0]
+        choice.finish_reason = "length"
+        choice.logprobs = SimpleNamespace(
+            content=[SimpleNamespace(token="reply", logprob=-0.5, bytes=None)]
+        )
+        client = MagicMock()
+        client.chat.completions.create = AsyncMock(return_value=response)
+        request = LMRequest(
+            request_type=RequestType.CHAT, messages=[{"role": "user", "content": "Hi"}]
+        )
+        outputs = await provider._generate_chat(client, request, SamplingParams(max_tokens=1))
+        assert outputs[0].metadata["finish_reason"] == "length"
+        assert outputs[0].metadata["completion_tokens"] == 1
+        assert outputs[0].metadata["prompt_tokens"] == 12
+        assert outputs[0].metadata["sum_logits"] == -0.5
+
+    @pytest.mark.anyio
+    async def test_chat_usage_is_not_attributed_to_each_of_several_choices(self, provider):
+        """Response usage sums all choices, so no single output may claim it."""
+        provider.chat_template_kwargs = None
+        response = self._make_chat_response()
+        second = MagicMock()
+        second.message = MagicMock(content="second reply", tool_calls=None)
+        second.logprobs = None
+        response.choices.append(second)
+        for choice, reason in zip(response.choices, ("stop", "length"), strict=True):
+            choice.finish_reason = reason
+        response.usage = SimpleNamespace(prompt_tokens=12, completion_tokens=100)
+        client = MagicMock()
+        client.chat.completions.create = AsyncMock(return_value=response)
+        request = LMRequest(
+            request_type=RequestType.CHAT, messages=[{"role": "user", "content": "Hi"}]
+        )
+        outputs = await provider._generate_chat(
+            client, request, SamplingParams(max_tokens=100, num_samples=2)
+        )
+        assert [out.metadata["prompt_tokens"] for out in outputs] == [12, 12]
+        assert all("completion_tokens" not in out.metadata for out in outputs)
+
+        scored = Response(instance=Instance(question="Hi"), request=request, outputs=outputs)
+        persisted = build_predictions([scored])[0]["model_output"]
+        assert [out["finish_reason"] for out in persisted] == ["stop", "length"]
+        assert all("completion_tokens" not in out for out in persisted)
+
+    @pytest.mark.anyio
+    async def test_completion_usage_is_not_attributed_to_each_of_several_choices(self, provider):
+        """The SDK completions path keeps only per-output counts."""
+        response = self._make_completion_response()
+        response.choices.append(MagicMock(text="second", logprobs=None, finish_reason="length"))
+        response.usage = SimpleNamespace(prompt_tokens=3, completion_tokens=100)
+        client = MagicMock()
+        client.completions.create = AsyncMock(return_value=response)
+        request = LMRequest(request_type=RequestType.COMPLETION, prompt="Test prompt")
+        outputs = await provider._generate_completion(
+            client, request, SamplingParams(max_tokens=100, num_samples=2)
+        )
+        assert [out.metadata["prompt_tokens"] for out in outputs] == [3, 3]
+        assert all("completion_tokens" not in out.metadata for out in outputs)
+
+    @pytest.mark.anyio
+    async def test_completion_usage_is_kept_for_a_single_choice(self, provider):
+        response = self._make_completion_response()
+        response.usage = SimpleNamespace(prompt_tokens=3, completion_tokens=7)
+        client = MagicMock()
+        client.completions.create = AsyncMock(return_value=response)
+        request = LMRequest(request_type=RequestType.COMPLETION, prompt="Test prompt")
+        outputs = await provider._generate_completion(
+            client, request, SamplingParams(max_tokens=100)
+        )
+        assert outputs[0].metadata["completion_tokens"] == 7
+
+    @pytest.mark.anyio
     async def test_generate_chat_preserves_exact_explicit_truncation(self, provider):
         """Chat generation forwards caller-requested truncation without tightening it."""
         provider.chat_template_kwargs = None
@@ -390,6 +467,31 @@ class TestVLLMServerProviderLogprobs:
         assert "truncate_prompt_tokens" not in payload
         assert "truncation_side" not in payload
         client.completions.create.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_raw_completion_usage_is_not_attributed_to_each_of_several_choices(self):
+        """The prompt-token-ids completions path keeps only per-output counts."""
+        provider = self._make_provider(completion_use_prompt_token_ids=True)
+        local_tokenizer = MagicMock()
+        local_tokenizer.encode.return_value = [11, 12, 13]
+        local_tokenizer.eos_token_id = None
+        local_tokenizer.eos_token = None
+        provider._get_tokenizer = MagicMock(return_value=local_tokenizer)
+        raw_response = MagicMock()
+        raw_response.raise_for_status = MagicMock()
+        raw_response.json.return_value = {
+            "choices": [{"text": "a", "logprobs": None}, {"text": "b", "logprobs": None}],
+            "usage": {"prompt_tokens": 3, "completion_tokens": 100},
+        }
+        mock_http = AsyncMock()
+        mock_http.post.return_value = raw_response
+        provider._get_raw_http_client = MagicMock(return_value=mock_http)
+        request = LMRequest(request_type=RequestType.COMPLETION, prompt="Test prompt")
+        outputs = await provider._generate_completion(
+            MagicMock(), request, SamplingParams(max_tokens=100, num_samples=2)
+        )
+        assert [out.metadata["prompt_tokens"] for out in outputs] == [3, 3]
+        assert all("completion_tokens" not in out.metadata for out in outputs)
 
     def test_build_completion_output_sets_is_greedy_from_top_logprobs(self, provider):
         """Completion metadata should expose greedy status when top logprobs are available."""
@@ -550,6 +652,8 @@ class TestVLLMServerProviderLogprobs:
         assert payload["prompt"] == context_tokens + continuation_tokens
         assert len(outputs) == 1
         assert outputs[0].metadata["num_tokens"] == 1
+        # num_tokens_all counts context plus continuation, as sent.
+        assert outputs[0].metadata["num_tokens_all"] == len(context_tokens) + 1
 
     @pytest.mark.anyio
     async def test_logprobs_respects_authoritative_request_max_length(self, provider):
@@ -579,6 +683,8 @@ class TestVLLMServerProviderLogprobs:
         assert payload["prompt"] == [2, 3, 4]
         assert len(outputs) == 1
         assert outputs[0].metadata["num_tokens"] == 1
+        # After left-truncation, num_tokens_all is what was actually sent.
+        assert outputs[0].metadata["num_tokens_all"] == 3
 
     @pytest.mark.anyio
     async def test_logprobs_threads_sampling_temperature(self, provider):

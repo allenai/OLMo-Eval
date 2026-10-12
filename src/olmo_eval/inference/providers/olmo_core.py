@@ -691,7 +691,8 @@ class OlmoCoreProvider(InferenceProvider):
                     f"({len(continuation_ids)} > {max_len})"
                 )
 
-            truncated = (context_ids + continuation_ids)[-(max_len + 1) :]
+            full_ids = context_ids + continuation_ids
+            truncated = full_ids[-(max_len + 1) :]
             model_input = truncated[:-1]
             rows.append(
                 core_utils.LogprobInput(
@@ -700,6 +701,7 @@ class OlmoCoreProvider(InferenceProvider):
                     num_tokens_all=len(truncated),
                     continuation_token_ids=continuation_ids,
                     continuation=continuation,
+                    prompt_truncated_tokens=len(full_ids) - len(truncated),
                 )
             )
         return rows
@@ -719,6 +721,7 @@ class OlmoCoreProvider(InferenceProvider):
                     "num_tokens": 0,
                     "num_tokens_all": row.num_tokens_all,
                     "is_greedy": True,
+                    "prompt_truncated_tokens": row.prompt_truncated_tokens,
                 },
             )
 
@@ -755,6 +758,7 @@ class OlmoCoreProvider(InferenceProvider):
                 "num_tokens": len(entries),
                 "num_tokens_all": row.num_tokens_all,
                 "is_greedy": is_greedy,
+                "prompt_truncated_tokens": row.prompt_truncated_tokens,
             },
         )
 

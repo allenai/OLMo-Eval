@@ -1,0 +1,92 @@
+name: Skiff2 Build & Deploy
+on:
+    push:
+        branches:
+            - main
+        # Only redeploy the dashboard when it or its deploy config changes,
+        # not on every olmo-eval merge.
+        paths:
+            - dashboard/**
+            - skiff2.json
+            - .github/workflows/skiff2-deploy.yml
+
+# needed to authenticate with google
+permissions:
+    contents: read
+    id-token: write
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: false
+
+jobs:
+    build_deploy:
+        runs-on: ubuntu-latest
+        environment:
+            name: ${{ github.ref_name }}
+            url: ${{ steps.deploy-services.outputs.default_url }}
+        steps:
+            # Skiff2's shared actions are owned by Ai2 and track the platform, so they stay on main.
+            - name: Skiff2 Setup
+              id: setup
+              uses: allenai/skiff2-actions/shared-actions/setup@main
+              with:
+                  workload_identity_provider: ${{ vars.SKIFF2_WORKLOAD_IDENTITY_PROVIDER }}
+                  service_account: ${{ vars.SKIFF2_SERVICE_ACCOUNT }}
+                  project_id: ${{ vars.SKIFF2_PROJECT_ID }}
+
+            # Telegraf is a licensed font, so it is kept out of this public repo and fetched from a
+            # private bucket at build time. The UI Dockerfile copies public/ into the image.
+            - name: Fetch fonts
+              run: |
+                  mkdir -p dashboard/ui/public/fonts
+                  gcloud storage cp "gs://${{ vars.SKIFF2_PROJECT_ID }}-build-assets/fonts/Telegraf-*.otf" dashboard/ui/public/fonts/
+                  ls -l dashboard/ui/public/fonts
+
+            - name: Skiff2 Build
+              id: build
+              uses: allenai/skiff2-actions/shared-actions/build@main
+              with:
+                  project_id: ${{ vars.SKIFF2_PROJECT_ID }}
+
+            - name: Skiff2 Deploy Infra
+              if: github.ref_name == 'main'
+              uses: allenai/skiff2-actions/shared-actions/deploy-infra@main
+              with:
+                  project_id: ${{ vars.SKIFF2_PROJECT_ID }}
+                  command: apply
+
+            - name: Skiff2 Deploy Services
+              id: deploy-services
+              uses: allenai/skiff2-actions/shared-actions/deploy-services@main
+              with:
+                  project_id: ${{ vars.SKIFF2_PROJECT_ID }}
+                  command: apply
+
+            # Cloud Run accepts a revision before the app has run its migrations, so check the live
+            # services: ingest must report this commit with a working database, and the dashboard
+            # (behind IAP) must redirect to Google sign-in.
+            - name: Smoke test
+              if: github.ref_name == 'main'
+              env:
+                  SHA: ${{ github.sha }}
+              run: |
+                  url=https://prod-ingest.olmo-eval.apps.allenai.org/health
+                  for _ in $(seq 60); do
+                      body="$(curl -sf --max-time 10 "$url" || true)"
+                      if [ "$(jq -r '"\(.git_sha) \(.db)"' <<< "$body" 2>/dev/null)" = "$SHA ok" ]; then
+                          echo "ingest: $body"
+                          ok=1
+                          break
+                      fi
+                      sleep 10
+                  done
+                  if [ -z "${ok:-}" ]; then
+                      echo "::error::$url did not report $SHA with db ok within 10 minutes. Last response: ${body:-none}"
+                      exit 1
+                  fi
+                  result="$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' --max-time 10 https://olmo-eval.allen.ai/)"
+                  case "$result" in
+                      302\ https://accounts.google.com/*) echo "dashboard: redirects to Google sign-in" ;;
+                      *) echo "::error::https://olmo-eval.allen.ai/ returned '$result', expected a 302 to Google sign-in"; exit 1 ;;
+                  esac

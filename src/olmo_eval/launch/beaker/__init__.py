@@ -13,6 +13,7 @@ from olmo_eval.launch.beaker.launcher import (
     parse_task_with_priority,
     print_experiment_config,
     resolve_clusters,
+    validate_min_runtime,
     validate_priority_configuration,
 )
 
@@ -29,5 +30,6 @@ __all__ = [
     "parse_task_with_priority",
     "print_experiment_config",
     "resolve_clusters",
+    "validate_min_runtime",
     "validate_priority_configuration",
 ]

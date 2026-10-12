@@ -134,6 +134,53 @@ def _patch_processor_optional_attribute_kwargs() -> None:
     ProcessorMixin.__init__ = __init__  # ty: ignore[invalid-assignment]
 
 
+def _patch_masking_kwargs() -> None:
+    """Accept the released Molmo2 remote code's mask-builder kwargs on transformers >= 5.9.
+
+    ``modeling_molmo2.py`` (``trust_remote_code``) calls ``create_causal_mask`` and
+    ``create_masks_for_generate`` with ``input_embeds`` and ``cache_position``.
+    transformers 5.9 removed the ``input_embeds`` deprecation shim from both and the
+    ``cache_position`` parameter from ``create_causal_mask``, so every forward raised
+    ``TypeError``. The wrappers rename the one and drop the other when the installed
+    signature lacks them, and pass through unchanged otherwise. Must run before the
+    remote module is imported, since it binds the names at import. Idempotent.
+    Vendored transformers-compat shim (no olmo-core dependency).
+    """
+    import functools
+    import importlib
+    import inspect
+
+    try:
+        masking_utils = importlib.import_module("transformers.masking_utils")
+    except ImportError:
+        return
+
+    for name in ("create_causal_mask", "create_masks_for_generate"):
+        original = getattr(masking_utils, name, None)
+        if original is None or getattr(original, "_olmo_eval_masking_kwargs_patch", False):
+            continue
+        parameters = inspect.signature(original).parameters.values()
+        accepts_cache_position = any(
+            p.name == "cache_position" or p.kind is p.VAR_KEYWORD for p in parameters
+        )
+
+        def patched(
+            *args: Any,
+            _original: Any = original,
+            _accepts_cache_position: bool = accepts_cache_position,
+            **kwargs: Any,
+        ) -> Any:
+            if "input_embeds" in kwargs and "inputs_embeds" not in kwargs:
+                kwargs["inputs_embeds"] = kwargs.pop("input_embeds")
+            if not _accepts_cache_position:
+                kwargs.pop("cache_position", None)
+            return _original(*args, **kwargs)
+
+        functools.update_wrapper(patched, original)
+        patched._olmo_eval_masking_kwargs_patch = True  # ty: ignore[unresolved-attribute]
+        setattr(masking_utils, name, patched)
+
+
 def _patch_molmo2_generation_cache_position(model: Any) -> None:
     """Make the Molmo2 remote-code generation glue work under transformers >= 5.
 
@@ -217,6 +264,7 @@ class HuggingFaceProvider(InferenceProvider):
     device: torch.device
     is_multimodal: bool
     max_crops: int
+    max_multi_image_crops: int
     autocast_dtype: str | None
 
     # kwargs that may be passed by the runner but are not valid for HF from_pretrained
@@ -252,6 +300,7 @@ class HuggingFaceProvider(InferenceProvider):
         *,
         multimodal: bool = False,
         max_crops: int = 24,
+        max_multi_image_crops: int = 8,
         autocast_dtype: str | None = None,
         **model_kwargs,
     ) -> None:
@@ -263,6 +312,8 @@ class HuggingFaceProvider(InferenceProvider):
             multimodal: Load an image-text-to-text model (AutoProcessor +
                 AutoModelForImageTextToText) instead of a text-only causal LM.
             max_crops: Maximum image crops passed to the multimodal processor.
+            max_multi_image_crops: Maximum crops per image when a request carries more
+                than one image (mm_olmo's ``max_multi_image_crops``, 8 for Molmo2).
             autocast_dtype: If set (e.g. ``"bfloat16"``), run multimodal generation under
                 ``torch.autocast`` with this dtype. Pair with fp32 weights (``dtype="float32"``)
                 to match mm_olmo's ``amp_bf16`` eval numerics (fp32 master weights + bf16
@@ -277,6 +328,7 @@ class HuggingFaceProvider(InferenceProvider):
         self.is_multimodal = bool(multimodal)
         self.supports_images = self.is_multimodal
         self.max_crops = int(max_crops)
+        self.max_multi_image_crops = int(max_multi_image_crops)
         self.autocast_dtype = autocast_dtype
         self.processor = None
         self.device = _get_device()
@@ -309,10 +361,10 @@ class HuggingFaceProvider(InferenceProvider):
     def _init_multimodal(self, model_name: str, model_kwargs: dict[str, Any]) -> None:
         """Load an image-text-to-text model (AutoProcessor + AutoModelForImageTextToText).
 
-        Applies the transformers-compat RoPE shims required by the released
-        Molmo2 ``trust_remote_code`` checkpoints, and reuses the processor's
-        tokenizer as ``self.tokenizer`` so the shared decode / stop-sequence
-        helpers work unchanged.
+        Applies the transformers-compat shims (RoPE, processor kwargs, mask-builder
+        kwargs) required by the released Molmo2 ``trust_remote_code`` checkpoints,
+        and reuses the processor's tokenizer as ``self.tokenizer`` so the shared
+        decode / stop-sequence helpers work unchanged.
         """
         try:
             from transformers import AutoModelForImageTextToText, AutoProcessor
@@ -324,6 +376,7 @@ class HuggingFaceProvider(InferenceProvider):
 
         _ensure_default_rope_registered()
         _patch_processor_optional_attribute_kwargs()
+        _patch_masking_kwargs()
 
         processor_kwargs = {
             key: value for key, value in model_kwargs.items() if key in self._TOKENIZER_KWARGS
@@ -455,8 +508,9 @@ class HuggingFaceProvider(InferenceProvider):
                 chat, tokenize=False, add_generation_prompt=True
             )
             if pil_images:
+                max_crops = self.max_crops if len(pil_images) == 1 else self.max_multi_image_crops
                 inputs = self.processor(
-                    images=pil_images, text=text, max_crops=self.max_crops, return_tensors="pt"
+                    images=pil_images, text=text, max_crops=max_crops, return_tensors="pt"
                 )
             else:
                 inputs = self.processor(text=text, return_tensors="pt")

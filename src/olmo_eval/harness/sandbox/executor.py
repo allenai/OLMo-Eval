@@ -48,6 +48,16 @@ class _ControlCommandResult:
     exit_code: int
 
 
+def _is_bash_syntax_error(exc: BaseException) -> bool:
+    """Return whether an exception reports a command that failed swe-rex's syntax check."""
+    return type(exc).__name__ == "BashIncorrectSyntaxError"
+
+
+def _is_command_timeout(exc: BaseException) -> bool:
+    """Return whether an exception reports a command exceeding its timeout."""
+    return "CommandTimeoutError" in type(exc).__name__ or "timed out" in str(exc).lower()
+
+
 def _get_log_docker_args(log_dir: str, name: str) -> tuple[str, ...]:
     """Get docker args for logging to a named file.
 
@@ -125,6 +135,9 @@ class SandboxExecutor:
         self.config = config
         self.name = name
         self._modal_app_name = modal_app_name
+        # Modal app this executor created itself and must stop on shutdown.
+        # Apps named by a SandboxManager are stopped by the manager instead.
+        self._owned_modal_app: str | None = None
         self._deployment: Any = None
         self._runtime: Any = None
         self._session_created: bool = False
@@ -174,8 +187,10 @@ class SandboxExecutor:
 
                 import modal
 
-                app_name = self._modal_app_name or _get_modal_app_name()
-                if not self._modal_app_name:
+                app_name = self._modal_app_name
+                if not app_name:
+                    app_name = _get_modal_app_name()
+                    self._owned_modal_app = app_name
                     # Only log if we generated it (manager logs its own)
                     self._log(logging.INFO, f"Using Modal app: {app_name}")
                 original_lookup = modal.App.lookup
@@ -247,7 +262,10 @@ class SandboxExecutor:
                     from .image import get_swerex_image
 
                     image = get_swerex_image(
-                        image, self.config.container_runtime, self.config.dockerfile_extra
+                        image,
+                        self.config.container_runtime,
+                        self.config.dockerfile_extra,
+                        pristine=self.config.pristine_image,
                     )
 
                 # Build docker args, adding log args if log_dir is configured
@@ -338,6 +356,7 @@ class SandboxExecutor:
                         self.config.container_runtime,
                         self.config.dockerfile_extra,
                         require_registry=True,  # Must push to registry for Modal
+                        pristine=self.config.pristine_image,
                     )
                     self._log(logging.DEBUG, f"Using pre-built swerex image: {image}")
                 else:
@@ -416,6 +435,15 @@ class SandboxExecutor:
             self._deployment = None
             self._runtime = None
 
+        if self._owned_modal_app is not None:
+            from .modal_deployment import stop_modal_app
+
+            try:
+                await stop_modal_app(self._owned_modal_app)
+            except Exception as e:
+                self._log(logging.WARNING, f"Failed to stop Modal app {self._owned_modal_app}: {e}")
+            self._owned_modal_app = None
+
         self._log(logging.DEBUG, "Sandbox stopped")
 
     async def execute(self, command: str, timeout: float | None = None) -> str:
@@ -483,7 +511,7 @@ class SandboxExecutor:
             )
         except Exception as e:
             # Check for timeout errors (swerex.exceptions.CommandTimeoutError)
-            if "CommandTimeoutError" in type(e).__name__ or "timed out" in str(e).lower():
+            if _is_command_timeout(e):
                 return ExecutionResult(
                     success=False,
                     output=f"Command timed out after {effective_timeout}s",
@@ -959,14 +987,35 @@ class SandboxExecutor:
         effective_timeout = timeout if timeout is not None else self.config.command_timeout
         prefix = log_prefix or self.name or "sandbox"
 
-        observation = await self._runtime.run_in_session(
-            BashAction(
-                command=command,
-                session="default",
-                timeout=effective_timeout,
-                check="silent",
+        try:
+            observation = await self._runtime.run_in_session(
+                BashAction(
+                    command=command,
+                    session="default",
+                    timeout=effective_timeout,
+                    check="silent",
+                )
             )
-        )
+        except Exception as e:
+            if _is_bash_syntax_error(e):
+                # swe-rex checks a command's syntax before running it. A model
+                # that writes a malformed command should read bash's complaint,
+                # as it would from a shell, rather than end the run.
+                return ExecutionResult(
+                    success=False, output=str(e).strip(), exit_code=2, error="syntax"
+                )
+            if not _is_command_timeout(e):
+                raise
+            # The command is still running in the shell; stop it so the session
+            # can take the next command instead of staying wedged behind this one.
+            self._log(logging.WARNING, f"Session command timed out after {effective_timeout}s")
+            await self.interrupt_session()
+            return ExecutionResult(
+                success=False,
+                output=f"Command timed out after {effective_timeout}s",
+                exit_code=-1,
+                error="timeout",
+            )
 
         output = observation.output or ""
 
@@ -981,6 +1030,24 @@ class SandboxExecutor:
             exit_code=observation.exit_code or 0,
             error=observation.failure_reason or None,
         )
+
+    async def interrupt_session(self) -> None:
+        """Interrupt whatever is running in the persistent bash session.
+
+        Sends an interrupt to the session's foreground job, falling back to
+        killing it, so the session returns to its prompt. A failure to
+        interrupt is logged rather than raised; the next command surfaces a
+        session that is truly stuck.
+        """
+        if self._runtime is None or not self._session_created:
+            return
+
+        from swerex.runtime.abstract import BashInterruptAction
+
+        try:
+            await self._runtime.run_in_session(BashInterruptAction(session="default"))
+        except Exception as e:
+            self._log(logging.WARNING, f"Failed to interrupt session: {e}")
 
     @property
     def is_running(self) -> bool:

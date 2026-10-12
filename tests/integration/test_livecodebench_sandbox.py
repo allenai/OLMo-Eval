@@ -20,6 +20,7 @@ from olmo_eval.common.types import Instance, LMOutput
 from olmo_eval.evals.tasks.common import get_task
 from olmo_eval.evals.tasks.livecodebench import (
     LIVECODEBENCH_REPO,
+    LIVECODEBENCH_REVISION,
     RELEASE_V3_FILES,
     LiveCodeBenchScorer,
     _test_case_rows,
@@ -176,7 +177,9 @@ async def test_private_test_cases_reach_the_container(
 
     # Public cases are plain JSON on the row; the private ones are what the
     # grader had to decode in the container.
-    row = _test_case_rows(LIVECODEBENCH_REPO, RELEASE_V3_FILES)[instance.metadata["row"]]
+    row = _test_case_rows(LIVECODEBENCH_REPO, RELEASE_V3_FILES, LIVECODEBENCH_REVISION)[
+        instance.metadata["row"]
+    ]
     public_count = len(json.loads(row["public_test_cases"]))
     assert public_count > 0
     assert result["num_tests"] > public_count
