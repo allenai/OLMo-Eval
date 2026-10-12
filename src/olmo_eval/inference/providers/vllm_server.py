@@ -1104,8 +1104,7 @@ class VLLMServerProvider(InferenceProvider):
         """
         from olmo_eval.inference.utils import dispatch_requests
 
-        # Checked for the whole batch before dispatch, which would otherwise catch
-        # the refusal per request and hand back empty outputs that score as zero.
+        # Validate tool support for the whole batch before dispatching requests.
         self._refuse_tools_without_parsing(requests)
         params = self._default_sampling_params(sampling_params)
 
