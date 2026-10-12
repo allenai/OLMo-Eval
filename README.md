@@ -13,7 +13,7 @@ Features:
 - Harness abstraction that separates execution policy from task definition, so any task can be run baseline or tool-augmented without modification.
 - Multi-turn agentic evaluation with tool calling, scaffolds, and sandboxed environments via Docker, Podman, or Modal.
 - LLM-as-judge scoring with auxiliary providers, including locally served judge models.
-- Aggregate and instance-level prediction storage.
+- Results upload to the olmo-eval dashboard, with run metadata, per-instance predictions, and links to Beaker and GCS.
 - Inspection tooling for viewing instances, formatted prompts, token arrays, and model responses.
 
 ## Quick Start
@@ -33,7 +33,7 @@ uv python install 3.12
 
 # Install dependencies + the package (editable) from the lockfile.
 # The default groups (`dev` + `vllm`) are installed automatically, which
-# pulls in storage, beaker, hf, and the vLLM inference provider. vLLM
+# pulls in s3, beaker, hf, and the vLLM inference provider. vLLM
 # deps are marked Linux-only via PEP 508 markers, so this works on macOS
 # too — no extra flags needed.
 uv sync --frozen
@@ -363,24 +363,16 @@ config = HarnessConfig(
     provider=ProviderConfig(model="llama3.1-8b", kind="vllm_server"),
     metrics=MetricsConfig(
         enabled=True,
-        reporters=("file", "db"),  # Save to file and database
+        reporters=("file",),  # Write metrics/*-inference.jsonl
         collect_vllm_server=True,  # Poll vLLM server /metrics endpoint
     ),
 )
 ```
 
-**Visualizing Metrics:**
-
-```bash
-# Plot metrics from database (requires at least one filter)
-uv run olmo-eval metrics plot -G my-benchmark-group
-uv run olmo-eval metrics plot -m OLMo-3 --metric throughput
-
-# Show statistics table without interactive plots
-uv run olmo-eval metrics plot -e experiment_123 --stats-only
-```
-
-When using the `db` reporter, metrics are stored in a PostgreSQL database (default name: `olmo_eval_metrics`). You must configure your own database connection using the `OLMO_EVAL_DB_*` environment variables (see [Database Configuration](#database-configuration)).
+The file reporter writes `metrics/<provider>_<model>-inference.jsonl` in the output
+directory. The results upload sends batch throughput, latency, and downsampled GPU
+utilization from this file to the dashboard (see
+[Uploading Results and the Dashboard](#uploading-results-and-the-dashboard)).
 
 #### Auxiliary Providers and Local Judge Models
 
@@ -970,87 +962,96 @@ of PIL images / zero-arg callables / file paths — and sends them all on one
 request. Registration and variants work exactly as described in
 [Adding New Tasks](#adding-new-tasks).
 
-## Querying Results
+## Uploading Results and the Dashboard
 
-Evaluation results can be stored in PostgreSQL and queried via the CLI.
+`olmo-eval run`, `olmo-eval run-external`, and Beaker jobs upload their results to the
+olmo-eval dashboard at <https://olmo-eval.allen.ai> (Ai2 accounts only). The upload uses
+your Google credentials, so run `gcloud auth application-default login` once. Beaker
+jobs never get your personal credentials: they upload as the shared
+`olmo-eval-uploader` service account, whose key `olmo-eval beaker launch` reads from
+Secret Manager (with your local credentials) and copies into the workspace's
+`olmo_eval_uploader_key` Beaker secret. The run still records you as its author.
 
-### Basic Queries
+Without Google credentials, uploads turn off on their own: the eval runs as usual, keeps
+its results on disk, and prints a note. This applies to `olmo-eval beaker launch` too.
+Passing `--upload` or setting `OLMO_EVAL_UPLOAD=1` asks for an upload explicitly, so a
+missing credential is then an error.
 
-```bash
-# Query by experiment ID
-uv run olmo-eval results query --experiment exp_001
+### Who can see uploaded results
 
-# Query by model
-uv run olmo-eval results query --model llama3.1-8b
+Everyone at Ai2 who can sign in to the dashboard can see every uploaded run: its
+configs, command line, metrics, instance previews, and every file in the output
+directory, including predictions, requests and logs. Pass `--no-upload` (or set
+`OLMO_EVAL_UPLOAD=0`) for private or licensed datasets whose examples must not be
+shared.
 
-# Query by task (shows comparison matrix)
-uv run olmo-eval results query --task mmlu --task gsm8k
+Keep credentials out of anything that is uploaded. Put API keys in environment
+variables, and on Beaker map them from Beaker secrets (`--secret-env BEAKER_SECRET:ENV_VAR` on
+`olmo-eval beaker launch`). Do not pass them as literal values in `-o` overrides,
+other command-line arguments or harness config files. Secret names, such as a
+provider's `required_secrets`, are references and are safe to upload. Before upload,
+olmo-eval replaces the values of secret-looking keys (`api_key`, `token`, `password`,
+`secret` and similar) in the uploaded configs and command line with `[redacted]`.
+The uploaded files are sent as they are, so a key printed into a log, or written into
+`metrics.json`, is uploaded with it.
 
-# Query by experiment group
-uv run olmo-eval results query -G my-benchmark-group --format json
+What is uploaded:
 
-# Combine filters
-uv run olmo-eval results query --model llama3.1-8b --task mmlu --format json
-```
+- Run metadata: model and provider config, task specs, harness config, git commit,
+  Beaker experiment/job/result dataset IDs, cluster, GPU type, and package versions.
+- Every task's metrics, metric directions, and suite aggregations.
+- One compact row per instance (scores, finish reason, token counts, short previews).
+- Every file in the output directory (`metrics.json`, `manifest.json`, predictions,
+  requests, inference metrics, logs). Files go to GCS, and the dashboard links to them.
+  In a reused output directory, files last modified before the run started are skipped.
 
-### Instance-Level Predictions
-
-Include `--instances` to retrieve instance-level predictions:
-
-```bash
-# Get instances for an experiment
-uv run olmo-eval results query --experiment exp_001 --task mmlu --instances --format json
-
-# Paginate through large result sets using keyset pagination
-uv run olmo-eval results query --task mmlu --instances --limit 1000 --format json
-
-# Get next page using last_id from previous response
-uv run olmo-eval results query --task mmlu --instances --limit 1000 --after-id 1000 --format json
-```
-
-JSON output includes pagination metadata:
-```json
-{
-  "experiments": [...],
-  "pagination": {
-    "last_id": 12345,
-    "has_more": true
-  }
-}
-```
-
-### Output Formats
-
-| Format | Flag | Description |
-|--------|------|-------------|
-| Table | `--format table` | Rich terminal tables (default) |
-| JSON | `--format json` | Structured JSON with pagination metadata |
-| CSV | `--format csv` | CSV output to stdout |
-
-### Database Configuration
-
-#### AI2 Users (Recommended)
-
-Set these two environment variables to connect to the shared database:
+The run registers when it starts and uploads when it finishes. A crashed run is
+recorded as failed. An upload failure never fails the eval: the results stay on disk
+and the log prints the command that retries the upload.
 
 ```bash
-export OLMO_EVAL_DB_HOST="<database-host>"
-export OLMO_EVAL_DB_SECRET_ARN="arn:aws:secretsmanager:us-west-2:..."
+# Turn uploads off for one run (or set OLMO_EVAL_UPLOAD=0)
+uv run olmo-eval run -m llama3.1-8b -t gsm8k --no-upload
+
+# Label a run so it is easy to find in the dashboard
+uv run olmo-eval run -m llama3.1-8b -t gsm8k --tag sweep-42
+
+# Upload (or re-upload) a results directory; re-uploading updates the same run
+uv run olmo-eval results upload /tmp/results/
+
+# Check what would be uploaded without sending anything
+uv run olmo-eval results upload /tmp/results/ --dry-run
+
+# Re-upload a Beaker job's results
+beaker dataset fetch <result-dataset-id> -o ./results
+uv run olmo-eval results upload ./results
 ```
 
-The password is automatically fetched from AWS Secrets Manager on first connection.
-This requires AWS credentials configured (via `~/.aws/credentials` or environment variables).
+| Setting | Flag | Environment variable | Default |
+|---------|------|----------------------|---------|
+| Upload on/off | `--upload/--no-upload` | `OLMO_EVAL_UPLOAD` | on when Google credentials exist |
+| Ingest service | `--api-url` | `OLMO_EVAL_API_URL` | `https://prod-ingest.olmo-eval.apps.allenai.org` |
+| Run labels | `--tag` (repeatable) | | none |
+| Upload deadline | | `OLMO_EVAL_UPLOAD_TIMEOUT` (seconds) | `1800` |
 
-#### All Environment Variables
+### Migrating from the Postgres results store
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `OLMO_EVAL_DB_HOST` | `localhost` | Database host |
-| `OLMO_EVAL_DB_PORT` | `5432` | Database port |
-| `OLMO_EVAL_DB_NAME` | `olmo_eval` | Database name |
-| `OLMO_EVAL_DB_USER` | `postgres` | Database user |
-| `OLMO_EVAL_DB_PASSWORD` | - | Database password (use this OR `OLMO_EVAL_DB_SECRET_ARN`) |
-| `OLMO_EVAL_DB_SECRET_ARN` | - | AWS Secrets Manager ARN for password (fetched on auth failure) |
+The dashboard replaces the Postgres results database, the S3 result uploads and the
+commands built on them. Data in the old database was not migrated, so the dashboard
+holds only runs uploaded since it launched.
+
+| Before | Now |
+|--------|-----|
+| `--store`, `--db-*` | Uploads are on by default; `--no-upload` turns them off |
+| `--s3-bucket`, `--s3-prefix` and the other `--s3-*` result flags | Files upload to the dashboard's GCS bucket with the run |
+| `olmo-eval results query`, `groups`, `group`, `suites` | The Runs, Groups and Suites pages in the dashboard |
+| `olmo-eval results viewer` and the pairwise viewer | The Run and Compare pages in the dashboard |
+| `olmo-eval metrics` | The run's Inference tab (upload with `-o metrics.enabled=true`) |
+
+The removed flags and commands now fail with a usage error. S3 *dataset* loading is
+unchanged.
+
+The dashboard code lives in `dashboard/` (see `dashboard/README.md`).
 
 ## Advanced Usage
 
@@ -1595,9 +1596,12 @@ budget: ai2/oe-other
 | `--yes` | `-y` | `false` | Skip confirmation prompt |
 | `--follow/--no-follow` | | `true` | Follow logs after launch |
 | `--secret-env` | | none | Map Beaker secret to env var (`SECRET:VAR`) |
+| `--hf-token/--no-hf-token` | | auto | Inject `HF_TOKEN`; see [Hugging Face and Beaker tokens](#hugging-face-and-beaker-tokens) |
 | `--aws-credentials` | | auto | Inject AWS credentials (auto-detected from s3:// paths) |
-| `--gcp-credentials` | | auto | Inject GCP credentials (auto-detected from gs:// model paths) |
-| `--store` | | `false` | Persist results to configured database |
+| `--gcp-credentials` | | auto | Inject Google credentials (auto-detected from gs:// model paths) |
+| `--upload/--no-upload` | | `true` | Upload results to the dashboard from the job (injects the shared uploader key) |
+| `--api-url` | | production | Ingest service URL passed to the job |
+| `--tag` | | none | Label attached to uploaded runs (can specify multiple) |
 
 ### Preemption
 
@@ -1653,6 +1657,29 @@ The `-o` flag uses OmegaConf dotlist syntax, supporting:
 # Good - single quotes protect the value
 -o 'extra_config={key: value, nested: {a: 1}}'
 ```
+
+### Hugging Face and Beaker tokens
+
+`beaker launch` does not copy personal tokens into the Beaker workspace unless the job
+needs them.
+
+- **`HF_TOKEN`**: if the secret `{username}_HF_TOKEN` already exists in the workspace, it
+  is injected. Otherwise your local Hugging Face token (`HF_TOKEN` or `hf auth login`) is
+  copied there only when the job needs it: you passed `--hf-token`, a task or model
+  declares `HF_TOKEN` in `required_secrets`, or a model, tokenizer or task dataset is gated
+  or private on the Hub. Public models such as `Qwen/Qwen2.5-0.5B` do not trigger a copy.
+  If the Hub cannot be reached, the launch prints a warning and does not copy the token;
+  pass `--hf-token` for gated models. `--no-hf-token` never injects it.
+- **`BEAKER_TOKEN`**: the job uses it only to post status updates to the Beaker UI. It is
+  injected when the secret `{username}_BEAKER_TOKEN` exists in the workspace, and is never
+  created for you. Without it the launch prints a warning and the job runs without status
+  updates. To enable them:
+
+  ```bash
+  beaker secret write --workspace <workspace> {username}_BEAKER_TOKEN <your Beaker token>
+  ```
+
+A dry run (`--dry-run`) checks the Hub but does not read or write Beaker secrets.
 
 ### Secret Environment Overrides
 
@@ -1898,7 +1925,7 @@ The image contains:
 The image does NOT contain:
 - olmo-eval source code (provided by gantry at runtime)
 - olmo-eval dependencies like click, datasets, rich, etc. (installed at job startup)
-- Storage backends like boto3, psycopg (installed at job startup if needed)
+- Optional extras like boto3 (installed at job startup if needed)
 - Inference providers like vllm, transformers, litellm (installed at job startup)
 
 ### Installing Inference Providers at Runtime
@@ -1986,7 +2013,7 @@ uv run olmo-eval beaker launch -n "eval" -m llama3.1-8b \
 
 This repo uses `uv` with a checked-in `uv.lock` for reproducible installs.
 The default dependency groups (`dev` + `vllm`) are installed automatically,
-which covers storage, beaker, hf, and the vLLM inference provider.
+which covers s3, beaker, hf, and the vLLM inference provider.
 
 ```bash
 # Install dependencies from the lockfile

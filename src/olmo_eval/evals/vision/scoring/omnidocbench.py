@@ -965,10 +965,10 @@ class OmniDocBenchPageMetric(Metric):
         value = self._page_value(response, result) if result is not None else None
         return value * self.scale if value is not None else None
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False
 
-    def pairwise_higher_is_better(self) -> bool:
+    def higher_is_better(self) -> bool:
         # Edit distances (text, formula, reading order) are better when lower.
         return not self.component.endswith("_edit")
 
@@ -1013,5 +1013,5 @@ class OmniDocBenchOverallMetric(Metric):
         terms = [(1.0 - text) * 100.0, *(v for v in (teds, cdm) if v is not None)]
         return sum(terms) / len(terms)
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False

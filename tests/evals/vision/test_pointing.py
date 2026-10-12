@@ -197,7 +197,7 @@ class TestPointingPerInstanceMetrics:
         assert metrics["f1"].compute_instance(response) == pytest.approx(1 / 3)
         # count=4 is outside the `single` bucket
         assert metrics["single_f1"].compute_instance(response) is None
-        assert metrics["precision"].supports_pairwise_scorer_fallback() is False
+        assert metrics["precision"].supports_scorer_fallback() is False
 
     def test_weighted_metrics_store_none(self):
         from olmo_eval.evals.vision.tasks.pointing import PointingMetric, pointing_metrics
@@ -289,7 +289,7 @@ class TestPointCountPerInstanceMetrics:
         assert per4.compute_instance(response) is None
         cat = PointCountCategoryAverageMetric(name="correct_category_average", scorer=scorer)
         assert cat.compute_instance(response) is None
-        assert cat.supports_pairwise_scorer_fallback() is False
+        assert cat.supports_scorer_fallback() is False
 
 
 class TestCountingPromptFamilies:

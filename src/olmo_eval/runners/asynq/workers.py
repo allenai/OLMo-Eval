@@ -135,7 +135,7 @@ def inference_worker(
 
             validate_scaffold(harness_config.scaffold)
 
-        # Initialize metrics reporters early to establish database connections
+        # Initialize metrics reporters early so setup errors surface before inference
         harness.initialize_reporters()
 
         init_time = time.time() - init_start

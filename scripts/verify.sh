@@ -26,7 +26,7 @@ echo "Running verification checks..."
 
 echo ""
 echo "==> Syncing dependencies..."
-uv sync --frozen --extra beaker --extra hf --extra postgres --extra analysis --extra sandbox
+uv sync --frozen --extra beaker --extra hf --extra s3 --extra sandbox
 
 UV_RUN="uv run --frozen"
 
@@ -40,7 +40,7 @@ $UV_RUN ruff check src/ tests/
 
 echo ""
 echo "==> Running ty type checker..."
-$UV_RUN ty check src/ alembic/
+$UV_RUN ty check src/
 
 echo ""
 echo "==> Running tests with coverage..."
@@ -57,35 +57,11 @@ fi
 
 if [ "$NO_DOCKER" = true ]; then
     # Skip docker-based integration tests
-    $UV_RUN pytest tests/ $PYTEST_ARGS --no-docker
-else
-    # Start docker containers for integration tests
-    COMPOSE_FILE="tests/integration/docker-compose.yml"
-    cleanup_integration_containers() {
-        echo ""
-        echo "==> Stopping integration test containers..."
-        docker compose -f "$COMPOSE_FILE" down -v
-    }
-    trap cleanup_integration_containers EXIT
-
-    echo ""
-    echo "==> Starting integration test containers..."
-    docker compose -f "$COMPOSE_FILE" up -d --wait
-
-    # Run tests
-    if $UV_RUN pytest tests/ $PYTEST_ARGS; then
-        TEST_EXIT_CODE=0
-    else
-        TEST_EXIT_CODE=$?
-    fi
-
-    trap - EXIT
-    cleanup_integration_containers
-
-    if [ $TEST_EXIT_CODE -ne 0 ]; then
-        exit $TEST_EXIT_CODE
-    fi
+    PYTEST_ARGS="$PYTEST_ARGS --no-docker"
 fi
+
+# Integration fixtures start and stop their own containers.
+$UV_RUN pytest tests/ $PYTEST_ARGS
 
 if [ "$SKIP_COVERAGE" = false ]; then
     echo ""

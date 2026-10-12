@@ -13,6 +13,7 @@ from olmo_eval.runners.common.models import (
     ScoreSummary,
     TaskMetricsEntry,
 )
+from olmo_eval.runners.common.types import RUN_TIMING_KEYS, TASK_COST_KEYS
 from olmo_eval.runners.processing.utils import get_primary_metric
 
 logger = get_logger("runners.metrics")
@@ -82,6 +83,7 @@ def build_single_model_metrics(
             instances_processed=task_data.get("instances_processed"),
             instances_failed=task_data.get("instances_failed"),
             error_summary=task_data.get("error_summary"),
+            **{key: task_data.get(key) for key in TASK_COST_KEYS},
         )
         tasks_list.append(entry)
 
@@ -116,6 +118,7 @@ def build_single_model_metrics(
         experiment_group=experiment_group,
         experiment_duration_seconds=experiment_duration_seconds,
         provider_init_seconds=provider_init_seconds,
+        **{key: results.get(key) for key in RUN_TIMING_KEYS},
     )
 
 
@@ -175,6 +178,7 @@ def build_multi_model_metrics(
                 instances_processed=task_data.get("instances_processed"),
                 instances_failed=task_data.get("instances_failed"),
                 error_summary=task_data.get("error_summary"),
+                **{key: task_data.get(key) for key in TASK_COST_KEYS},
             )
             tasks_list.append(entry)
 
@@ -216,6 +220,7 @@ def build_multi_model_metrics(
         experiment_group=experiment_group,
         experiment_duration_seconds=experiment_duration_seconds,
         provider_init_seconds=provider_init_seconds,
+        **{key: results.get(key) for key in RUN_TIMING_KEYS},
     )
 
 

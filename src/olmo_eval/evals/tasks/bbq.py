@@ -271,10 +271,10 @@ class BBQMCQMetric(Metric):
 
         return float(response.instance.metadata["bias"])
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False
 
-    def pairwise_higher_is_better(self) -> bool:
+    def higher_is_better(self) -> bool:
         return self.name.endswith("__accuracy")
 
 
@@ -329,10 +329,10 @@ class BBQLogprobMetric(Metric):
             return None
         return float(biased)
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False
 
-    def pairwise_higher_is_better(self) -> bool:
+    def higher_is_better(self) -> bool:
         return self.name.endswith("__accuracy")
 
 

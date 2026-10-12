@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from datetime import datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, NotRequired, TypedDict
 
@@ -291,95 +290,3 @@ class Response:
     scores: dict[str, float] = field(default_factory=dict)
     trajectory: AgentTrajectory | None = None
     request_trace: dict[str, Any] | None = None
-
-
-@dataclass
-class StoredTaskResult:
-    """Result for a single task within an evaluation.
-
-    Stores task-level metrics and references to storage locations where
-    detailed predictions and metrics files are stored.
-
-    Metrics are stored in a nested structure:
-        metrics = {
-            "metric_name": {
-                "scorer_name": score_value,
-            },
-        }
-    For example:
-        metrics = {
-            "accuracy": {"exact_match": 0.85, "simpleqa_judge": 0.72},
-            "not_attempted_rate": {"simpleqa_judge": 0.15},
-        }
-
-    The primary_metric field uses "metric_name:scorer_name" format to identify
-    the primary score for display purposes.
-    """
-
-    task_name: str
-    metrics: dict[str, dict[str, float]]
-    task_hash: str
-    task_config: dict[str, Any] | None = None
-    num_instances: int | None = None  # Instances that were scored and saved
-    primary_metric: str | None = None  # Format: "metric_name:scorer_name"
-    # Failure accounting, so a failed task is a row that says what happened rather
-    # than a row with empty metrics. instances_processed is saved plus hard-failed.
-    instances_processed: int | None = None
-    instances_failed: int | None = None
-    error_summary: str | None = None
-    # Storage references for detailed data
-    s3_metrics_key: str | None = None
-    s3_predictions_key: str | None = None
-    s3_requests_key: str | None = None
-    # Duration tracking
-    duration_seconds: float | None = None
-
-
-@dataclass
-class EvalResult:
-    """Complete result for an evaluation run.
-
-    Stores run-level metadata and references to storage locations where
-    the full evaluation data (completions, metrics, predictions) is stored.
-
-    Fields align with the evaluation tracking schema:
-    - Core identifiers: experiment_id, model_name, backend_name
-    - Experiment info: experiment_name, workspace, author, tags
-    - Version tracking: git_ref, model_hash, revision
-    - Storage reference: s3_location points to base path with all task results
-
-    Note: experiment_id can be shared across multiple models in a single
-    experiment launch.
-    """
-
-    experiment_id: str
-    model_name: str
-    backend_name: str
-    timestamp: datetime
-    tasks: list[StoredTaskResult] = field(default_factory=list)
-    # Experiment metadata
-    experiment_name: str | None = None
-    workspace: str | None = None
-    author: str | None = None
-    tags: list[str] | None = None
-    # Version tracking
-    git_ref: str | None = None
-    model_hash: str | None = None
-    revision: str | None = None
-    # Storage reference - base path where all task results are stored
-    s3_location: str | None = None
-    # Flexible config and metadata
-    model_config: dict[str, Any] | None = None
-    metadata: dict[str, Any] | None = None
-    # Original model path (when alias is used, model_name is the alias)
-    model_path: str | None = None
-    # Experiment group for grouping related experiments
-    experiment_group: str | None = None
-    # Duration metrics
-    experiment_duration_seconds: float | None = None
-    provider_init_seconds: dict[str, float] | None = None  # model_name -> init_time
-
-    def __post_init__(self) -> None:
-        """Compute model_hash from model_config if not provided."""
-        if self.model_hash is None and self.model_config is not None:
-            self.model_hash = compute_model_hash(self.model_config)

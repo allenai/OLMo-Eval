@@ -1307,7 +1307,9 @@ class VLLMServerProvider(InferenceProvider):
                         "total_logprob": total,
                         "sum_logits": total,
                         "num_tokens": num_tokens,
-                        "num_tokens_all": num_tokens,
+                        # Context plus continuation as sent (after truncation), matching the
+                        # offline vllm provider. Used for token accounting, not scoring.
+                        "num_tokens_all": len(full_tokens),
                         "prompt_truncated_tokens": overflow,
                         "is_greedy": is_greedy,
                     },

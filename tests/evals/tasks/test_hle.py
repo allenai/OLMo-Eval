@@ -142,8 +142,8 @@ class TestRegistration:
         assert params.max_tokens == 32768
 
     def test_calibration_error_is_lower_is_better(self, task):
-        assert _calibration_metric(task).pairwise_higher_is_better() is False
-        assert task.config.get_primary_metric().pairwise_higher_is_better() is True
+        assert _calibration_metric(task).higher_is_better() is False
+        assert task.config.get_primary_metric().higher_is_better() is True
 
 
 class TestJudgeConfiguration:

@@ -243,19 +243,6 @@ class RunConfig:
 
     output_dir: str = "/tmp/results/"
 
-    # Storage configuration
-    store: bool = False
-    s3_bucket: str | None = None
-    s3_prefix: str | None = None
-    s3_group: str | None = None
-    s3_endpoint_url: str | None = None
-    s3_region: str = "us-east-1"
-    db_host: str = "localhost"
-    db_port: int = 5432
-    db_name: str = "olmo_eval"
-    db_user: str = "postgres"
-    db_password: str = field(default="postgres", repr=False)
-
     # Experiment metadata
     experiment_name: str | None = None
     experiment_group: str | None = None
@@ -312,17 +299,6 @@ class RunConfigBuilder:
         output_dir: str,
         num_gpus: int = 1,
         parallelism: int = 1,
-        store: bool = False,
-        s3_bucket: str | None = None,
-        s3_prefix: str | None = None,
-        s3_group: str | None = None,
-        s3_endpoint_url: str | None = None,
-        s3_region: str = "us-east-1",
-        db_host: str = "localhost",
-        db_port: int = 5432,
-        db_name: str = "olmo_eval",
-        db_user: str = "postgres",
-        db_password: str = "postgres",
         experiment_name: str | None = None,
         experiment_group: str | None = None,
         save_predictions: bool = True,
@@ -356,17 +332,6 @@ class RunConfigBuilder:
         self.output_dir = output_dir
         self.num_gpus = num_gpus
         self.parallelism = parallelism
-        self.store = store
-        self.s3_bucket = s3_bucket
-        self.s3_prefix = s3_prefix
-        self.s3_group = s3_group
-        self.s3_endpoint_url = s3_endpoint_url
-        self.s3_region = s3_region
-        self.db_host = db_host
-        self.db_port = db_port
-        self.db_name = db_name
-        self.db_user = db_user
-        self.db_password = db_password
         self.experiment_name = experiment_name
         self.experiment_group = experiment_group
         self.save_predictions = save_predictions
@@ -420,17 +385,6 @@ class RunConfigBuilder:
             task_specs=task_specs,
             task_overrides=task_overrides,
             output_dir=self.output_dir,
-            store=self.store,
-            s3_bucket=self.s3_bucket,
-            s3_prefix=self.s3_prefix,
-            s3_group=self.s3_group,
-            s3_endpoint_url=self.s3_endpoint_url,
-            s3_region=self.s3_region,
-            db_host=self.db_host,
-            db_port=self.db_port,
-            db_name=self.db_name,
-            db_user=self.db_user,
-            db_password=self.db_password,
             experiment_name=self.experiment_name,
             experiment_group=self.experiment_group,
             save_predictions=self.save_predictions,

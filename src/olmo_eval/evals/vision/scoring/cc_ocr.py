@@ -136,7 +136,7 @@ class CcOcrDatasetMetric(Metric):
         result = _result(response)
         return float(result["f1"]) if result and result["dataset"] == self.dataset else None
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False
 
 
@@ -157,6 +157,6 @@ class CcOcrTrackMetric(Metric):
         result = _result(response)
         return float(result["f1"]) if result else None
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         # The track averages sub-datasets, not images.
         return False

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import queue
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from olmo_eval.common.beaker_status import BeakerStatusReporter
@@ -21,7 +21,11 @@ from olmo_eval.runners.asynq.types import (
     TaskTracker,
 )
 from olmo_eval.runners.common.constants import HardFailureRateExceeded
-from olmo_eval.runners.common.types import DEFAULT_MAX_HARD_FAILURE_RATE, TaskResult
+from olmo_eval.runners.common.types import (
+    DEFAULT_MAX_HARD_FAILURE_RATE,
+    TASK_COST_KEYS,
+    TaskResult,
+)
 from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
 from olmo_eval.runners.processing.utils import compute_task_hash
 
@@ -45,6 +49,24 @@ def is_hard_failure(result_item: ResultItem) -> bool:
 
 
 InstanceKey = tuple[str, str, int]
+
+
+def utc_iso(timestamp: float | None) -> str | None:
+    """POSIX seconds as an ISO 8601 UTC timestamp."""
+    if timestamp is None:
+        return None
+    return datetime.fromtimestamp(timestamp, UTC).isoformat()
+
+
+def apply_task_cost(result: TaskResult, tracker: TaskTracker, completed_at: float) -> None:
+    """Copy the tracker's request timing and token totals onto a finished TaskResult."""
+    result.last_completed_at = utc_iso(completed_at)
+    if tracker.results_recorded == 0:
+        return
+    result.first_request_at = utc_iso(tracker.first_request_at)
+    result.prompt_tokens_total = tracker.prompt_tokens_total
+    result.completion_tokens_total = tracker.completion_tokens_total
+    result.attributed_inference_seconds = tracker.attributed_inference_seconds
 
 
 def _build_pending_instance_keys(trackers: dict[str, TaskTracker]) -> set[InstanceKey]:
@@ -192,15 +214,17 @@ async def process_results(
                 scored_responses[spec][i] for i in sorted(scored_responses[spec].keys())
             ]
             assert tracker.task is not None
+            completed_at = time.time()
             task_result = compute_task_metrics(
                 spec=spec,
                 task=tracker.task,
                 scored_responses=responses_list,
                 failed_instances=tracker.failed_instances,
                 total_instances=tracker.total_instances,
-                duration_seconds=time.time() - tracker.start_time,
+                duration_seconds=completed_at - tracker.start_time,
                 max_hard_failure_rate=max_hard_failure_rate,
             )
+            apply_task_cost(task_result, tracker, completed_at)
             results[spec] = task_result
             tasks_complete += 1
             _report_task_completion(model_name, task_result)
@@ -315,6 +339,8 @@ async def process_results(
 
             if tracker.error:
                 continue
+
+            tracker.record_usage(result_item)
 
             if is_hard_failure(result_item):
                 # is_hard_failure() guarantees an error is set; the `or ""` is for
@@ -484,6 +510,9 @@ def aggregate_results(
         task_data["instances_failed"] = task_result.instances_failed
         if task_result.error_summary:
             task_data["error_summary"] = task_result.error_summary
+
+        for key in TASK_COST_KEYS:
+            task_data[key] = getattr(task_result, key)
 
         task_data["config"] = task_result.config
         task_data["task_hash"] = (

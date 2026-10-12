@@ -24,12 +24,14 @@ dependencies = [
     "antlr4-python3-runtime>=4.11,<4.12",
     "click~=8.3.2",
     "datasets>=3.2.0",
+    # Results upload to the dashboard ingest service (src/olmo_eval/upload).
+    "google-auth[requests]>=2.30",
+    "httpx>=0.27",
     "numpy>=1.20.0",
     "omegaconf>=2.4.0.dev10,<2.5.0",
     "prometheus_client>=0.21.0",
     "rich>=13.7,<15",
     "sympy>=1.12",
-    "textual-plot>=0.10.1",
     "tree-sitter>=0.24.0",
     "tree-sitter-python>=0.23.0,<0.25.0",
     "ifbench @ git+https://github.com/allenai/IFBench.git@finbarr/clean-install",
@@ -62,8 +64,9 @@ hf = [
 # Scoring dependencies of the vision benchmarks, needed whichever provider runs the model:
 # pycocotools decodes the COCO-RLE instance masks and scipy matches points to them.
 vision = [
+    # Image loading for vision tasks (vllm and torchvision also pull it in, not on macOS).
+    "pillow",
     "pycocotools",
-    # Same pin as the `analysis` extra, so the two resolve together.
     "scipy~=1.17.1",
 ]
 olmo_core = [
@@ -97,11 +100,6 @@ agents = [
     "openai-agents~=0.20.0",
     "httpx~=0.28.1",
 ]
-analysis = [
-    "matplotlib~=3.10.8",
-    "seaborn~=0.13.2",
-    "scipy~=1.17.1",
-]
 openhands = [
     "openhands-ai~=1.4.0",
 ]
@@ -116,11 +114,6 @@ s3 = [
     "boto3>=1.34.0",
     "smart_open[s3]>=7.0.0",
 ]
-postgres = [
-    "psycopg[binary]>=3.1.0",
-    "sqlalchemy>=2.0.49",
-    "alembic>=1.18.1",
-]
 gpu = [
     "nvidia-ml-py>=12.560 ; platform_system != 'Darwin'",
 ]
@@ -128,9 +121,6 @@ clients = [
     # openai-agents pulls openai>=2.45 into the same resolution, so a patch pin here is
     # unsatisfiable rather than protective. Track the same floor and the 3.x major boundary.
     "openai>=2.45,<3",
-]
-storage = [
-    "olmo-eval[s3,postgres]",
 ]
 
 [project.scripts]
@@ -173,7 +163,6 @@ conflicts = [
 ]
 
 [tool.setuptools.package-data]
-"olmo_eval.analysis.pairwise_viewer" = ["static/*.css", "static/*.js", "templates/*.html"]
 "olmo_eval.evals.tasks" = ["*.jsonl", "*.json"]
 
 [dependency-groups]
@@ -184,8 +173,10 @@ dev = [
     "ty==0.0.39",
     "pre-commit>=4.0.0",
     # Unit tests import optional helpers directly, so dev installs need these extras too.
-    "olmo-eval[storage,beaker,hf,vision,analysis,sandbox]",
+    "olmo-eval[s3,beaker,hf,vision,sandbox]",
     "jinja2>=3.1.6",
+    # Upload tests validate payloads against dashboard/contract/ingest-v1.schema.json.
+    "jsonschema>=4.23",
     "google-api-core>=2.0.0",
     "parameterized>=0.9.0",
 ]
@@ -304,7 +295,6 @@ allowed-unresolved-imports = [
     "openai.**",
     "smart_open.**",
     "google.cloud.**",
-    "matplotlib.**",
     "scipy.**",
     "olmo_core.**",
     "cached_path.**",
