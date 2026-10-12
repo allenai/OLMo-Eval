@@ -109,6 +109,36 @@ class TestIFEvalMTTask(unittest.TestCase):
         self.assertEqual(len(request.messages), 3)
 
 
+_IFBENCH_TASKS = (
+    "ifeval_ood",
+    "ifeval_mt_wildchat_unused_withRewrite",
+    "ifeval_mt_ood_wildchat_unused_withRewrite",
+)
+
+
+class TestIFBenchSamplingRegime(unittest.TestCase):
+    def test_default_budget_is_bounded_only_by_context(self) -> None:
+        for name in _IFBENCH_TASKS:
+            with self.subTest(task=name):
+                config = get_task(name).config
+                params = config.sampling_params
+                assert params is not None
+                self.assertIsNone(params.max_tokens)
+                self.assertTrue(params.do_sample)
+                self.assertEqual(params.temperature, 0.6)
+                self.assertEqual(params.top_p, 0.95)
+                self.assertTrue(config.strip_thinking)
+
+    def test_tulu_variant_keeps_greedy_2048_regime(self) -> None:
+        for name in _IFBENCH_TASKS:
+            with self.subTest(task=name):
+                params = get_task(f"{name}:tulu").config.sampling_params
+                assert params is not None
+                self.assertEqual(params.max_tokens, 2048)
+                self.assertFalse(params.do_sample)
+                self.assertEqual(params.temperature, 0.0)
+
+
 class TestIFBenchSuite(unittest.TestCase):
     def test_suite_registered(self) -> None:
         suite = get_suite("ifbench")
