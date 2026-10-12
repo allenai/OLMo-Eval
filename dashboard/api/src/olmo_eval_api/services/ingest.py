@@ -546,6 +546,7 @@ async def upsert_task_result(
         "num_instances": req.num_instances,
         "instances_processed": req.instances_processed,
         "instances_failed": req.instances_failed,
+        "generation_counts": req.generation_counts,
         "instance_count_expected": req.instance_count,
         "instances_stored": 0,
         "error": req.error,

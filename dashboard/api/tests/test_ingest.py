@@ -63,6 +63,22 @@ async def test_health(client: httpx.AsyncClient) -> None:
     assert response.headers["x-request-id"]
 
 
+async def test_generation_counts_survive_task_result_upserts(
+    client: httpx.AsyncClient, session: Any
+) -> None:
+    await seed_contract_example_run(client)
+    payload = load_example("ingest/task-result.request.json")
+    for counts in ({"generations": 3, "cap_hit": 1}, {"generations": 3, "cap_hit": 2}):
+        payload["generation_counts"] = counts
+        response = await client.post(f"/v1/runs/{RUN_ID}/task-results", json=payload)
+        assert response.status_code == 200, response.text
+        stored = await session.execute(
+            text("SELECT generation_counts FROM task_results WHERE id = :id"),
+            {"id": response.json()["task_result_id"]},
+        )
+        assert stored.scalar_one() == counts
+
+
 async def test_request_id_passthrough(client: httpx.AsyncClient) -> None:
     response = await client.get("/health", headers={"X-Request-Id": "abcdef12-3456"})
     assert response.headers["x-request-id"] == "abcdef12-3456"

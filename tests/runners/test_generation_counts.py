@@ -32,7 +32,7 @@ from olmo_eval.runners.processing.metrics import (
     build_single_model_metrics,
     log_summary,
 )
-from olmo_eval.storage.base import convert_runner_results
+from olmo_eval.upload.uploader import _task_payload
 
 SPEC = "ifeval_ood"
 CLEAN_METRICS = {"accuracy": {"exact_match": 0.5}}
@@ -180,6 +180,9 @@ def test_format_lists_every_count_and_flags_unknown_only_when_present() -> None:
         count_generations([_response(("answer", None))])
     )
     assert format_generation_counts(None) == "-"
+    assert "unclosed-think" not in format_generation_counts(
+        count_generations([_response(("template-opened reasoning", "length"))])
+    )
 
 
 def test_compute_task_metrics_attaches_counts() -> None:
@@ -247,14 +250,23 @@ def test_metrics_json_omits_counts_for_loglikelihood_tasks() -> None:
     assert "generation_counts" not in entry
 
 
-def test_stored_task_row_carries_counts() -> None:
+def test_uploaded_task_row_carries_counts(tmp_path) -> None:
     results = _aggregate(_task_result(_reasoning_batch()))
-    results["tasks"][SPEC]["task_hash"] = "deadbeef"
+    row = results["tasks"][SPEC]
+    row["task"] = SPEC
+    row["task_hash"] = "deadbeef"
+    task = _task_payload(tmp_path, row, None, {}, {})
+    assert task.payload["generation_counts"]["cap_hit"] == 2
+    assert task.payload["generation_counts"]["generations"] == 4
 
-    row = convert_runner_results(results, experiment_id="exp-1").tasks[0]
 
-    assert row.generation_counts is not None
-    assert row.generation_counts["cap_hit"] == 2
+def test_upload_omits_generation_counts_when_unavailable(tmp_path) -> None:
+    results = _aggregate(
+        _task_result([_response(("yes", None), request_type=RequestType.LOGLIKELIHOOD)])
+    )
+    row = results["tasks"][SPEC]
+    row.update(task=SPEC, task_hash="deadbeef")
+    assert "generation_counts" not in _task_payload(tmp_path, row, None, {}, {}).payload
 
 
 def _task_data(cap_hit: int, generations: int) -> dict[str, Any]:

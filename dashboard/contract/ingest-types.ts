@@ -344,6 +344,8 @@ export interface TaskResultIn {
     num_instances: NonNegativeInt32;
     instances_processed: NonNegativeInt32 | null;
     instances_failed: NonNegativeInt32 | null;
+    /** Per-generation diagnostic counts; absent for older clients and loglikelihood tasks. */
+    generation_counts?: { [count: string]: NonNegativeInteger } | null;
     error: string | null;
     error_summary: JsonObject | null;
     /**

@@ -348,6 +348,8 @@ def _task_payload(
         "suites": suites,
         "instance_count": count_instances(predictions) if predictions else 0,
     }
+    if row.get("generation_counts") is not None:
+        payload["generation_counts"] = row["generation_counts"]
     return TaskUpload(spec, payload, predictions, requests)
 
 

@@ -75,8 +75,10 @@ def format_generation_counts(counts: Mapping[str, int] | None) -> str:
     parts = [
         f"cap-hit {counts.get('cap_hit', 0)}/{total}",
         f"empty {counts.get('empty', 0)}",
-        f"unclosed-think {counts.get('unclosed_think', 0)}",
     ]
+    unclosed = counts.get("unclosed_think", 0)
+    if unclosed:
+        parts.append(f"unclosed-think {unclosed}")
     unknown = counts.get("finish_reason_unknown", 0)
     if unknown:
         parts.append(f"finish-reason unknown {unknown}")
