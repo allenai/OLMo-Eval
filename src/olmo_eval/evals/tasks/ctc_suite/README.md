@@ -139,7 +139,7 @@ cap is documented on its RosterRow.
   task×rung, half of it duplication. Pass `--no-save-requests` on xlong runs unless you need the
   prompts on disk; predictions are unaffected.
 
-### Grading changed after the published grid — for four rows
+### Grading changed after the published grid — for six rows
 
 The vendored graders are golden-fixture tested against the pre-migration implementation, but four
 fixes have landed *since* the reference grid was produced, and each one raises a correct answer's
@@ -155,8 +155,9 @@ exists it came from the old grader:
 
 Everything else is unchanged in code — but **parity with the reference grid has not been measured
 for any row.** No per-row comparison of one model's scores through this harness against the
-reference grid's numbers exists yet, for the 18 rows whose graders did not change any more than
-for the four that did. Until that run happens (tracked in the follow-up issue linked from the PR),
+reference grid's numbers exists yet, for the 16 rows whose graders did not change any more than
+for the six that did. Until that run happens (tracked in
+[#443](https://github.com/allenai/olmo-eval/issues/443)),
 treat numbers from this harness as internally consistent and comparable to each other, not as
 reproductions of the published grid.
 

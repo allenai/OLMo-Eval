@@ -11,7 +11,7 @@ measured median prompt length through the reference prompt path, not a document 
 **Provenance.** Prompt templates, answer parsers, per-task metrics, gold-index conventions and stop
 rules are vendored verbatim from the ``ctc`` package (AI2 OLMo-core branch ``prasann/ctc``, commit
 :data:`UPSTREAM_COMMIT`) under ``_vendor/``, where they are golden-fixture-tested against the
-pre-migration implementation. That implementation produced the suite's published numbers, but four
+pre-migration implementation. That implementation produced the suite's published numbers, but six
 rows have been re-graded since -- the README's "Grading changed after the published grid" table
 says which, and an old number for one of those rows came from the old grader. Do not edit the
 vendored files here; fix upstream and re-vendor. Only the subtrees this harness actually calls are
@@ -646,7 +646,7 @@ class CTCMeanMetric(Metric):
         value = response.scores.get(self.scorer().name)
         return float(value) if isinstance(value, (int, float)) else None
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         # With a gate, the scorer channel is NOT a per-instance view of this metric -- it has
         # values for the excluded rows -- so a reader must not fall back to it.
         return self.skip_when_zero is None

@@ -416,7 +416,7 @@ def test_rerank_rows_without_a_ce_reference_leave_the_mean_and_the_predictions(
     # The gate is part of what the metric means, so it is serialized into the task hash.
     primary = task.config.primary_metric
     assert primary.to_dict()["skip_when_zero"] == "ce_ref_available"
-    assert not primary.supports_pairwise_scorer_fallback()
+    assert not primary.supports_scorer_fallback()
 
 
 def test_a_rerank_run_with_no_gradable_row_reports_zero_coverage(tmp_path, monkeypatch) -> None:
