@@ -36,6 +36,7 @@ from olmo_eval.common.types import (
 )
 from olmo_eval.data import DataLoader, DataSource
 from olmo_eval.evals.extract import (
+    ANSWER_LINE_PATTERN,
     OLMO_3_ANSWER_REGEX_TEMPLATES,
     ExtractedAnswer,
     extract_answer_with_format,
@@ -48,8 +49,6 @@ log = logging.getLogger(__name__)
 # Answer extraction
 # ---------------------------------------------------------------------------
 
-# Matches "ANSWER: X" or "(X)" where X is a capital letter
-_ANSWER_PATTERN = re.compile(r"ANSWER\s*:\s*\(?([A-Z])\)?", re.IGNORECASE)
 _PAREN_LETTER = re.compile(r"\(([A-Z])\)")
 _LAST_CAPITAL = re.compile(r"\b([A-Z])\b")
 
@@ -221,7 +220,7 @@ class GPQATask(Task):
         text = output.text
 
         # 1. Try "ANSWER: X"
-        matches = list(_ANSWER_PATTERN.finditer(text))
+        matches = list(ANSWER_LINE_PATTERN.finditer(text))
         if matches:
             return matches[-1].group(1).upper()
 

@@ -17,7 +17,8 @@ convenience entry points, but they are intentionally not nested under
 ``science:all`` because they would duplicate the GPQA questions already
 allocated to domain-specific suites. ``frontierscience`` is likewise a
 convenience entry point for its two tracks, which sit under ``science:judge``
-individually.
+individually. ``hle_text`` holds both text-only HLE variants; only the audited
+``hle:text:verified`` sits under ``science:judge``.
 
 The two FrontierScience tracks report their primary metric on the same 0-1 scale
 but measure different things (short-answer equivalence versus rubric coverage of
@@ -227,6 +228,13 @@ FRONTIERSCIENCE = make_suite(
     description="FrontierScience expert-level scientific reasoning (olympiad + research tracks).",
 )
 
+HLE_TEXT = make_suite(
+    "hle_text",
+    ("hle:text", "hle:text:verified"),
+    aggregation=AggregationStrategy.DISPLAY_ONLY,
+    description="Humanity's Last Exam, text-only questions (all and HLE-Verified Gold).",
+)
+
 SCIENCE_JUDGE = make_suite(
     "science:judge",
     (
@@ -234,6 +242,10 @@ SCIENCE_JUDGE = make_suite(
         # FrontierScience is text-only with no tools, so it needs a judge but not
         # an agentic harness and fits the judge/nojudge execution split.
         *_FRONTIERSCIENCE_TASKS,
+        # The audited Gold subset rather than the full set, whose wrong reference
+        # answers would be scored as model errors. ``hle:text`` stays available in
+        # ``hle_text`` for comparison with public HLE numbers.
+        "hle:text:verified",
     ),
     aggregation=AggregationStrategy.AVERAGE_OF_AVERAGES,
     description="Current science tasks that require external LLM-as-judge scoring.",

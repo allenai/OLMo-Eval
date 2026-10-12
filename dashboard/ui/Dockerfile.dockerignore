@@ -1,0 +1,7 @@
+# Build context is dashboard/. Keep ui/public/fonts/ (fetched by CI before the build).
+**/node_modules
+ui/dist
+ui/test-results
+api
+**/.git
+**/.env*

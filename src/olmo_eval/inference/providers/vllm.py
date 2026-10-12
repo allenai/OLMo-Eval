@@ -492,6 +492,7 @@ class VLLMProvider(InferenceProvider):
                             "num_tokens": num_tokens,
                             "num_tokens_all": num_tokens_all,
                             "is_greedy": is_greedy,
+                            "prompt_truncated_tokens": max(0, overflow),
                         },
                     )
                 )

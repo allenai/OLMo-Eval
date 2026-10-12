@@ -89,6 +89,9 @@ class SandboxConfig:
         required_secrets: Environment variable names that must be set.
         enable_diagnostics: Whether to run background diagnostics monitor.
         inject_swerex: Whether to build a derived image with swe-rex pre-installed.
+        pristine_image: When building a derived image, leave the base image's
+            packages, PATH and environment untouched so commands run in the
+            task's own environment rather than the swe-rex virtualenv.
         dockerfile_extra: Additional Dockerfile commands to inject when building derived images.
         image_pull: Image pull policy for swerex ("never", "missing", "always").
             Use "never" when inject_swerex=True to skip redundant image checks.
@@ -117,6 +120,7 @@ class SandboxConfig:
     exec_shell: tuple[str, ...] | None = None
     enable_diagnostics: bool = True
     inject_swerex: bool = False
+    pristine_image: bool = False
     dockerfile_extra: tuple[str, ...] = ()
     image_pull: ImagePullPolicy | None = None
     registry_auth: RegistryAuth | None = None
@@ -182,6 +186,7 @@ class SandboxConfig:
             exec_shell=tuple(data["exec_shell"]) if data.get("exec_shell") else None,
             enable_diagnostics=data.get("enable_diagnostics", True),
             inject_swerex=data.get("inject_swerex", False),
+            pristine_image=data.get("pristine_image", False),
             dockerfile_extra=tuple(data.get("dockerfile_extra", [])),
             image_pull=data.get("image_pull"),
             registry_auth=registry_auth,

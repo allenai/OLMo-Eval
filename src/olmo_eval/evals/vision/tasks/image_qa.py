@@ -62,7 +62,7 @@ class ChartQaSubsetMetric(Metric):
         value = response.scores.get(self.scorer().name)
         return float(value) if isinstance(value, (int, float)) else None
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False
 
 
@@ -105,7 +105,7 @@ class Ai2dMetric(Metric):
             return float(result["is_correct"])
         return None
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False
 
 
@@ -139,7 +139,7 @@ class PointCountMetric(Metric):
         result = _point_count_result(response)
         return float(result[self.kind]) if result is not None else None
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         # The scorer channel is `correct`; close/valid are their own fields.
         return False
 
@@ -166,7 +166,7 @@ class PointCountPerCountMetric(Metric):
             return None
         return float(result["correct"])
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False
 
 
@@ -192,7 +192,7 @@ class PointCountCategoryAverageMetric(Metric):
         # A macro average over counts has no exact per-instance decomposition.
         return None
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False
 
 

@@ -1,0 +1,29 @@
+{
+    "compilerOptions": {
+        "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
+        "target": "es2022",
+        "lib": ["ES2023", "DOM", "DOM.Iterable"],
+        "module": "esnext",
+        "types": ["vite/client"],
+        "skipLibCheck": true,
+
+        "moduleResolution": "bundler",
+        "allowImportingTsExtensions": true,
+        "verbatimModuleSyntax": true,
+        "moduleDetection": "force",
+        "noEmit": true,
+        "jsx": "react-jsx",
+        "paths": {
+            "@contract/*": ["../contract/*"],
+            "@/*": ["./src/*"]
+        },
+
+        "strict": true,
+        "noUnusedLocals": true,
+        "noUnusedParameters": true,
+        "erasableSyntaxOnly": true,
+        "noFallthroughCasesInSwitch": true,
+        "noUncheckedSideEffectImports": true
+    },
+    "include": ["src", "test", "../contract/api-types.ts"]
+}

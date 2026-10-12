@@ -263,7 +263,7 @@ def _compute_metric_value_from_prediction(
         instance_metrics,
         metric_name=metric.name,
         scorer_name=scorer_name,
-        allow_scorer_fallback=metric.supports_pairwise_scorer_fallback(),
+        allow_scorer_fallback=metric.supports_scorer_fallback(),
     )
 
 
@@ -276,9 +276,8 @@ def augment_prediction_instance_metrics(
     """Populate exact ``metric:scorer``-style instance keys in a prediction payload.
 
     ``build_predictions()`` can supply the original ``Response`` for the most faithful
-    computation. DB ingestion can call the same helper later with just the prediction
-    payload, which still covers logprob-MC and other metrics derivable from the stored
-    output summary.
+    computation. Without it, the helper works from the prediction payload alone, which
+    still covers logprob-MC and other metrics derivable from the stored output summary.
     """
     instance_metrics = normalize_prediction_instance_metrics(prediction)
 
