@@ -1,29 +1,24 @@
 """Common secret handling for Beaker jobs.
 
-Provides utilities to retrieve local secrets (HuggingFace token, Weights & Biases key)
+Provides utilities to retrieve local secrets (Hugging Face token, Weights & Biases key)
 and store them as user-scoped Beaker secrets.
 
-Example:
-    from olmo_eval.launch.beaker.secrets import ensure_common_secrets
-
-    # Ensure HF_TOKEN and WANDB_API_KEY exist in Beaker
-    common_secrets = ensure_common_secrets(workspace="ai2/my-workspace")
-    # Returns: [("HF_TOKEN", "username_HF_TOKEN"), ("WANDB_API_KEY", "username_WANDB_API_KEY")]
+The Hugging Face token is copied to Beaker only when the job needs authenticated
+Hugging Face access: ``--hf-token`` was passed, a task declares ``HF_TOKEN`` in its
+required secrets, or a model or dataset is gated or private. An existing
+``<user>_HF_TOKEN`` secret in the workspace is always injected. See ``plan_hf_token``.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import os
+import re
+from collections.abc import Iterable
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-from olmo_eval.launch.beaker.constants import (
-    OLMO_EVAL_DB_ARN_SECRET_NAME,
-    OLMO_EVAL_PGHOST_SECRET_NAME,
-    STORE_DEFAULTS,
-)
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from beaker import Beaker
@@ -32,17 +27,22 @@ log = logging.getLogger(__name__)
 
 __all__ = [
     "COMMON_SECRET_NAMES",
+    "HF_TOKEN_ENV",
+    "HfAccessCheck",
+    "HfTokenPlan",
+    "beaker_token_secret_name",
+    "check_hf_access",
     "get_local_hf_token",
     "get_local_wandb_api_key",
     "ensure_common_secrets",
     "ensure_task_secrets",
-    "get_aws_secret_value",
-    "get_store_secret_mappings",
-    "get_store_env_defaults",
-    "setup_pgpassword_from_arn",
+    "plan_hf_token",
+    "secret_exists",
+    "write_secret",
 ]
 
-COMMON_SECRET_NAMES: frozenset[str] = frozenset({"HF_TOKEN"})
+HF_TOKEN_ENV = "HF_TOKEN"
+COMMON_SECRET_NAMES: frozenset[str] = frozenset({HF_TOKEN_ENV})
 
 
 def get_local_hf_token() -> str | None:
@@ -165,63 +165,260 @@ def _write_secret_if_needed(
     return True
 
 
-def ensure_common_secrets(
-    workspace: str,
-    overwrite: bool = False,
-) -> list[tuple[str, str]]:
-    """Ensure common secrets (HF_TOKEN, WANDB_API_KEY) exist as user-scoped Beaker secrets.
+def beaker_token_secret_name(username: str) -> str:
+    """Name of the user-scoped secret holding a Beaker token for in-job status updates."""
+    return f"{username}_BEAKER_TOKEN"
 
-    Secrets are stored with a username prefix to prevent collisions between
-    users in shared workspaces. For example, user "alice" will have secrets
-    named "alice_HF_TOKEN", "alice_WANDB_API_KEY".
 
-    The returned tuples map environment variable names to secret names,
-    suitable for use with BeakerEnvSecret.
+def secret_exists(client: Beaker, name: str, workspace: str | None = None) -> bool:
+    """Return whether a Beaker secret exists in ``workspace`` (default: the client's)."""
+    from beaker.exceptions import BeakerSecretNotFound
 
-    Unlike ensure_aws_secrets, this function does NOT raise an error if
-    credentials are not found - it simply skips that secret and logs a warning.
-    This allows jobs to run even without all optional credentials.
+    ws = client.workspace.get(workspace) if workspace else None
+    try:
+        client.secret.get(name, workspace=ws)
+    except BeakerSecretNotFound:
+        return False
+    return True
+
+
+def write_secret(client: Beaker, name: str, value: str, workspace: str | None = None) -> None:
+    """Write a Beaker secret to ``workspace`` (default: the client's)."""
+    ws = client.workspace.get(workspace) if workspace else None
+    client.secret.write(name, value, workspace=ws)
+    log.info(f"Wrote secret {name} to Beaker workspace {workspace or ''}".rstrip())
+
+
+# Hugging Face repo ids look like "org/name". Anything else (paths, URLs, API model
+# names) is not checked.
+_HF_REPO_ID = re.compile(r"^[A-Za-z0-9][\w.-]*/[\w.-]+$")
+
+RepoAccess = Literal["public", "gated", "private", "missing", "unknown"]
+
+
+def looks_like_hf_repo_id(value: str) -> bool:
+    """Return whether ``value`` looks like a Hugging Face repo id rather than a path."""
+    value = value.removeprefix("hf://")
+    return bool(_HF_REPO_ID.match(value)) and not Path(value).exists()
+
+
+@dataclass(frozen=True)
+class HfAccessCheck:
+    """Result of checking whether Hugging Face repos need authenticated access.
+
+    Attributes:
+        needs_token: Repos that are gated or private, as "model org/name (gated)".
+        unchecked: Repos whose status could not be determined (network error, timeout).
+    """
+
+    needs_token: list[str] = field(default_factory=list)
+    unchecked: list[str] = field(default_factory=list)
+
+
+def _repo_access(repo_id: str, repo_type: str, token: str | None, timeout: float) -> RepoAccess:
+    from huggingface_hub import HfApi
+    from huggingface_hub.errors import HFValidationError, RepositoryNotFoundError
+
+    api = HfApi()
+    try:
+        info = api.repo_info(repo_id, repo_type=repo_type, timeout=timeout, token=False)
+    except HFValidationError:
+        return "missing"
+    except RepositoryNotFoundError:
+        # Anonymous lookups cannot tell a private repo from a missing one.
+        if not token:
+            return "missing"
+        try:
+            api.repo_info(repo_id, repo_type=repo_type, timeout=timeout, token=token)
+        except RepositoryNotFoundError:
+            return "missing"
+        except Exception:
+            return "unknown"
+        return "private"
+    except Exception as e:
+        log.debug(f"Could not check Hugging Face {repo_type} {repo_id}: {e}")
+        return "unknown"
+    if info.private:
+        return "private"
+    if info.gated:
+        return "gated"
+    return "public"
+
+
+def check_hf_access(
+    repos: Iterable[tuple[str, str]],
+    token: str | None = None,
+    timeout: float = 5.0,
+) -> HfAccessCheck:
+    """Check which Hugging Face repos are gated or private.
+
+    Each repo is looked up anonymously first. A repo that is not found anonymously is
+    looked up again with ``token`` (when given) to detect private repos. Values that do
+    not look like repo ids are skipped.
 
     Args:
-        workspace: Beaker workspace to store secrets in.
-        overwrite: Whether to overwrite existing secrets.
+        repos: (repo_id, repo_type) pairs, repo_type "model" or "dataset". A leading
+            "hf://" is stripped.
+        token: Local Hugging Face token, used only to detect private repos.
+        timeout: Per-request timeout in seconds.
+    """
+    unique = sorted(
+        {
+            (repo_id.removeprefix("hf://"), repo_type)
+            for repo_id, repo_type in repos
+            if looks_like_hf_repo_id(repo_id)
+        }
+    )
+    if not unique:
+        return HfAccessCheck()
+    with ThreadPoolExecutor(max_workers=min(8, len(unique))) as pool:
+        results = list(pool.map(lambda r: _repo_access(r[0], r[1], token, timeout), unique))
+    check = HfAccessCheck()
+    for (repo_id, repo_type), access in zip(unique, results, strict=True):
+        if access in ("gated", "private"):
+            check.needs_token.append(f"{repo_type} {repo_id} ({access})")
+        elif access == "unknown":
+            check.unchecked.append(f"{repo_type} {repo_id}")
+    return check
+
+
+@dataclass(frozen=True)
+class HfTokenPlan:
+    """What to do with the Hugging Face token for a launch.
+
+    Attributes:
+        secret_name: The user-scoped Beaker secret, e.g. "alice_HF_TOKEN".
+        inject: Mount the secret as HF_TOKEN in the job.
+        copy_local: Write the local token to the secret before launching.
+        message: One-line explanation for the user.
+        warning: True when ``message`` is a warning.
+        error: Set when the job needs a token but none is available.
+    """
+
+    secret_name: str
+    inject: bool
+    copy_local: bool = False
+    message: str = ""
+    warning: bool = False
+    error: str | None = None
+
+
+def plan_hf_token(
+    *,
+    username: str,
+    mode: bool | None,
+    secret_present: bool | None,
+    required: bool,
+    access: HfAccessCheck,
+    have_local_token: bool,
+) -> HfTokenPlan:
+    """Decide whether to inject and copy the Hugging Face token.
+
+    Args:
+        username: Beaker username for the secret name.
+        mode: ``--hf-token`` (True), ``--no-hf-token`` (False), or auto (None).
+        secret_present: Whether ``<user>_HF_TOKEN`` exists in the workspace. None when
+            not checked (dry run).
+        required: A task, model, harness or external eval declares HF_TOKEN.
+        access: Gated or private repos found by ``check_hf_access``.
+        have_local_token: Whether a local Hugging Face token was found.
+    """
+    name = f"{username}_{HF_TOKEN_ENV}"
+    reasons: list[str] = []
+    if mode:
+        reasons.append("--hf-token was passed")
+    if required:
+        reasons.append("a task or model declares HF_TOKEN in required_secrets")
+    reasons.extend(access.needs_token)
+    needed = bool(reasons)
+
+    if mode is False:
+        if needed:
+            return HfTokenPlan(
+                name,
+                inject=False,
+                message=f"--no-hf-token: not injecting HF_TOKEN, but {'; '.join(reasons[:3])}",
+                warning=True,
+            )
+        return HfTokenPlan(name, inject=False, message="--no-hf-token: not injecting HF_TOKEN")
+
+    if secret_present:
+        return HfTokenPlan(name, inject=True, message=f"HF_TOKEN from existing secret {name}")
+
+    if needed:
+        why = "; ".join(reasons[:3])
+        if secret_present is None:
+            # Dry run: the workspace is not checked.
+            note = "" if have_local_token else " (no local token found to copy)"
+            return HfTokenPlan(
+                name,
+                inject=True,
+                message=(
+                    f"HF_TOKEN from secret {name}, copying the local token if the secret "
+                    f"is missing{note} ({why})"
+                ),
+                warning=not have_local_token,
+            )
+        if have_local_token:
+            return HfTokenPlan(
+                name,
+                inject=True,
+                copy_local=True,
+                message=f"Copying local Hugging Face token to secret {name} ({why})",
+            )
+        return HfTokenPlan(
+            name,
+            inject=False,
+            error=(
+                f"The job needs a Hugging Face token ({why}), but no local token was found "
+                f"and secret {name} does not exist. Set HF_TOKEN or run `hf auth login`, "
+                f"or create the secret with: beaker secret write {name} <token>"
+            ),
+        )
+
+    if access.unchecked:
+        message = (
+            f"Could not check {', '.join(access.unchecked[:3])} on Hugging Face; not copying "
+            "your HF token. Pass --hf-token if a gated or private model or dataset is used."
+        )
+        warning = True
+    else:
+        message = "HF_TOKEN not needed: models and datasets are public"
+        warning = False
+    if secret_present is None:
+        message += f" (an existing secret {name} would still be injected)"
+    return HfTokenPlan(name, inject=False, message=message, warning=warning)
+
+
+def ensure_common_secrets(
+    workspace: str,
+) -> list[tuple[str, str]]:
+    """Inject common optional secrets (WANDB_API_KEY) that already exist in the workspace.
+
+    The user's ``<username>_WANDB_API_KEY`` secret is injected only if it is already in
+    the workspace. It is never copied there from the local machine: nothing in olmo-eval
+    reads it, and a personal key in a shared workspace is readable by every writer. A task
+    that needs it declares WANDB_API_KEY in ``required_secrets`` instead.
+
+    HF_TOKEN is handled separately by ``plan_hf_token``.
+
+    Args:
+        workspace: Beaker workspace the job runs in.
 
     Returns:
-        List of (env_var_name, secret_name) tuples for secrets that were
-        found and written. For example:
-        [("HF_TOKEN", "alice_HF_TOKEN"), ("WANDB_API_KEY", "alice_WANDB_API_KEY")]
+        (env_var_name, secret_name) tuples for secrets that exist, for example
+        [("WANDB_API_KEY", "alice_WANDB_API_KEY")].
     """
     from beaker import Beaker
 
     client = Beaker.from_env(default_workspace=workspace)
-    username = _get_beaker_username(client)
-    secrets: list[tuple[str, str]] = []
-
-    # Handle HF_TOKEN
-    hf_token = get_local_hf_token()
-    if hf_token:
-        hf_secret_name = f"{username}_HF_TOKEN"
-        _write_secret_if_needed(client, hf_secret_name, hf_token, overwrite)
-        secrets.append(("HF_TOKEN", hf_secret_name))
-    else:
-        log.warning(
-            "No HuggingFace token found. Set HF_TOKEN environment variable "
-            "or run 'huggingface-cli login' to enable authenticated HF access."
-        )
-
-    # Handle WANDB_API_KEY
-    wandb_key = get_local_wandb_api_key()
-    if wandb_key:
-        wandb_secret_name = f"{username}_WANDB_API_KEY"
-        _write_secret_if_needed(client, wandb_secret_name, wandb_key, overwrite)
-        secrets.append(("WANDB_API_KEY", wandb_secret_name))
-    else:
-        log.warning(
-            "No Weights & Biases API key found. Set WANDB_API_KEY environment variable "
-            "or run 'wandb login' to enable W&B logging."
-        )
-
-    return secrets
+    name = f"{_get_beaker_username(client)}_WANDB_API_KEY"
+    try:
+        found = secret_exists(client, name)
+    except Exception as e:
+        log.debug(f"Could not check for secret {name}: {e}")
+        found = False
+    return [("WANDB_API_KEY", name)] if found else []
 
 
 def ensure_task_secrets(
@@ -278,85 +475,3 @@ def ensure_task_secrets(
         )
 
     return secrets
-
-
-def get_aws_secret_value(secret_arn: str, key: str | None = None) -> str:
-    """Fetch a secret value from AWS Secrets Manager.
-
-    Args:
-        secret_arn: The ARN of the secret.
-        key: If provided, parse secret as JSON and extract this key.
-
-    Returns:
-        The secret value.
-    """
-    import boto3
-
-    # Extract region from ARN (format: arn:aws:secretsmanager:REGION:ACCOUNT:secret:NAME)
-    parts = secret_arn.split(":")
-    region = parts[3] if len(parts) >= 4 else "us-east-1"
-
-    client = boto3.client("secretsmanager", region_name=region)
-    response = client.get_secret_value(SecretId=secret_arn)
-    secret_string = response["SecretString"]
-
-    if key is None:
-        return secret_string
-
-    return json.loads(secret_string)[key]
-
-
-def get_store_secret_mappings() -> list[tuple[str, str]]:
-    """Get environment variable to Beaker secret mappings for --store.
-
-    Returns:
-        List of (env_var_name, secret_name) tuples.
-    """
-    return [
-        ("DB_SECRET_ARN", OLMO_EVAL_DB_ARN_SECRET_NAME),
-        ("PGHOST", OLMO_EVAL_PGHOST_SECRET_NAME),
-    ]
-
-
-def get_store_env_defaults() -> dict[str, str]:
-    """Get default environment variables for --store.
-
-    These can be overridden by the user in the launch command.
-
-    Returns:
-        Dict of env_var_name -> default_value.
-    """
-    return STORE_DEFAULTS.copy()
-
-
-PGPASSWORD_FILE = "/tmp/.pgpassword"
-
-
-def setup_pgpassword_from_arn() -> None:
-    """Fetch PGPASSWORD from AWS Secrets Manager and write to secure file.
-
-    Writes to /tmp/.pgpassword with mode 600. The shell should source this
-    file and then delete it.
-
-    Raises:
-        SystemExit: If DB_SECRET_ARN is not set or password fetch fails.
-    """
-    import sys
-
-    arn = os.environ.get("DB_SECRET_ARN")
-    if arn is None:
-        print("Error: DB_SECRET_ARN environment variable not set", file=sys.stderr)
-        sys.exit(1)
-        return  # unreachable, helps type checker
-
-    try:
-        password = get_aws_secret_value(arn, key="password")
-        pgpass_file = Path(PGPASSWORD_FILE)
-        pgpass_file.write_text(f"export PGPASSWORD='{password}'\n")
-        pgpass_file.chmod(0o600)
-    except Exception as e:
-        print(
-            f"Error: Failed to fetch password from {OLMO_EVAL_DB_ARN_SECRET_NAME}: {e}",
-            file=sys.stderr,
-        )
-        sys.exit(1)

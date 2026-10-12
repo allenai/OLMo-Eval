@@ -1,0 +1,35 @@
+{
+  "run_id": "7c1e9a0b42d8",
+  "baseline": null,
+  "items": [
+    {
+      "name": "arc:rc:olmo3base",
+      "parent": null,
+      "depth": 0,
+      "aggregation": "average",
+      "description": "ARC easy and challenge, rank classification",
+      "children": [
+        {
+          "type": "task",
+          "name": "arc_easy:rc:olmo3base"
+        },
+        {
+          "type": "task",
+          "name": "arc_challenge:rc:olmo3base"
+        }
+      ],
+      "score": 0.7342,
+      "stderr": 0.0081,
+      "num_tasks": 2,
+      "n_instances": 3548,
+      "display_format": "percent",
+      "higher_is_better": true,
+      "tasks_missing": [],
+      "baseline": null
+    }
+  ],
+  "unsuited_tasks": [
+    "omniscience:judge"
+  ],
+  "computed_at": "2026-10-01T16:02:11+00:00"
+}

@@ -1,0 +1,10 @@
+{
+  "run_id": "db385601e335",
+  "status": "complete",
+  "upload_state": "complete",
+  "dashboard_url": "https://olmo-eval.allen.ai/runs/db385601e335",
+  "task_results": 1,
+  "instances": 600,
+  "artifacts_missing": [],
+  "warnings": []
+}

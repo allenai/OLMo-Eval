@@ -77,8 +77,7 @@ class JudgeMetrics(Serializable):
 class AgentMetrics(Serializable):
     """Container for all agent evaluation metrics.
 
-    This is the top-level metrics container that can be added to
-    StoredTaskResult for agent evaluation tasks.
+    This is the top-level metrics container for agent evaluation tasks.
     """
 
     tool: ToolMetrics | None = None
