@@ -129,6 +129,9 @@ class SWEBenchArgs:
     agent_timeout: float = 3600.0
     max_tool_output_chars: int | None = 10000
     eval_timeout: float = 1800.0
+    image_timeout: float = 900.0
+    stop_on_submit: bool = True
+    resume_from: str | None = None
     image_source: str = "ghcr"
     cleanup_images: bool = True
     include_hints: bool = False
@@ -156,6 +159,9 @@ class SWEBenchArgs:
             agent_timeout=float(data.get("agent_timeout", 3600.0)),
             max_tool_output_chars=_as_optional_int(data.get("max_tool_output_chars", 10000)),
             eval_timeout=float(data.get("eval_timeout", 1800.0)),
+            image_timeout=float(data.get("image_timeout", 900.0)),
+            stop_on_submit=_as_bool(data.get("stop_on_submit", True)),
+            resume_from=data.get("resume_from") or None,
             image_source=str(data.get("image_source", "ghcr")),
             cleanup_images=_as_bool(data.get("cleanup_images", True)),
             include_hints=_as_bool(data.get("include_hints", False)),
@@ -184,6 +190,60 @@ class InstanceResult:
     @property
     def resolved(self) -> bool:
         return self.grade.resolved
+
+    def to_record(self) -> dict[str, Any]:
+        """Serialize to a JSON-compatible dict that ``from_record`` can read back."""
+        return {
+            "instance_id": self.instance_id,
+            "repo": self.repo,
+            "difficulty": self.difficulty,
+            "patch": self.patch,
+            "grade": asdict(self.grade),
+            "trajectory": self.trajectory.to_dict(),
+            "completion_reason": self.completion_reason,
+            "agent_duration": self.agent_duration,
+            "eval_duration": self.eval_duration,
+            "error": self.error,
+        }
+
+    @classmethod
+    def from_record(cls, record: dict[str, Any]) -> InstanceResult:
+        """Rebuild a result from ``to_record`` output."""
+        return cls(
+            instance_id=record["instance_id"],
+            repo=record["repo"],
+            difficulty=record["difficulty"],
+            patch=record["patch"],
+            grade=GradeResult(**record["grade"]),
+            trajectory=AgentTrajectory.from_dict(record["trajectory"]),
+            completion_reason=record["completion_reason"],
+            agent_duration=record["agent_duration"],
+            eval_duration=record["eval_duration"],
+            error=record["error"],
+        )
+
+
+def load_progress(path: str | Path) -> dict[str, InstanceResult]:
+    """Read finished instances from a progress file, keyed by instance ID.
+
+    A truncated last line, as left by a job that was killed mid-write, is skipped.
+    """
+    finished: dict[str, InstanceResult] = {}
+    for line in Path(path).read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            result = InstanceResult.from_record(json.loads(line))
+        except (json.JSONDecodeError, KeyError, TypeError):
+            logger.warning(f"Skipping unreadable progress record in {path}")
+            continue
+        finished[result.instance_id] = result
+    return finished
+
+
+def called_tool(trajectory: AgentTrajectory, name: str) -> bool:
+    """Whether the agent called the named tool at any point in the trajectory."""
+    return any(call.function.name == name for turn in trajectory.turns for call in turn.tool_calls)
 
 
 def is_context_length_error(error: BaseException) -> bool:
@@ -264,6 +324,12 @@ class SWEBenchVerifiedExternalEval(ExternalEval):
             "agent_timeout": ("Wall-clock budget in seconds for the agent on one instance", 3600.0),
             "max_tool_output_chars": ("Truncate each tool output to this many characters", 10000),
             "eval_timeout": ("Timeout in seconds for running the tests", 1800.0),
+            "image_timeout": ("Timeout in seconds for pulling and building an image", 900.0),
+            "stop_on_submit": ("End the agent's run when it calls submit()", True),
+            "resume_from": (
+                "Progress file from an earlier run; instances recorded there are not rerun",
+                None,
+            ),
             "image_source": (
                 "Where to pull instance images: ghcr (no login needed) or dataset (Docker Hub)",
                 "ghcr",
@@ -310,11 +376,32 @@ class SWEBenchVerifiedExternalEval(ExternalEval):
                 start_time,
             )
 
+        previous: dict[str, InstanceResult] = {}
+        if swe_args.resume_from:
+            previous = load_progress(swe_args.resume_from)
+            logger.info(f"Resuming: {len(previous)} instances already finished")
+
+        progress_path = Path(output_dir) / f"{self.name}_progress.jsonl" if output_dir else None
+        if progress_path is not None:
+            progress_path.parent.mkdir(parents=True, exist_ok=True)
+            # Carry resumed instances over, so this file alone describes the whole run.
+            with open(progress_path, "w") as f:
+                for inst in instances:
+                    if inst.instance_id in previous:
+                        f.write(json.dumps(previous[inst.instance_id].to_record()) + "\n")
+
         semaphore = asyncio.Semaphore(swe_args.max_concurrency)
 
         async def run(instance: SWEBenchInstance) -> InstanceResult:
+            if instance.instance_id in previous:
+                return previous[instance.instance_id]
             async with semaphore:
-                return await self._run_instance(instance, provider, swe_args, container_runtime)
+                result = await self._run_instance(instance, provider, swe_args, container_runtime)
+            # Recorded as each instance finishes, so a killed job keeps its finished work.
+            if progress_path is not None:
+                with open(progress_path, "a") as f:
+                    f.write(json.dumps(result.to_record()) + "\n")
+            return result
 
         results = await asyncio.gather(*[run(inst) for inst in instances])
 
@@ -403,13 +490,24 @@ class SWEBenchVerifiedExternalEval(ExternalEval):
         from olmo_eval.harness.sandbox.image import get_swerex_image
 
         try:
-            # Image builds and pulls block, so keep them off the event loop.
-            image = await asyncio.to_thread(
-                get_swerex_image,
-                base_image,
-                runtime,
-                require_registry=mode == SandboxMode.MODAL,
+            # Image builds and pulls block, so keep them off the event loop. The
+            # resolver kills its own subprocesses at the timeout; the outer wait is a
+            # backstop in case something else in it stalls.
+            image = await asyncio.wait_for(
+                asyncio.to_thread(
+                    get_swerex_image,
+                    base_image,
+                    runtime,
+                    require_registry=mode == SandboxMode.MODAL,
+                    timeout=swe_args.image_timeout,
+                ),
+                timeout=swe_args.image_timeout + 60.0,
             )
+        except TimeoutError as e:
+            logger.warning(f"[{instance.instance_id}] Image preparation timed out: {e}")
+            result.completion_reason = "image_timeout"
+            result.error = f"image_timeout: {e}"
+            return
         except Exception as e:
             logger.exception(f"[{instance.instance_id}] Failed to prepare image")
             result.error = f"image_error: {e}"
@@ -526,9 +624,15 @@ class SWEBenchVerifiedExternalEval(ExternalEval):
             trace_metadata={"task_id": instance.instance_id},
             enable_compaction=swe_args.enable_compaction,
             max_tool_output_chars=swe_args.max_tool_output_chars,
+            stop_at_tools=("submit",) if swe_args.stop_on_submit else None,
         )
         result.trajectory = harness_result.trajectory or AgentTrajectory(turns=())
-        result.completion_reason = "max_turns" if harness_result.max_turns_reached else "complete"
+        if harness_result.max_turns_reached:
+            result.completion_reason = "max_turns"
+        elif called_tool(result.trajectory, "submit"):
+            result.completion_reason = "submitted"
+        else:
+            result.completion_reason = "complete"
         if harness_result.error and not harness_result.max_turns_reached:
             result.error = f"agent_error: {harness_result.error}"
 

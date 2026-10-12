@@ -1125,9 +1125,21 @@ uv run olmo-eval beaker launch -E swe_bench_verified -m qwen3-coder-30b -c ai2/j
     -A max_concurrency=8
 ```
 
+The agent's run ends when it calls `submit()`; set `stop_on_submit=false` to
+let it keep going until `max_turns`.
+
+Each finished instance is appended to `swe_bench_verified_progress.jsonl` in the
+output directory, so a job that is killed or preempted keeps its finished work.
+Pass that file as `resume_from` to a new run to skip the instances it already
+covers.
+
 Other arguments include `limit`, `repos`, `max_turns`, `command_timeout`,
-`agent_timeout`, `eval_timeout`, `max_tool_output_chars`, and `include_hints`;
-`olmo-eval external-evals` lists them all with their defaults.
+`agent_timeout`, `image_timeout`, `eval_timeout`, `max_tool_output_chars`, and
+`include_hints`; `olmo-eval external-evals` lists them all with their defaults.
+
+Scores from a single run carry a few points of noise: in one repeated run of 97
+sphinx instances, 25 changed outcome even though the total resolved count moved
+by one.
 
 ### ExternalEvalResult
 

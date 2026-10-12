@@ -7,6 +7,8 @@ import logging
 import shlex
 import shutil
 import subprocess
+import time
+from typing import Any
 
 from olmo_eval.common.config import get_infra_config
 
@@ -21,6 +23,26 @@ UV_IMAGE = "ghcr.io/astral-sh/uv:0.11.7"
 
 # Version bump this when changing the Dockerfile to invalidate cached images
 SWEREX_IMAGE_VERSION = "20260505.1"
+
+
+class _Deadline:
+    """Runs subprocesses against a shared time budget, killing any that run past it."""
+
+    def __init__(self, timeout: float | None, description: str) -> None:
+        self._end = None if timeout is None else time.monotonic() + timeout
+        self._timeout = timeout
+        self._description = description
+
+    def run(self, cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess:
+        remaining = None if self._end is None else self._end - time.monotonic()
+        if remaining is not None and remaining <= 0:
+            raise TimeoutError(f"{self._description} exceeded {self._timeout:g}s")
+        try:
+            return subprocess.run(cmd, timeout=remaining, **kwargs)
+        except subprocess.TimeoutExpired as e:
+            raise TimeoutError(
+                f"{self._description} exceeded {self._timeout:g}s during: {' '.join(cmd[:3])}"
+            ) from e
 
 
 def _remote_image_exists(container_runtime: str, image: str) -> bool:
@@ -51,10 +73,14 @@ def _remote_image_exists(container_runtime: str, image: str) -> bool:
             return True
 
     # Last resort: container runtime manifest inspect
-    result = subprocess.run(
-        [container_runtime, "manifest", "inspect", image],
-        capture_output=True,
-    )
+    try:
+        result = subprocess.run(
+            [container_runtime, "manifest", "inspect", image],
+            capture_output=True,
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        return False
     return result.returncode == 0
 
 
@@ -99,6 +125,7 @@ def get_swerex_image(
     container_runtime: str = "docker",
     dockerfile_extra: tuple[str, ...] = (),
     require_registry: bool = False,
+    timeout: float | None = None,
 ) -> str:
     """Build a derived image with Python and swe-rex pre-installed.
 
@@ -111,6 +138,8 @@ def get_swerex_image(
         dockerfile_extra: Additional Dockerfile commands to inject.
         require_registry: If True, requires SWEREX_REGISTRY and returns registry URL.
             Use for Modal which needs remote-accessible images.
+        timeout: Seconds allowed for resolving the image, covering every pull,
+            build and push it runs. None means no limit.
 
     Returns:
         The derived image name with swe-rex installed. If require_registry=True,
@@ -119,6 +148,7 @@ def get_swerex_image(
     Raises:
         ValueError: If require_registry=True but SWEREX_REGISTRY is not set.
         RuntimeError: If image build or push fails.
+        TimeoutError: If resolving the image takes longer than ``timeout``.
     """
     tag_hash = _swerex_tag_hash(base_image, dockerfile_extra)
 
@@ -127,7 +157,12 @@ def get_swerex_image(
         return _resolved_images[tag_hash]
 
     result = _resolve_swerex_image(
-        base_image, container_runtime, dockerfile_extra, require_registry, tag_hash
+        base_image,
+        container_runtime,
+        dockerfile_extra,
+        require_registry,
+        tag_hash,
+        _Deadline(timeout, f"Resolving swerex image for {base_image}"),
     )
     _resolved_images[tag_hash] = result
     return result
@@ -139,6 +174,7 @@ def _resolve_swerex_image(
     dockerfile_extra: tuple[str, ...],
     require_registry: bool,
     tag_hash: str,
+    deadline: _Deadline,
 ) -> str:
     """Core image resolution logic — called once per unique image hash."""
     config = get_infra_config()
@@ -157,7 +193,7 @@ def _resolve_swerex_image(
     registry_image = f"{registry}/swerex-{tag_hash}:latest" if registry else None
 
     # Check if image exists locally
-    result = subprocess.run(
+    result = deadline.run(
         [container_runtime, "image", "inspect", local_image],
         capture_output=True,
     )
@@ -170,11 +206,11 @@ def _resolve_swerex_image(
                 logger.debug(f"Registry image already exists: {registry_image}")
                 return registry_image
             # Not in registry yet — tag and push
-            subprocess.run(
+            deadline.run(
                 [container_runtime, "tag", local_image, registry_image],
                 capture_output=True,
             )
-            push_result = subprocess.run(
+            push_result = deadline.run(
                 [container_runtime, "push", registry_image], capture_output=True
             )
             if push_result.returncode != 0:
@@ -197,12 +233,12 @@ def _resolve_swerex_image(
             logger.info(f"Registry image {registry_image} not found, will build and push")
         else:
             # For Docker/Podman: pull so we have a local copy
-            result = subprocess.run(
+            result = deadline.run(
                 [container_runtime, "pull", registry_image],
                 capture_output=True,
             )
             if result.returncode == 0:
-                subprocess.run(
+                deadline.run(
                     [container_runtime, "tag", registry_image, local_image],
                     capture_output=True,
                 )
@@ -234,7 +270,7 @@ ENV VIRTUAL_ENV="/root/venv"
 ENV PATH="/root/venv/bin:$PATH"
 """
 
-    result = subprocess.run(
+    result = deadline.run(
         [container_runtime, "build", "-t", local_image, "-"],
         input=dockerfile.encode(),
         capture_output=True,
@@ -247,10 +283,8 @@ ENV PATH="/root/venv/bin:$PATH"
 
     if registry and registry_image:
         logger.debug(f"Pushing swerex image to registry: {registry_image}")
-        subprocess.run([container_runtime, "tag", local_image, registry_image], capture_output=True)
-        push_result = subprocess.run(
-            [container_runtime, "push", registry_image], capture_output=True
-        )
+        deadline.run([container_runtime, "tag", local_image, registry_image], capture_output=True)
+        push_result = deadline.run([container_runtime, "push", registry_image], capture_output=True)
         if push_result.returncode == 0:
             logger.debug(f"Pushed swerex image to registry: {registry_image}")
             if require_registry:

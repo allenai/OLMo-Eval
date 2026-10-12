@@ -548,6 +548,172 @@ class TestRunInstanceAgent(unittest.TestCase):
         self.assertTrue(result.grade.patch_applied)
 
 
+def _oracle_patches(graded: list[str]) -> list[Any]:
+    """Patches that run oracle-mode instances without containers, recording graded IDs."""
+
+    async def fake_grade(executor: Any, instance: SWEBenchInstance, patch: str, timeout: float):
+        graded.append(instance.instance_id)
+        return swe_grader.GradeResult(resolved=True, patch_applied=True, tests_ran=True)
+
+    manager = mock.MagicMock()
+    manager.start = mock.AsyncMock()
+    manager.stop = mock.AsyncMock()
+    return [
+        mock.patch.object(swe_eval, "grade_in_sandbox", side_effect=fake_grade),
+        mock.patch("olmo_eval.harness.sandbox.image.remove_swerex_image"),
+        mock.patch(
+            "olmo_eval.harness.sandbox.image.get_swerex_image", return_value="derived:latest"
+        ),
+        mock.patch("olmo_eval.harness.sandbox.SandboxManager", return_value=manager),
+    ]
+
+
+class TestProgressAndResume(unittest.TestCase):
+    def setUp(self) -> None:
+        self.instances = [_instance(instance_id=f"owner__repo-{i}") for i in range(3)]
+        self.provider = mock.MagicMock(model_name="test-model")
+
+    def _execute(self, args: dict[str, Any], output_dir: str, graded: list[str]):
+        patches = [
+            mock.patch.object(swe_eval, "load_instances", return_value=self.instances),
+            *_oracle_patches(graded),
+        ]
+        for p in patches:
+            p.start()
+        try:
+            return asyncio.run(
+                swe_eval.SWEBenchVerifiedExternalEval().execute(
+                    self.provider, {"oracle": True, **args}, output_dir=output_dir
+                )
+            )
+        finally:
+            for p in patches:
+                p.stop()
+
+    def test_record_round_trip(self) -> None:
+        result = swe_eval.InstanceResult(
+            instance_id="a",
+            repo="a/a",
+            difficulty="<15 min fix",
+            patch=GOLD_PATCH,
+            grade=swe_grader.GradeResult(resolved=True, patch_applied=True, tests_ran=True),
+            completion_reason="submitted",
+            agent_duration=1.5,
+            error=None,
+        )
+        restored = swe_eval.InstanceResult.from_record(json.loads(json.dumps(result.to_record())))
+        self.assertEqual(restored, result)
+
+    def test_each_instance_is_recorded_as_it_finishes(self) -> None:
+        graded: list[str] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            self._execute({}, tmp, graded)
+            lines = (Path(tmp) / "swe_bench_verified_progress.jsonl").read_text().splitlines()
+        self.assertEqual(
+            sorted(json.loads(line)["instance_id"] for line in lines),
+            ["owner__repo-0", "owner__repo-1", "owner__repo-2"],
+        )
+
+    def test_resume_skips_finished_instances_and_keeps_their_results(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            earlier = Path(tmp) / "earlier.jsonl"
+            done = swe_eval.InstanceResult(
+                instance_id="owner__repo-1",
+                repo="owner/repo",
+                difficulty="<15 min fix",
+                patch=GOLD_PATCH,
+                grade=swe_grader.GradeResult(resolved=False, patch_applied=True, tests_ran=True),
+                completion_reason="submitted",
+            )
+            # The truncated second line mimics a job killed mid-write.
+            earlier.write_text(json.dumps(done.to_record()) + '\n{"instance_id": "owner__re')
+            graded: list[str] = []
+            out = Path(tmp) / "out"
+            result = self._execute({"resume_from": str(earlier)}, str(out), graded)
+            progress = (out / "swe_bench_verified_progress.jsonl").read_text().splitlines()
+
+        self.assertEqual(sorted(graded), ["owner__repo-0", "owner__repo-2"])
+        self.assertEqual(result.metrics["num_instances"], 3.0)
+        self.assertEqual(result.metrics["num_resolved"], 2.0)
+        self.assertEqual(len(progress), 3)
+
+
+class TestImageTimeout(unittest.TestCase):
+    def test_image_timeout_is_an_unresolved_error_and_skips_the_agent(self) -> None:
+        run_agent = mock.AsyncMock()
+        with (
+            mock.patch("olmo_eval.harness.sandbox.image.remove_swerex_image") as remove,
+            mock.patch(
+                "olmo_eval.harness.sandbox.image.get_swerex_image",
+                side_effect=TimeoutError("Resolving swerex image exceeded 900s"),
+            ) as get_image,
+            mock.patch.object(swe_eval.SWEBenchVerifiedExternalEval, "_run_agent", run_agent),
+        ):
+            result = asyncio.run(
+                swe_eval.SWEBenchVerifiedExternalEval()._run_instance(
+                    _instance(), mock.MagicMock(), swe_eval.SWEBenchArgs(), "docker"
+                )
+            )
+        self.assertEqual(result.completion_reason, "image_timeout")
+        self.assertTrue((result.error or "").startswith("image_timeout"))
+        self.assertFalse(result.resolved)
+        run_agent.assert_not_awaited()
+        self.assertEqual(get_image.call_args.kwargs["timeout"], 900.0)
+        remove.assert_called_once()
+
+
+class TestSubmit(unittest.TestCase):
+    def _trajectory(self, *names: str) -> Any:
+        from olmo_eval.common.types.tools import Function, ToolCall
+        from olmo_eval.common.types.trajectory import AgentTrajectory, AgentTurn
+
+        turns = tuple(
+            AgentTurn(
+                role="assistant",
+                tool_calls=(ToolCall(id=n, function=Function(name=n, arguments="{}")),),
+            )
+            for n in names
+        )
+        return AgentTrajectory(turns=turns)
+
+    def test_called_tool(self) -> None:
+        self.assertTrue(
+            swe_eval.called_tool(self._trajectory("execute_bash_session", "submit"), "submit")
+        )
+        self.assertFalse(swe_eval.called_tool(self._trajectory("execute_bash_session"), "submit"))
+
+    @parameterized.expand([(True, ("submit",)), (False, None)])
+    def test_stop_on_submit_reaches_the_scaffold(self, stop: bool, expected: Any) -> None:
+        from olmo_eval.common.types import LMOutput
+        from olmo_eval.harness.result import HarnessResult
+
+        scaffold = mock.MagicMock()
+        scaffold.run = mock.AsyncMock(
+            return_value=HarnessResult(
+                final_output=LMOutput(text="Task submitted successfully."),
+                trajectory=self._trajectory("submit"),
+                max_turns_reached=False,
+            )
+        )
+        executor = mock.MagicMock()
+        executor.execute_in_session = mock.AsyncMock(return_value=ExecutionResult(success=True))
+        manager = mock.MagicMock()
+        manager.get_executor.return_value = executor
+        result = swe_eval.InstanceResult(instance_id="a", repo="a/a", difficulty="x")
+        with mock.patch("olmo_eval.harness.scaffolds.get_scaffold", return_value=scaffold):
+            asyncio.run(
+                swe_eval.SWEBenchVerifiedExternalEval()._run_agent(
+                    manager,
+                    _instance(),
+                    mock.MagicMock(),
+                    swe_eval.SWEBenchArgs(stop_on_submit=stop),
+                    result,
+                )
+            )
+        self.assertEqual(scaffold.run.call_args.kwargs["stop_at_tools"], expected)
+        self.assertEqual(result.completion_reason, "submitted")
+
+
 class TestRegistration(unittest.TestCase):
     def test_registered_with_swebench_extra(self) -> None:
         from olmo_eval.evals.external import get_external_eval
