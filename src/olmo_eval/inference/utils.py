@@ -4,8 +4,39 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
-from collections.abc import Coroutine
+from collections.abc import Awaitable, Callable, Coroutine
 from typing import Any, cast
+
+from olmo_eval.common.types import LMOutput, LMRequest
+from olmo_eval.inference.dispatch import dispatch_concurrent_results
+from olmo_eval.inference.errors import REQUEST_ERROR_KEY
+
+
+async def dispatch_requests(
+    requests: list[LMRequest],
+    process_fn: Callable[[LMRequest], Awaitable[list[LMOutput]]],
+    max_in_flight: int = 256,
+    max_retries: int = 0,
+    on_progress: Callable[[int, int], None] | None = None,
+) -> list[list[LMOutput]]:
+    """Dispatch inference requests, recording failed requests as marked outputs."""
+    results = await dispatch_concurrent_results(
+        requests, process_fn, max_in_flight, max_retries, on_progress
+    )
+    outputs = []
+    for result in results:
+        if result.error is not None:
+            error = result.error
+            outputs.append(
+                [
+                    LMOutput(
+                        text="", metadata={REQUEST_ERROR_KEY: f"{type(error).__name__}: {error}"}
+                    )
+                ]
+            )
+        else:
+            outputs.append(result.result if result.result is not None else [])
+    return outputs
 
 
 def run_async[T](coro: Coroutine[Any, Any, T]) -> T:

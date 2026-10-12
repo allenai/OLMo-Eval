@@ -242,7 +242,7 @@ async def process_batch(
         else:
             all_outputs = await harness.provider.agenerate(prepared_requests, sampling_params)
 
-        # A failed request has a request_error or, from vllm_server and litellm, no outputs.
+        # An empty result is a fallback failure for requests that expected output.
         for item, prepared_request, request_trace, outputs in zip(
             items, prepared_requests, request_traces, all_outputs, strict=True
         ):

@@ -402,6 +402,7 @@ def test_batched_total_failure_fails_the_run() -> None:
     result = _task_result_from(items)
 
     assert all(is_hard_failure(item) for item in items)
+    assert all(_MAX_TOKENS_400 in (item.error or "") for item in items)
     assert result.num_instances == 0
     assert result.instances_failed == TOTAL_INSTANCES
     assert result.error is not None
