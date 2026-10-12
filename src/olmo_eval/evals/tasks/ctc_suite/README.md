@@ -125,7 +125,9 @@ cap is documented on its RosterRow.
   `ctc_strmatch`: the only pairs sharing words are the gold pairs (overlap_pair_is_gold 1.000 vs
   0.004). Both are solvable in part without the task; read their numbers with that caveat.
 - Contexts ≥256k exceed most models' native windows; the serving side (YaRN etc.) is the caller's
-  responsibility and belongs next to any reported number.
+  responsibility and belongs next to any reported number. For Qwen3.5 the r256k prompts run to
+  ~272k tokens through the chat path; `scripts/ctc_suite/launch_ctc_suite.py` evaluates that rung
+  with YaRN factor 2 + chunked prefill by default (see its README).
 
 ## Design and provenance
 
