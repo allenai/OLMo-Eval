@@ -249,6 +249,95 @@ def _patch_molmo2_generation_cache_position(model: Any) -> None:
     cls.prepare_inputs_for_generation = prepare_inputs_for_generation
 
 
+#: Config attributes that hold a vision tower. Molmo2 uses ``vit_config`` where most
+#: released repos use ``vision_config``, so checking only the latter misses it.
+_VISION_CONFIG_ATTRS = ("vision_config", "vit_config", "vision_tower_config")
+
+#: Substrings transformers uses when refusing to execute a repo's custom code. Matching on
+#: the message is unavoidable: the refusal is a bare ``ValueError``, with no dedicated
+#: exception type to catch.
+_REMOTE_CODE_ERROR_MARKERS = (
+    "trust_remote_code",
+    "custom code",
+    "requires you to execute",
+)
+
+
+def _is_remote_code_error(exc: BaseException) -> bool:
+    """Whether ``exc`` is transformers refusing to run a repo's custom code."""
+    message = str(exc)
+    return any(marker in message for marker in _REMOTE_CODE_ERROR_MARKERS)
+
+
+def looks_multimodal_hf(model_name: str, **model_kwargs: Any) -> bool:
+    """Whether an HF checkpoint is an image-text-to-text model.
+
+    Without this, a multimodal HF directory (a released VLM, or an OLMo-core export
+    written by ``tools/olmo_core_to_hf``) fell through to the text-only path and died with
+    ``Unrecognized configuration class Molmo2Config ... AutoModelForCausalLM``, which names
+    neither the cause nor the ``multimodal`` flag that would have fixed it.
+
+    Checks three signals, because no single one covers both released and remote-code repos:
+    ``auto_map`` declaring ``AutoModelForImageTextToText`` (the only reliable signal for a
+    remote-code model such as Molmo2, whose architecture is absent from the built-in
+    mapping), a vision-tower sub-config under any of its usual names, and membership of
+    transformers' image-text-to-text mapping.
+
+    Returns ``False`` rather than raising when the config cannot be read, so an unreadable
+    or unrecognised repo still takes the text path and fails with its own error. The one
+    exception is a repo that ships custom code, which is raised with the missing flag named
+    -- see :func:`_is_remote_code_error`.
+    """
+    try:
+        from transformers import AutoConfig
+    except ImportError:
+        return False
+
+    config_kwargs = {
+        key: value
+        for key, value in model_kwargs.items()
+        if key in HuggingFaceProvider._TOKENIZER_KWARGS
+    }
+    # Pin the flag when the caller left it unset. With it unset, transformers prompts on
+    # stdin ("Do you wish to run the custom code? [y/N]") for a remote-code repo; a Beaker
+    # worker has no stdin, so that is log noise at best and a hung job at worst. Pinning it
+    # False turns the prompt into a deterministic raise that the handler below can name.
+    config_kwargs.setdefault("trust_remote_code", False)
+    try:
+        config = AutoConfig.from_pretrained(model_name, **config_kwargs)
+    except Exception as exc:
+        if _is_remote_code_error(exc):
+            # Returning False here sends a Molmo2 checkpoint down the text-only path, where
+            # it dies with `Unrecognized configuration class Molmo2Config ...
+            # AutoModelForCausalLM` -- the exact error this function exists to prevent, and
+            # one that names neither the cause nor the fix.
+            raise ValueError(
+                f"{model_name} ships custom model code, so its config cannot be read "
+                f"without trust_remote_code. Pass `-o provider.trust_remote_code=true`; "
+                f"Molmo2 and other remote-code repos require it."
+            ) from exc
+        return False
+
+    # Remote-code repos declare the head they load with; this is authoritative and is the
+    # only one of the three that catches Molmo2.
+    auto_map = getattr(config, "auto_map", None) or {}
+    if isinstance(auto_map, dict) and "AutoModelForImageTextToText" in auto_map:
+        return True
+
+    if any(getattr(config, attr, None) is not None for attr in _VISION_CONFIG_ATTRS):
+        return True
+
+    architectures = getattr(config, "architectures", None) or ()
+    try:
+        from transformers.models.auto.modeling_auto import (
+            MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES,
+        )
+    except ImportError:
+        return False
+    known = set(MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES.values())
+    return any(arch in known for arch in architectures)
+
+
 class HuggingFaceProvider(InferenceProvider):
     """Provider using Hugging Face Transformers for local inference.
 
@@ -298,7 +387,7 @@ class HuggingFaceProvider(InferenceProvider):
         model_name: str,
         tokenizer: str | None = None,
         *,
-        multimodal: bool = False,
+        multimodal: bool | None = None,
         max_crops: int = 24,
         max_multi_image_crops: int = 8,
         autocast_dtype: str | None = None,
@@ -310,7 +399,9 @@ class HuggingFaceProvider(InferenceProvider):
             model_name: HuggingFace model identifier or local path.
             tokenizer: Tokenizer path/identifier. If not specified, uses the model path.
             multimodal: Load an image-text-to-text model (AutoProcessor +
-                AutoModelForImageTextToText) instead of a text-only causal LM.
+                AutoModelForImageTextToText) instead of a text-only causal LM. ``None``
+                (default) auto-detects from the checkpoint config; pass ``True``/``False``
+                to force either path.
             max_crops: Maximum image crops passed to the multimodal processor.
             max_multi_image_crops: Maximum crops per image when a request carries more
                 than one image (mm_olmo's ``max_multi_image_crops``, 8 for Molmo2).
@@ -325,6 +416,14 @@ class HuggingFaceProvider(InferenceProvider):
             model_kwargs.pop(key, None)
 
         super().__init__(model_name)
+        if multimodal is None:
+            multimodal = looks_multimodal_hf(model_name, **model_kwargs)
+            if multimodal:
+                logger.info(
+                    "Detected an image-text-to-text HF config for %s; loading as multimodal. "
+                    "Pass multimodal=false to force the text-only path.",
+                    model_name,
+                )
         self.is_multimodal = bool(multimodal)
         self.supports_images = self.is_multimodal
         self.max_crops = int(max_crops)
@@ -471,6 +570,25 @@ class HuggingFaceProvider(InferenceProvider):
             chat.insert(0, {"role": "user", "content": image_parts})
         return chat
 
+    def _format_text_prompt(self, request: LMRequest) -> str:
+        """Render a request to text for the non-multimodal generate path.
+
+        A CHAT request carries its content on ``messages`` and leaves ``prompt`` empty, so
+        reading ``request.prompt`` alone yields "" -- which tokenizes to zero tokens and
+        surfaces as ``cannot reshape tensor of 0 elements`` from inside attention rather
+        than as anything resembling a prompt problem. Apply the chat template instead,
+        matching ``VLLMProvider._format_prompt``.
+        """
+        if request.request_type == RequestType.CHAT and request.messages:
+            if not hasattr(self.tokenizer, "apply_chat_template"):
+                raise ValueError("CHAT requests require a tokenizer with apply_chat_template")
+            return self.tokenizer.apply_chat_template(
+                list(chat_messages_for_request(request)),
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+        return request.prompt
+
     def _generate_multimodal(
         self, requests: list[LMRequest], params: SamplingParams
     ) -> list[list[LMOutput]]:
@@ -555,7 +673,7 @@ class HuggingFaceProvider(InferenceProvider):
 
         results = []
         for request in requests:
-            prompt = request.prompt
+            prompt = self._format_text_prompt(request)
             encoded = self.tokenizer(prompt, return_tensors="pt").to(self.device)
             prompt_len = encoded["input_ids"].shape[1]
             gen_kwargs = self._build_generate_kwargs(params, prompt_len)

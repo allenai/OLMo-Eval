@@ -123,7 +123,12 @@ async def _cached_gpt_call(
         raise ValueError(f"Cache miss (cache_only=True) for key {key[:16]}…")
 
     if model not in _ASYNC_CLIENTS:
-        api_key = os.getenv("OPENAI_API_KEY")
+        # .strip(): a key with a trailing newline (easy to introduce when storing it as a
+        # Beaker secret) becomes an illegal `Authorization: Bearer <key>\n` header value.
+        # httpx raises LocalProtocolError, which the openai SDK wraps as
+        # `APIConnectionError: Connection error.` -- indistinguishable from a network
+        # outage, and it silently zeroed a full dense_caption run (2730/2730 instances).
+        api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
         if not api_key:
             raise ValueError(
                 "OPENAI_API_KEY is required for DenseCaptionJudgeScorer on a cache miss."
@@ -408,7 +413,9 @@ def _charxiv_cache_key(model: str, prompt: str) -> str:
 
 def _get_client(model: str):
     if model not in _ASYNC_CLIENTS:
-        api_key = os.getenv("OPENAI_API_KEY")
+        # .strip(): see the note in _cached_gpt_call -- a trailing newline in the key
+        # makes an illegal Authorization header, surfacing as a bogus "Connection error".
+        api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
         if not api_key:
             raise ValueError("OPENAI_API_KEY is required for CharXiv grading on a cache miss.")
         try:

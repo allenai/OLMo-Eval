@@ -897,8 +897,35 @@ then inference, then one `overall` for the task.
 ### Providers
 
 **`huggingface`** handles image-text-to-text models via `AutoProcessor` and
-`AutoModelForImageTextToText`. Pass `multimodal=True` in the provider kwargs (the
-`molmo2-4b` preset does this for you).
+`AutoModelForImageTextToText`. Multimodal checkpoints are detected from their config
+(`auto_map`, a vision sub-config, or a known image-text-to-text architecture); pass
+`multimodal=True`/`False` in the provider kwargs to force either path. Repos that ship
+custom code, Molmo2 among them, need `-o provider.trust_remote_code=true`.
+
+**`vllm`** renders image requests through the tokenizer's chat template and passes the
+images to vLLM as `multi_modal_data`; it is several times faster than the other two on
+generation-heavy tasks. Useful provider kwargs:
+
+- `max_images` (default 8) caps images per prompt (vLLM's own default is 1). A prompt
+  over the cap fails with the knob named, rather than failing its whole batch inside vLLM.
+- `chat_template_kwargs`, e.g. `{"enable_thinking": false}` for hybrid Qwen3 models.
+- `max_model_len`: models that declare a very long context (Qwen3-VL declares 262,144)
+  otherwise size the KV cache for it; `8192` suits most image-QA, document QA wants more.
+- `limit_mm_per_prompt` overrides `max_images` outright. Molmo2 also registers a video
+  modality whose dummy profiling item nearly fills `max_model_len` and fails engine init
+  (`max_tokens_per_mm_item ... is larger than max_num_batched_tokens`); pass
+  `-o provider.kwargs.limit_mm_per_prompt.video=0` rather than raising the batch budget.
+
+vLLM has no `max_crops` knob: it reads the crop budget from the model directory's
+`preprocessor_config.json`, so evaluating at another budget means editing that file in a
+copy of the directory. The first engine init for a new model or config warms vLLM's
+compile cache and can approach the 900 s provider init timeout; later runs against the
+same model and config start in a couple of minutes. Loglikelihood scoring with images is
+not supported on `vllm`. To run an OLMo-core
+checkpoint through it, export it to an HF directory first with
+`tools/olmo_core_to_hf/export.py` (`--verify` compares the export against the reference
+repo tensor by tensor), and check that a task scores the same on the export as on the
+original checkpoint under `olmo_core_vlm`.
 
 **`olmo_core_vlm`** runs OLMo-core `MultimodalLM` checkpoints in three on-disk
 formats: raw trainer saves (`config.json` + `model_and_optim/`), consolidated
@@ -947,6 +974,36 @@ uv run olmo-eval beaker launch \
 
 Once a release includes the multimodal classes, the extras collapse into one and
 the pin goes away.
+
+### Prompt conventions and image ablations
+
+The image-QA tasks default to mm_olmo's SFT prompt convention (a `vqa2:` /
+`chart_qa:` style tag and no answer-length instruction), which Molmo checkpoints were
+trained on. Two `TaskConfig` fields change what is sent:
+
+- `prompt_style`: `molmo` (default), `neutral` (no style tag, plus the short-answer
+  instruction published VLM numbers use; for non-Molmo models), or `cot` (asks for
+  step-by-step reasoning ending in an `Answer:` line). Registered as `:neutral` on the
+  short-answer image-QA tasks and `mmmu`, and as `mmmu:cot`, which also extracts the last
+  `Answer:` line and raises `max_tokens` to 2048.
+- `image_mode`: `real` (default), `none` (drop the image), or `caption` (substitute a text
+  description from `caption_source`, a JSONL of `{"example_id", "caption"}` records with
+  one entry per instance). `real - none` and `caption - real` split error between
+  knowledge and perception. Registered as `:text_only` and
+  `:oracle_caption` on `mmmu`, `charxiv_descriptive` and `charxiv_reasoning`.
+
+```bash
+uv run olmo-eval run -m Qwen/Qwen3-VL-4B-Instruct -t chart_qa:neutral \
+    --harness default -o provider.kind=vllm -o provider.max_model_len=8192
+uv run olmo-eval run -m molmo2-4b -t mmmu:oracle_caption \
+    -o caption_source=/path/to/mmmu_captions.jsonl
+```
+
+Only `ImageQATask` honours these fields. The pointing, multi-image and captioning tasks
+build their prompts by their own rules and refuse non-default values, rather than run
+the unmodified benchmark under an ablation label. A missing caption fails the instance
+instead of falling back to text-only, and the `mmmu_pro` vision setting refuses
+imageless modes, since its question exists only inside the screenshot.
 
 ### Adding a multimodal task
 

@@ -56,3 +56,9 @@ class InfoQaTask(ImageQATask):
 
 
 register_variant("info_qa", "test", split=Split.TEST)
+
+
+# `:neutral` drops the mm_olmo style tag and asks for a short answer -- the
+# convention published VLM numbers are measured under. Use it for external models;
+# Molmo checkpoints want the default `molmo` style they were trained on.
+register_variant("info_qa", "neutral", prompt_style="neutral")

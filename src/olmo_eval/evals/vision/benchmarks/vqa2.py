@@ -17,7 +17,7 @@ from collections.abc import Iterator
 import numpy as np
 
 from olmo_eval.common.types import Instance, SamplingParams, Split
-from olmo_eval.evals.tasks.common import register
+from olmo_eval.evals.tasks.common import register, register_variant
 from olmo_eval.evals.vision.data.paths import molmo_data_dir, rebase_data_path, torch_datasets_dir
 from olmo_eval.evals.vision.scoring.image_qa import VqaScoreScorer
 from olmo_eval.evals.vision.tasks.image_qa import ImageQATask, MeanScorerMetric
@@ -93,3 +93,9 @@ class Vqa2Task(ImageQATask):
                     "image_path": _resolve_coco_image(ex["image"]),
                 },
             )
+
+
+# `:neutral` drops the mm_olmo style tag and asks for a short answer -- the
+# convention published VLM numbers are measured under. Use it for external models;
+# Molmo checkpoints want the default `molmo` style they were trained on.
+register_variant("vqa2", "neutral", prompt_style="neutral")

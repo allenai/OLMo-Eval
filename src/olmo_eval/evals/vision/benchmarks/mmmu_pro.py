@@ -25,7 +25,7 @@ from typing import Any
 
 from olmo_eval.common.metrics.base import Metric
 from olmo_eval.common.scorers.base import Scorer
-from olmo_eval.common.types import Instance, Response, SamplingParams, Split
+from olmo_eval.common.types import Instance, LMRequest, Response, SamplingParams, Split
 from olmo_eval.evals.tasks.common import register
 from olmo_eval.evals.vision.data.images import lazy_hf_image
 from olmo_eval.evals.vision.scoring.mmmu_pro import (
@@ -186,6 +186,19 @@ class MmmuProTask(ImageQATask):
                     "image": lazy_hf_image(ds_nd, idx, "image"),
                 },
             )
+
+    def format_request(self, instance: Instance) -> LMRequest:
+        image_mode = self.config.image_mode or "real"
+        if image_mode != "real" and instance.metadata.get("mmmu_pro_setting") == "vision":
+            # The vision setting renders the question *into* the screenshot, so
+            # instance.question is only the bare answer-format instruction. Removing the
+            # image leaves nothing to answer -- and would still produce a plausible-looking
+            # score, since the parser falls back to a seeded random choice.
+            raise ValueError(
+                "image_mode must be 'real' for the mmmu_pro vision setting: its question "
+                "exists only inside the screenshot. Use the standard settings instead."
+            )
+        return super().format_request(instance)
 
     def _attach_images(self, instance: Instance) -> tuple[Any, ...] | None:
         """Lazy references only; the provider resolves them and drops ``None`` entries.

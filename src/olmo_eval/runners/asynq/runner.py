@@ -1067,7 +1067,20 @@ class AsyncEvalRunner(RunnerResultsMixin, BaseEvalRunner):
         # Apply per-task overrides
         per_task = self.task_overrides.get(spec, {})
         for key, value in per_task.items():
-            if key in task_fields:
+            if key == "sampling_params" and isinstance(value, dict):
+                # A dotted `-o sampling_params.max_tokens=N` arrives as a nested dict. Route
+                # it through sampling_overrides, which preparation.py applies with
+                # `replace(existing_params, ...)` -- a merge. Passing the dict through as a
+                # task override would put a raw dict on the config in place of the task's
+                # SamplingParams, dropping everything unspecified (e.g. stop_sequences).
+                unknown = set(value) - sampling_fields
+                if unknown:
+                    raise ValueError(
+                        f"unknown sampling_params field(s): {', '.join(sorted(unknown))}; "
+                        f"valid: {', '.join(sorted(sampling_fields))}"
+                    )
+                sampling_overrides.update(value)
+            elif key in task_fields:
                 task_overrides[key] = value
             elif key in sampling_fields:
                 sampling_overrides[key] = value

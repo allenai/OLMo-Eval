@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING
 from olmo_eval.common.metrics.base import Metric
 from olmo_eval.common.scorers.base import Scorer
 from olmo_eval.common.types import Instance, Response, SamplingParams, Split
-from olmo_eval.evals.tasks.common import register
+from olmo_eval.evals.tasks.common import register, register_variant
 from olmo_eval.evals.vision.data.images import lazy_hf_image
 from olmo_eval.evals.vision.scoring.charxiv import (
     IDX2ANSTYPE,
@@ -348,3 +348,11 @@ class CharxivReasoningTask(ImageQATask):
                 inst_category=response.instance.metadata["inst_category"],
             )
         return responses
+
+
+# Perception-vs-knowledge ablations; see the note in mmmu.py. CharXiv is where a caption
+# ablation bites hardest, since descriptive questions ask about chart structure that a
+# dense description can largely carry.
+for _task in ("charxiv_descriptive", "charxiv_reasoning"):
+    register_variant(_task, "text_only", image_mode="none")
+    register_variant(_task, "oracle_caption", image_mode="caption")

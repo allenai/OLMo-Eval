@@ -14,6 +14,7 @@ from typing import Any
 
 from olmo_eval.common.types import Instance, LMRequest, RequestType
 from olmo_eval.evals.tasks.common.base import Task
+from olmo_eval.evals.vision.tasks.prompting import reject_unsupported_prompt_knobs
 
 __all__ = ["VisionTask"]
 
@@ -59,6 +60,9 @@ class VisionTask(Task):
         return (str(path),) if path is not None else None
 
     def format_request(self, instance: Instance) -> LMRequest:
+        # ImageQATask overrides this to honour prompt_style/image_mode; every other family
+        # must refuse them rather than run the unmodified benchmark under an ablation label.
+        reject_unsupported_prompt_knobs(self.config, type(self).__name__)
         return LMRequest(
             request_type=RequestType.CHAT,
             messages=({"role": "user", "content": instance.question},),

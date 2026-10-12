@@ -7,12 +7,33 @@ from dataclasses import dataclass
 
 from olmo_eval.common.metrics.base import Metric
 from olmo_eval.common.scorers.base import Scorer
-from olmo_eval.common.types import Response
+from olmo_eval.common.types import Instance, LMRequest, RequestType, Response
 from olmo_eval.evals.vision.tasks.base import VisionTask
+from olmo_eval.evals.vision.tasks.prompting import (
+    apply_caption,
+    render_question,
+    resolve_image_mode,
+)
 
 
 class ImageQATask(VisionTask):
-    """Base class for the single-image QA benchmarks."""
+    """Base class for the single-image QA benchmarks.
+
+    Honours ``config.prompt_style`` (how the question is rendered) and
+    ``config.image_mode`` (real image, no image, or an oracle caption in its place); see
+    :mod:`olmo_eval.evals.vision.tasks.prompting`.
+    """
+
+    def format_request(self, instance: Instance) -> LMRequest:
+        send_image, caption = resolve_image_mode(self.config, instance)
+        question = render_question(self.config, instance)
+        if caption:
+            question = apply_caption(question, caption)
+        return LMRequest(
+            request_type=RequestType.CHAT,
+            messages=({"role": "user", "content": question},),
+            images=self._attach_images(instance) if send_image else None,
+        )
 
 
 @dataclass(frozen=True)

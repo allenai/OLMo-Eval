@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 
 from olmo_eval.common.types import Instance, SamplingParams, Split
-from olmo_eval.evals.tasks.common import register
+from olmo_eval.evals.tasks.common import register, register_variant
 from olmo_eval.evals.vision.data.images import lazy_hf_image
 from olmo_eval.evals.vision.scoring.image_qa import RealWorldQaScorer
 from olmo_eval.evals.vision.tasks.image_qa import ImageQATask, MeanScorerMetric
@@ -68,3 +68,9 @@ class RealWorldQaTask(ImageQATask):
                     "image": lazy_hf_image(ds_nodecode, idx, "image"),
                 },
             )
+
+
+# `:neutral` drops the mm_olmo style tag and asks for a short answer -- the
+# convention published VLM numbers are measured under. Use it for external models;
+# Molmo checkpoints want the default `molmo` style they were trained on.
+register_variant("real_world_qa", "neutral", prompt_style="neutral")

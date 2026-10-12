@@ -175,7 +175,10 @@ def build_openai_judge_fn(
         import os
 
         if not _client:
-            api_key = os.getenv("OPENAI_API_KEY")
+            # .strip(): a trailing newline in the key (easy to introduce when storing it as
+            # a Beaker secret) makes an illegal Authorization header, which the openai SDK
+            # reports as a bogus "Connection error".
+            api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
             if not api_key:
                 raise ValueError(
                     f"OPENAI_API_KEY environment variable is required for {scorer_name}."

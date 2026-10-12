@@ -84,3 +84,9 @@ register_variant("ai2d", "test", split=Split.TEST)
 # `:transparent` makes mc_ai2d_transparent the primary metric (shown in the summary table);
 # both metrics are still computed. Stack with `:test`, e.g. `ai2d:test:transparent`.
 register_variant("ai2d", "transparent", primary_metric=_TRANSPARENT)
+
+
+# `:neutral` drops the mm_olmo style tag and asks for a short answer -- the
+# convention published VLM numbers are measured under. Use it for external models;
+# Molmo checkpoints want the default `molmo` style they were trained on.
+register_variant("ai2d", "neutral", prompt_style="neutral")

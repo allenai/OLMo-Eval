@@ -8,7 +8,7 @@ import logging
 import math
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
 
@@ -191,6 +191,24 @@ class TaskConfig:
     prompt_templates: str | None = None
     system_prompt_style: str | None = None
 
+    #: Which prompt convention the image-QA tasks send. ``"molmo"`` (default) reproduces
+    #: mm_olmo's SFT format -- a ``vqa2:`` / ``chart_qa:`` style tag and no answer-length
+    #: instruction -- which is in-distribution for Molmo checkpoints and gibberish to
+    #: anything else. ``"neutral"`` drops the tag and asks for a short answer, the
+    #: convention published VLM numbers are measured under. ``"cot"`` asks for step-by-step
+    #: reasoning ending in an ``Answer:`` line. Only affects how the question is rendered.
+    prompt_style: str = "molmo"
+
+    #: What an image-QA task sends in place of the real image. ``"real"`` is the benchmark
+    #: as published. ``"none"`` drops the image, measuring what the question alone supports.
+    #: ``"caption"`` substitutes a text description from ``caption_source``, so the gap to
+    #: ``"real"`` attributes error to perception rather than knowledge or reasoning.
+    image_mode: str = "real"
+
+    #: JSONL of ``{"example_id": ..., "caption": ...}`` records, required by
+    #: ``image_mode="caption"``; every instance's ``example_id`` must have an entry.
+    caption_source: str | None = None
+
     def __post_init__(self) -> None:
         """Validate scheduler-only sandbox allocation hints."""
         if isinstance(self.output_score_aggregation, str):
@@ -204,6 +222,28 @@ class TaskConfig:
                     f"output_score_aggregation must be one of: {valid}; "
                     f"got {self.output_score_aggregation!r}"
                 ) from exc
+
+        # Dotted CLI overrides (`-o sampling_params.max_tokens=64`) are merged onto the
+        # task's declared SamplingParams by the runner (`_build_task_overrides` routes them
+        # to sampling_overrides, which `preparation.py` applies with `replace`). By the time
+        # `__post_init__` runs, a dict here *is* the override and the task's own params are
+        # gone, so there is nothing left to merge against -- building SamplingParams from
+        # the dict would silently drop every field it omits, e.g. gsm8k's stop_sequences.
+        # Reject rather than guess.
+        if isinstance(self.sampling_params, dict):
+            valid = {f.name for f in fields(SamplingParams)}
+            unknown = set(self.sampling_params) - valid
+            if unknown:
+                raise ValueError(
+                    f"unknown sampling_params field(s): {', '.join(sorted(unknown))}; "
+                    f"valid: {', '.join(sorted(valid))}"
+                )
+            raise TypeError(
+                "sampling_params must be a SamplingParams instance, not a dict. Dotted "
+                "overrides are applied by the runner via sampling_overrides, which merges "
+                "onto the task's own params; building a config with a raw dict here would "
+                "drop every field the dict omits."
+            )
 
         try:
             weight = float(self.sandbox_allocation_weight)
@@ -327,6 +367,17 @@ class TaskConfig:
             serialized["system_prompt_style"] = self.system_prompt_style
         if self.strip_thinking:
             serialized["strip_thinking"] = True
+        # Prompt/image ablation knobs, emitted only when they differ from the published
+        # benchmark: an ablation run must not serialize (and hash) identically to the real
+        # one, and the real one must keep the hash it had before these fields existed.
+        for key, default in (
+            ("prompt_style", "molmo"),
+            ("image_mode", "real"),
+            ("caption_source", None),
+        ):
+            value = getattr(self, key)
+            if value != default:
+                serialized[key] = value
         if any(
             value is not None
             for value in (
