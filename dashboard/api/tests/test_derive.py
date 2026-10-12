@@ -189,6 +189,15 @@ def test_aggregate_and_stderr() -> None:
     assert propagate_stderr({"a": 1.0}, {"a": None}) is None
 
 
+def test_weighted_suite_with_missing_counts_has_no_fallback_score() -> None:
+    tree = build_tree("w", DEFS)
+    scores = {"a": 0.2, "b": 0.9}
+    assert aggregate(tree, scores, {}) is None
+    assert aggregate(tree, scores, {"a": 30}) is None
+    assert aggregate(tree, scores, {"a": 30, "b": 0}) is None
+    assert aggregate(tree, scores, {"a": 30, "b": 10}) == pytest.approx(0.375)
+
+
 def test_quantile_box_uses_mean_when_sent() -> None:
     from olmo_eval_api.routers.api.run_tabs import _quantile_box
 

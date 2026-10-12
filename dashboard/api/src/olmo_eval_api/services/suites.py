@@ -79,9 +79,10 @@ def _flat_weights(
     if not names:
         return {}
     if node.aggregation == "weighted_average":
-        total = sum(max(n_instances.get(name, 0), 0) for name in names)
-        if total > 0:
-            return {name: max(n_instances.get(name, 0), 0) / total for name in names}
+        if any(n_instances.get(name, 0) <= 0 for name in names):
+            return {}
+        total = sum(n_instances[name] for name in names)
+        return {name: n_instances[name] / total for name in names}
     return {name: 1.0 / len(names) for name in names}
 
 
