@@ -20,24 +20,27 @@ class CredentialManager:
     def __init__(
         self,
         model_specs: list[str],
-        store: bool,
         aws_credentials: bool | None,
         gcs_credentials: bool | None,
     ):
         self.model_specs = model_specs
-        self.store = store
         self.aws_credentials = aws_credentials
         self.gcs_credentials = gcs_credentials
 
     def detect_and_setup(self, launcher: BeakerLauncher) -> tuple[bool, bool]:
-        """Detect and set up credential injection."""
+        """Decide which credentials to inject into the job.
+
+        Personal Google credentials are only injected for GCS model access, and only
+        service-account keys. Results upload uses the shared uploader service account
+        key instead (see ``olmo_eval.launch.beaker.uploader``).
+        """
         from olmo_eval.launch.beaker.aws import is_s3_path
         from olmo_eval.launch.beaker.gcs import get_local_gcs_credentials, is_gcs_path
 
         s3_models = [m for m in self.model_specs if is_s3_path(m)]
         inject_aws = self.aws_credentials
         if inject_aws is None:
-            inject_aws = bool(s3_models) or self.store
+            inject_aws = bool(s3_models)
 
         gcs_models = [m for m in self.model_specs if is_gcs_path(m)]
         inject_gcs = self.gcs_credentials
@@ -81,68 +84,31 @@ class CredentialManager:
         )
         console.print()
 
-    def display_storage_info(
-        self,
-        launcher: Any,
-        s3_bucket: str | None,
-        s3_prefix: str | None,
-        s3_region: str,
-        s3_endpoint_url: str | None,
-        effective_groups: list[str],
-        inject_aws: bool,
-    ) -> None:
+    def display_aws_info(self, launcher: Any, inject_aws: bool) -> None:
         from olmo_eval.launch.beaker.aws import get_local_aws_credentials
 
-        if not (self.store or (s3_bucket and s3_prefix) or inject_aws):
+        if not inject_aws:
             return
 
-        storage_lines = []
-
-        if inject_aws:
-            local_creds = get_local_aws_credentials()
-            beaker_user = launcher.beaker.user_name
-            storage_lines.append("[bold]S3 Access:[/bold]")
-            if local_creds:
-                cred_type = "temporary" if local_creds.session_token else "long-term"
-                storage_lines.append(f"  Credentials: [green]found[/green] ({cred_type})")
-                storage_lines.append(
-                    f"  Beaker secrets: {beaker_user}_AWS_ACCESS_KEY_ID, "
-                    f"{beaker_user}_AWS_SECRET_ACCESS_KEY"
-                )
-            else:
-                storage_lines.append(
-                    "  Credentials: [yellow]not found[/yellow] - "
-                    "job may fail if S3 access is required"
-                )
-
-        if s3_bucket and s3_prefix:
-            storage_lines.append("[bold]S3 Storage:[/bold]")
-            storage_lines.append(f"  Bucket: {s3_bucket}")
-            storage_lines.append(f"  Prefix: {s3_prefix}")
-            storage_lines.append(f"  Region: {s3_region}")
-            if s3_endpoint_url:
-                storage_lines.append(f"  Endpoint: {s3_endpoint_url}")
-            if effective_groups:
-                storage_lines.append(f"  Group: {effective_groups[0]}")
-
-        if self.store:
-            from olmo_eval.launch.beaker.constants import (
-                OLMO_EVAL_DB_ARN_SECRET_NAME,
-                OLMO_EVAL_PGHOST_SECRET_NAME,
-                STORE_DEFAULTS,
+        lines = ["[bold]S3 Access:[/bold]"]
+        local_creds = get_local_aws_credentials()
+        beaker_user = launcher.beaker.user_name
+        if local_creds:
+            cred_type = "temporary" if local_creds.session_token else "long-term"
+            lines.append(f"  Credentials: [green]found[/green] ({cred_type})")
+            lines.append(
+                f"  Beaker secrets: {beaker_user}_AWS_ACCESS_KEY_ID, "
+                f"{beaker_user}_AWS_SECRET_ACCESS_KEY"
             )
-
-            storage_lines.append("[bold]PostgreSQL:[/bold]")
-            storage_lines.append(
-                f"  Beaker secrets: {OLMO_EVAL_PGHOST_SECRET_NAME}, {OLMO_EVAL_DB_ARN_SECRET_NAME}"
+        else:
+            lines.append(
+                "  Credentials: [yellow]not found[/yellow] - job may fail if S3 access is required"
             )
-            defaults_str = ", ".join(f"{k}={v}" for k, v in STORE_DEFAULTS.items())
-            storage_lines.append(f"  Defaults: {defaults_str}")
 
         console.print(
             Panel(
-                "\n".join(storage_lines),
-                title="[bold]Storage Configuration[/bold]",
+                "\n".join(lines),
+                title="[bold]AWS Credentials[/bold]",
                 border_style="green",
                 expand=True,
             )

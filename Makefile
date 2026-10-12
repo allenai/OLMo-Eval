@@ -1,4 +1,4 @@
-.PHONY: setup fix verify test lint type-check clean db-upgrade db-downgrade db-status
+.PHONY: setup fix verify test lint type-check clean
 
 setup:
 	uv run --frozen pre-commit install
@@ -28,13 +28,3 @@ type-check:
 clean:
 	rm -rf dist/ build/ *.egg-info htmlcov/ .coverage coverage.xml .pytest_cache/
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
-
-# Database migrations
-db-upgrade:
-	uv run scripts/internal/db-migrate upgrade head
-
-db-downgrade:
-	uv run scripts/internal/db-migrate downgrade -1
-
-db-status:
-	uv run scripts/internal/db-migrate current

@@ -1,0 +1,27 @@
+/*
+ * Telegraf is a licensed font. CI downloads the .otf files into public/fonts/ before the build;
+ * they are gitignored and must never be committed. Without them the stack falls back to Manrope.
+ */
+@font-face {
+  font-family: "Telegraf";
+  src: url("/fonts/Telegraf-200.otf") format("opentype");
+  font-weight: 200;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Telegraf";
+  src: url("/fonts/Telegraf-400.otf") format("opentype");
+  font-weight: 400 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Telegraf";
+  src: url("/fonts/Telegraf-800.otf") format("opentype");
+  font-weight: 600 800;
+  font-style: normal;
+  font-display: swap;
+}

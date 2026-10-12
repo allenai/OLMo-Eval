@@ -19,7 +19,6 @@ class ReporterType(StrEnum):
 
     CONSOLE = "console"
     FILE = "file"
-    DB = "db"
 
 
 @hide_unset()
@@ -30,7 +29,7 @@ class MetricsConfig:
     Can be embedded in HarnessConfig for automatic instrumentation,
     or used directly with collect_metrics().
 
-    Core metadata fields mirror the evaluation database schema for join-ability:
+    Core metadata fields identify the run each batch belongs to:
     - experiment_id, experiment_name, experiment_group: identify the eval run
     - model_name, model_hash: identify the model
     - task_name, task_hash: identify the task (optional, set per-batch)
@@ -65,24 +64,6 @@ class MetricsConfig:
 
     # User-defined tags (for special filtering beyond core metadata)
     tags: dict[str, str] = field(default_factory=dict)
-
-    def has_reporter(self, name: ReporterType | str) -> bool:
-        """Check if a specific reporter is configured.
-
-        Args:
-            name: Reporter name to check for.
-
-        Returns:
-            True if the reporter is in the reporters list.
-        """
-        name_str = str(name)
-        for r in self.reporters:
-            if isinstance(r, str):
-                if r == name_str:
-                    return True
-            elif isinstance(r, dict) and r.get("name") == name_str:
-                return True
-        return False
 
     def get_metrics_path(self) -> str | None:
         """Get the resolved path for metrics file.

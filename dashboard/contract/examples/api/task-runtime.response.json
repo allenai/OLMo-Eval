@@ -1,0 +1,154 @@
+{
+  "task_name": "omniscience:judge",
+  "task_hash": "4962f82829afd898",
+  "meta": {
+    "higher_is_better": true,
+    "display_format": "raw",
+    "unit": null,
+    "kind": "unbounded"
+  },
+  "gpu_types": [
+    "NVIDIA H100 80GB HBM3"
+  ],
+  "rows": [
+    {
+      "model": {
+        "model_id": "403a845436a6",
+        "name": "Qwen/Qwen3-8B",
+        "model_hash": "a1b2c3d4e5f60718",
+        "series": "Qwen/Qwen3-8B",
+        "series_label": "Qwen3-8B",
+        "family": "qwen3",
+        "step": null,
+        "tokens_seen": null
+      },
+      "gpu_type": "NVIDIA H100 80GB HBM3",
+      "gpu_count": 4,
+      "runs": 1,
+      "inference": {
+        "n": 1,
+        "median": 412.5,
+        "p90": 412.5,
+        "min": 412.5,
+        "max": 412.5
+      },
+      "with_startup": {
+        "n": 1,
+        "median": 507.7,
+        "p90": 507.7,
+        "min": 507.7,
+        "max": 507.7
+      },
+      "seconds_per_1k_instances": {
+        "n": 1,
+        "median": 687.5,
+        "p90": 687.5,
+        "min": 687.5,
+        "max": 687.5
+      },
+      "latest_score": -21.7
+    },
+    {
+      "model": {
+        "model_id": "d434beb00a27",
+        "name": "meta-llama/Llama-3.1-8B-Instruct",
+        "model_hash": "16614dd9d1ac227a",
+        "series": "meta-llama/Llama-3.1-8B-Instruct",
+        "series_label": "Llama-3.1-8B-Instruct",
+        "family": "llama3.1",
+        "step": null,
+        "tokens_seen": null
+      },
+      "gpu_type": "NVIDIA H100 80GB HBM3",
+      "gpu_count": 4,
+      "runs": 1,
+      "inference": {
+        "n": 1,
+        "median": 1266.1,
+        "p90": 1266.1,
+        "min": 1266.1,
+        "max": 1266.1
+      },
+      "with_startup": {
+        "n": 1,
+        "median": 1344.5,
+        "p90": 1344.5,
+        "min": 1344.5,
+        "max": 1344.5
+      },
+      "seconds_per_1k_instances": {
+        "n": 1,
+        "median": 2110.167,
+        "p90": 2110.167,
+        "min": 2110.167,
+        "max": 2110.167
+      },
+      "latest_score": -33.44481605351171
+    }
+  ],
+  "points": [
+    {
+      "run_id": "db385601e335",
+      "task_result_id": 4182,
+      "model": {
+        "model_id": "d434beb00a27",
+        "name": "meta-llama/Llama-3.1-8B-Instruct",
+        "model_hash": "16614dd9d1ac227a",
+        "series": "meta-llama/Llama-3.1-8B-Instruct",
+        "series_label": "Llama-3.1-8B-Instruct",
+        "family": "llama3.1",
+        "step": null,
+        "tokens_seen": null
+      },
+      "date": "2026-10-01T01:00:13.002000+00:00",
+      "gpu_type": "NVIDIA H100 80GB HBM3",
+      "gpu_count": 4,
+      "score": -33.44481605351171,
+      "n": 600,
+      "runtime": {
+        "inference_seconds": 1266.1,
+        "basis": "measured",
+        "startup_seconds": 78.4,
+        "with_startup_seconds": 1344.5,
+        "token_share": 1.0,
+        "prompt_tokens_total": 61234,
+        "completion_tokens_total": 48210,
+        "seconds_per_1k_instances": 2110.167,
+        "span_start_s": 0.12,
+        "span_end_s": 1265.254
+      }
+    },
+    {
+      "run_id": "7c1e9a0b42d8",
+      "task_result_id": 3977,
+      "model": {
+        "model_id": "403a845436a6",
+        "name": "Qwen/Qwen3-8B",
+        "model_hash": "a1b2c3d4e5f60718",
+        "series": "Qwen/Qwen3-8B",
+        "series_label": "Qwen3-8B",
+        "family": "qwen3",
+        "step": null,
+        "tokens_seen": null
+      },
+      "date": "2026-09-29T17:15:40+00:00",
+      "gpu_type": "NVIDIA H100 80GB HBM3",
+      "gpu_count": 4,
+      "score": -21.7,
+      "n": 600,
+      "runtime": {
+        "inference_seconds": 412.5,
+        "basis": "estimated",
+        "startup_seconds": 95.2,
+        "with_startup_seconds": 507.7,
+        "token_share": 0.183,
+        "prompt_tokens_total": 58210,
+        "completion_tokens_total": 30115,
+        "seconds_per_1k_instances": 687.5,
+        "span_start_s": 0.4,
+        "span_end_s": 1720.8
+      }
+    }
+  ],
+  "not_recorded": 3
+}

@@ -135,7 +135,7 @@ class SplitGroupAccuracyMetric(Metric):
         score = response.scores.get(self.scorer().name)
         return float(score) if score is not None else None
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False
 
     def to_dict(self) -> dict[str, Any]:

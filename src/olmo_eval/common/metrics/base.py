@@ -22,6 +22,19 @@ from olmo_eval.common.types import Response
 from olmo_eval.common.utils import compute_pass_at_k, compute_pass_pow_k
 
 
+def display_format_for_name(name: str) -> str:
+    """Default display format for a metric name: ``percentage`` or ``raw``.
+
+    Proportions (accuracy, F1, recall, pass@k) are ``percentage``; everything else keeps its
+    native units.
+    """
+    if name in {"accuracy", "f1", "recall", "tool_accuracy"} or name.endswith("_accuracy"):
+        return "percentage"
+    if name.startswith(("pass_at_", "pass_pow_")):
+        return "percentage"
+    return "raw"
+
+
 @dataclass(frozen=True)
 class Metric(ABC):
     """Abstract base class for aggregating scores across responses.
@@ -46,7 +59,7 @@ class Metric(ABC):
         The default path is conservative:
         - if a task stores its exact per-instance metric directly in ``response.scores``
           under the metric name, prefer that;
-        - otherwise, only reuse the scorer channel when pairwise scorer fallback is valid.
+        - otherwise, only reuse the scorer channel when ``supports_scorer_fallback`` allows it.
 
         Metrics with richer per-instance semantics should override this method.
         """
@@ -54,7 +67,7 @@ class Metric(ABC):
         if isinstance(metric_value, (int, float)):
             return float(metric_value)
 
-        if not self.supports_pairwise_scorer_fallback():
+        if not self.supports_scorer_fallback():
             return None
 
         try:
@@ -78,13 +91,13 @@ class Metric(ABC):
         )
         return {"type": self.__class__.__name__, "name": self.name, "scorer": scorer_name}
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         """Whether scorer-level instance values match the metric's per-instance signal.
 
-        Pairwise analysis sometimes has to fall back from an exact per-instance metric key
-        (for example ``accuracy:exact_match``) to the stored scorer channel
-        (for example ``exact_match:exact_match``). That fallback is only valid when the
-        task-level metric is literally an average of per-instance scorer values.
+        When a prediction has no exact per-instance value for a metric key (for example
+        ``accuracy:exact_match``), ``augment_prediction_instance_metrics`` fills it from the
+        scorer channel (for example ``exact_match:exact_match``). That fallback is only valid
+        when the task-level metric is literally an average of per-instance scorer values.
 
         Metrics that aggregate across multiple continuations, weight instances unevenly,
         or otherwise derive the final value from richer response structure should override
@@ -92,29 +105,23 @@ class Metric(ABC):
         """
         return True
 
-    def pairwise_higher_is_better(self) -> bool:
+    def higher_is_better(self) -> bool:
         """Whether larger metric values mean better model quality."""
         return True
 
-    def pairwise_display_format(self) -> str:
-        """Return the preferred viewer formatting family for this metric.
+    def display_format(self) -> str:
+        """Return the display format the dashboard uses for this metric.
 
-        ``percentage`` means the metric is naturally interpreted on a 0-1 scale and
-        should be rendered as percentages / percentage-point deltas. ``raw`` means the
-        metric should stay in its native numeric units.
+        The uploader sends it as metric metadata. ``percentage`` means the metric is
+        naturally interpreted on a 0-1 scale and should be rendered as percentages /
+        percentage-point deltas. ``raw`` means the metric should stay in its native
+        numeric units.
         """
-        percentage_names = {"accuracy", "f1", "recall", "tool_accuracy"}
-        if self.name in percentage_names:
-            return "percentage"
-        if self.name.endswith("_accuracy"):
-            return "percentage"
-        if self.name.startswith("pass_at_") or self.name.startswith("pass_pow_"):
-            return "percentage"
-        return "raw"
+        return display_format_for_name(self.name)
 
-    def pairwise_unit(self) -> str:
+    def metric_unit(self) -> str:
         """Return the unit family used to decide whether suite pooling is comparable."""
-        if self.pairwise_display_format() == "percentage":
+        if self.display_format() == "percentage":
             return "proportion"
         return self.name
 
@@ -260,11 +267,11 @@ class BPBMetricInstanceAvg(Metric):
             return None
         return float(self.scorer().score(response.instance, output))
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
-        # Keep BPB handling conservative: pairwise should read the exact stored metric key.
+    def supports_scorer_fallback(self) -> bool:
+        # Keep BPB handling conservative: read the exact stored metric key.
         return False
 
-    def pairwise_higher_is_better(self) -> bool:
+    def higher_is_better(self) -> bool:
         return False
 
 
@@ -311,12 +318,12 @@ class BPBMetricByteAvg(Metric):
             return None
         return float(self.scorer().score(response.instance, output))
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         # Byte-weighted BPB is a corpus aggregate, so scorer-level per-instance values
         # are not equivalent to the stored task metric.
         return False
 
-    def pairwise_higher_is_better(self) -> bool:
+    def higher_is_better(self) -> bool:
         return False
 
 
@@ -378,7 +385,7 @@ class MeanPerplexityMetric(Metric):
             return None
         return float(self.scorer().score(response.instance, output))
 
-    def pairwise_higher_is_better(self) -> bool:
+    def higher_is_better(self) -> bool:
         return False
 
 
@@ -450,7 +457,7 @@ class PassAtKMetric(Metric):
         c = sum(1 for score in sample_scores if score > 0.5)
         return float(compute_pass_at_k(n, c, min(self.k, n)))
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return self.k == 1
 
 
@@ -522,7 +529,7 @@ class PassPowKMetric(Metric):
         c = sum(1 for score in sample_scores if score > 0.5)
         return float(compute_pass_pow_k(n, c, self.k))
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return self.k == 1
 
 
@@ -559,7 +566,7 @@ class LogprobMCAccuracyMetric(Metric):
         logprob_sums = [scorer.score(response.instance, output) for output in response.outputs]
         return 1.0 if logprob_sums.index(max(logprob_sums)) == gold_idx else 0.0
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False
 
 
@@ -625,7 +632,7 @@ class LogprobUncondMCAccuracyMetric(Metric):
             scores.append(cond_lp - uncond_lp)
         return 1.0 if scores.index(max(scores)) == gold_idx else 0.0
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False
 
 
@@ -674,7 +681,7 @@ class LogprobPerCharMCAccuracyMetric(Metric):
             logprob_per_char.append(total_logprob / num_chars)
         return 1.0 if logprob_per_char.index(max(logprob_per_char)) == gold_idx else 0.0
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False
 
 
@@ -722,7 +729,7 @@ class LogprobPerTokenMCAccuracyMetric(Metric):
             logprob_per_token.append(total_logprob / num_tokens)
         return 1.0 if logprob_per_token.index(max(logprob_per_token)) == gold_idx else 0.0
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False
 
 
@@ -764,7 +771,7 @@ class GreedyAccuracyMetric(Metric):
             return None
         return 1.0 if response.outputs[gold_idx].metadata.get("is_greedy", False) else 0.0
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False
 
 
@@ -829,10 +836,10 @@ class CorpusPerplexityMetric(Metric):
         avg_logprob = total_logprob / len(output.logprobs)
         return float(math.exp(-avg_logprob))
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False
 
-    def pairwise_higher_is_better(self) -> bool:
+    def higher_is_better(self) -> bool:
         return False
 
 
@@ -856,7 +863,7 @@ class SubsetAccuracyMetric(Metric):
         score = response.scores.get(self.scorer().name)
         return float(score) if score is not None else None
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False
 
     def compute(self, responses: Sequence[Response]) -> float:
@@ -915,7 +922,7 @@ class MacroSubsetAccuracyMetric(Metric):
         """A macro average has no per-instance equivalent."""
         return None
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False
 
 
@@ -943,5 +950,5 @@ class SafetyErrorMetric(Metric):
 
         return float(response.instance.metadata.get("is_parsing_error", False))
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False
