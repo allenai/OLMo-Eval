@@ -186,7 +186,7 @@ reproductions of the published grid.
 
 - Prompt templates, parsers, metrics, gold-index conventions and stop rules are **vendored
   byte-faithful** under `_vendor/` from the `ctc` package (AI2 OLMo-core branch `prasann/ctc`, at
-  commit **`40a5c60d143b427b8c2cd276fa5009b809be6be3`**), where they are golden-fixture-tested
+  commit **`80ab29bc7d30909f9028ca432384d8ae5d99e19f`**), where they are golden-fixture-tested
   against the implementation that produced the suite's published numbers. That commit is also
   `ctc_suite.UPSTREAM_COMMIT` and a field on every CTC scorer, so a re-vendor changes the task hash;
   a test checks the three places that name it agree.

@@ -1,7 +1,7 @@
 # What is vendored here, and what is not
 
 `_vendor/ctc/` is a copy of the `ctc` package from the AI2 OLMo-core branch `prasann/ctc`, at
-commit **`40a5c60d143b427b8c2cd276fa5009b809be6be3`**. The same commit is named by
+commit **`80ab29bc7d30909f9028ca432384d8ae5d99e19f`**. The same commit is named by
 `ctc_suite.UPSTREAM_COMMIT` and by the suite README; a test checks the three agree, so they move
 together or not at all. `UPSTREAM_COMMIT` is also a field on every CTC scorer, so it is serialized
 into the task config and a re-vendor changes the task hash.

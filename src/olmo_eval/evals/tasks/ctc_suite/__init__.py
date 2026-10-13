@@ -97,7 +97,7 @@ HF_REVISION = "04ab86006124b3f34c566f44bbc82d4fec98fcda"
 #: The ``ctc`` upstream commit ``_vendor/`` was taken from (AI2 OLMo-core branch ``prasann/ctc``).
 #: Also named in the README and in ``_vendor/MANIFEST.md`` -- a test checks the three agree -- and
 #: carried as a field on every CTC scorer, so a re-vendor changes the task hash.
-UPSTREAM_COMMIT = "40a5c60d143b427b8c2cd276fa5009b809be6be3"
+UPSTREAM_COMMIT = "80ab29bc7d30909f9028ca432384d8ae5d99e19f"
 
 #: Env var pointing at a local ladder tree (``<subset>/rung_<tokens>.jsonl``) for offline runs.
 DATA_ROOT_ENV = "CTC_SUITE_DATA_ROOT"
