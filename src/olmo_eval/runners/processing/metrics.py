@@ -326,7 +326,10 @@ def log_summary(results: dict[str, Any], multi_model: bool = False) -> None:
             if task_data.get("aggregation") == "gap":
                 gap = metrics.get("primary_score", {}).get("gap")
                 if gap is not None:
-                    result += f" (gap {gap * 100:+.2f} pp)"
+                    if task_data.get("display_format") in {"percent", "percentage"}:
+                        result += f" (gap {gap * 100:+.2f} pp)"
+                    else:
+                        result += f" (gap {gap:+.4f})"
             table.add_row(name, "[green]Success[/green]", instances, metric_name, result)
         else:
             table.add_row(name, "[green]Success[/green]", instances, metric_name, "-")

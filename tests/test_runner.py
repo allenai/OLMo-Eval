@@ -1274,12 +1274,15 @@ class TestGapSuiteAggregation:
         del _REGISTRY[self.SUITE]
 
     @staticmethod
-    def _task(score: float, metric: str = "exact_match:exact_match") -> dict:
+    def _task(
+        score: float, metric: str = "exact_match:exact_match", display_format: str = "percent"
+    ) -> dict:
         name, scorer = metric.split(":")
         return {
             "metrics": {name: {scorer: score}, "exact_match_flex": {"exact_match_flex": 0.99}},
             "primary_metric": metric,
             "num_instances": 500,
+            "metric_meta": {name: {"display_format": display_format}},
         }
 
     def test_reports_both_scores_and_out_minus_in(self):
@@ -1349,6 +1352,25 @@ class TestGapSuiteAggregation:
         assert "companion" in captured
         assert "-15.00" in captured
         assert "pp)" in captured
+
+    @pytest.mark.parametrize("metadata", [True, False])
+    def test_raw_gap_is_not_scaled_as_percentage_points(self, metadata, capsys):
+        from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
+        from olmo_eval.runners.processing.metrics import log_summary
+
+        tasks = {
+            "task_in": self._task(3.0, "measurement:value", "raw"),
+            "task_out": self._task(5.0, "measurement:value", "raw"),
+        }
+        if not metadata:
+            for task in tasks.values():
+                del task["metric_meta"]
+        suites = compute_suite_aggregations([self.SUITE], tasks)
+        log_summary({"tasks": tasks, "suites": suites})
+        output = capsys.readouterr().out
+        assert "+2.0000" in output
+        assert "+200.00" not in output
+        assert " pp" not in output
 
 
 class TestGetPrimaryMetric:

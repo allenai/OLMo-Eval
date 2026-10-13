@@ -161,6 +161,15 @@ def _compute_gap(
         return None
 
     reference, companion = scores
+    from olmo_eval.upload.metadata import metric_meta_for_spec
+
+    metric_name = reference_metric.rsplit(":", 1)[0]
+    meta = task_results[reference_spec].get("metric_meta") or metric_meta_for_spec(
+        reference_spec, [metric_name]
+    )
+    display_format = (meta.get(reference_metric) or meta.get(metric_name) or {}).get(
+        "display_format", "raw"
+    )
     return {
         "metrics": {
             "primary_score": {
@@ -176,6 +185,7 @@ def _compute_gap(
         "companion_task": companion_spec,
         "scored_metric": reference_metric,
         "primary_metric": "primary_score:companion",
+        "display_format": display_format,
     }
 
 
