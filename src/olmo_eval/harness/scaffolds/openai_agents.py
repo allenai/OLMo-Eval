@@ -6,6 +6,7 @@ import logging
 from collections.abc import Sequence
 from contextvars import ContextVar
 from dataclasses import replace
+from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
 from olmo_eval.common.types import LMOutput, LMRequest, SamplingParams
@@ -86,6 +87,88 @@ def _resolve_chat_template_kwargs(provider: InferenceProvider) -> dict[str, Any]
             f"{provider.model_name}: {resolved}"
         )
     return resolved
+
+
+def _reasoning_text(raw: Any) -> str:
+    """Extract the reasoning text carried by an SDK ``ResponseReasoningItem``.
+
+    Chat Completions ``reasoning_content`` arrives as a single ``summary`` part.
+    Providers that return thinking blocks also fill ``content`` with the full
+    text, which then supersedes the summary so nothing is stored twice.
+
+    Args:
+        raw: The ``raw_item`` of a ``ReasoningItem``.
+
+    Returns:
+        The joined reasoning text, or an empty string if the item has none.
+    """
+    for attr in ("content", "summary"):
+        parts = getattr(raw, attr, None) or []
+        texts = [text for part in parts if (text := getattr(part, "text", ""))]
+        if texts:
+            return "\n\n".join(texts)
+    return ""
+
+
+def _mirror_vllm_reasoning(message: Any) -> None:
+    """Expose a provider's ``reasoning`` field under the name the SDK converter reads.
+
+    Providers such as vLLM 0.19 return the reasoning parser output as
+    ``message.reasoning``, a field outside the OpenAI schema, while openai-agents 0.20
+    builds a ``ReasoningItem`` only from ``reasoning_content`` or ``thinking_blocks``.
+    Copying the text onto ``reasoning_content`` before conversion keeps the thinking.
+    The copy should be removed once the SDK reads ``reasoning`` itself (openai-agents
+    0.21.1 and later, which require openai 3.x).
+
+    Nothing changes when the server already returned a non-empty ``reasoning_content``
+    or ``thinking_blocks``, or when the message carries no reasoning at all (OpenAI, or
+    vLLM without a reasoning parser). The SDK replays ``reasoning_content`` into later
+    requests only for model names containing ``deepseek``, so a DeepSeek-named model
+    served by vLLM sends the mirrored text back as assistant history; vLLM 0.19.1
+    ignores that key.
+
+    Args:
+        message: The ``ChatCompletionMessage`` of a choice, mutated in place.
+    """
+    if getattr(message, "reasoning_content", None) or getattr(message, "thinking_blocks", None):
+        return
+    reasoning = getattr(message, "reasoning", None)
+    if isinstance(reasoning, str) and reasoning:
+        # ChatCompletionMessage allows extra fields, so this lands in model_extra next
+        # to ``reasoning`` and is picked up by the converter's getattr.
+        message.reasoning_content = reasoning
+
+
+@lru_cache(maxsize=1)
+def _chat_completions_model_class() -> type:
+    """Return the SDK model class the scaffold instantiates, importing the SDK lazily.
+
+    The subclass hooks the point where the raw ``ChatCompletion`` is visible before
+    conversion: ``OpenAIChatCompletionsModel._fetch_response``. The SDK's ``get_response``
+    (the path behind ``Runner.run``) awaits it with ``stream=False`` and hands
+    ``choices[0].message`` to ``Converter.message_to_output_items``. ``stream_response``
+    calls it with ``stream=True`` and receives a ``(Response, AsyncStream)`` pair, which
+    passes through untouched; the SDK's stream handler already reads ``delta.reasoning``
+    on that path. The hook is private SDK surface, so the scaffold tests pin it. The
+    subclass becomes unnecessary with openai-agents 0.21.1 or later, whose converter
+    reads ``reasoning`` itself.
+    """
+    from agents import OpenAIChatCompletionsModel  # type: ignore[ty:unresolved-import]
+    from openai.types.chat import ChatCompletion
+
+    class ReasoningFieldChatCompletionsModel(OpenAIChatCompletionsModel):
+        """Chat Completions model that normalizes the vLLM reasoning field."""
+
+        async def _fetch_response(self, *args: Any, **kwargs: Any) -> Any:
+            completion = await super()._fetch_response(*args, **kwargs)
+            if isinstance(completion, ChatCompletion):
+                for choice in completion.choices:
+                    message = getattr(choice, "message", None)
+                    if message is not None:
+                        _mirror_vllm_reasoning(message)
+            return completion
+
+    return ReasoningFieldChatCompletionsModel
 
 
 def _make_tool_error_formatter(valid_tool_names: Sequence[str]) -> Any:
@@ -253,7 +336,6 @@ class OpenAIAgentsScaffold(Scaffold):
         from agents import (  # type: ignore[ty:unresolved-import]
             Agent,
             ModelSettings,
-            OpenAIChatCompletionsModel,
             function_tool,
             set_tracing_disabled,
         )
@@ -273,7 +355,9 @@ class OpenAIAgentsScaffold(Scaffold):
             f"model={provider.model_name}"
         )
 
-        model = OpenAIChatCompletionsModel(
+        # vLLM returns thinking as ``reasoning``, which the SDK does not convert; the
+        # subclass mirrors it onto ``reasoning_content`` so it reaches the saved trajectory.
+        model = _chat_completions_model_class()(
             openai_client=client,
             model=provider.model_name,
         )
@@ -615,10 +699,21 @@ class OpenAIAgentsScaffold(Scaffold):
                     pass
             return AgentTrajectory(turns=tuple(turns))
 
+        # The SDK emits reasoning as its own item ahead of the message or tool call
+        # it belongs to, so hold it until that assistant turn is built.
+        pending_reasoning: str | None = None
+
         for item in items:
             item_class = type(item).__name__
 
-            if item_class == "MessageOutputItem":
+            if item_class == "ReasoningItem":
+                text = _reasoning_text(getattr(item, "raw_item", None))
+                if text:
+                    pending_reasoning = (
+                        f"{pending_reasoning}\n\n{text}" if pending_reasoning else text
+                    )
+
+            elif item_class == "MessageOutputItem":
                 raw = getattr(item, "raw_item", None)
                 content = ""
                 if raw is not None:
@@ -628,7 +723,17 @@ class OpenAIAgentsScaffold(Scaffold):
                             if hasattr(part, "text"):
                                 content += part.text
                 if content:
-                    turns.append(AgentTurn.assistant(content=content))
+                    # One model response yields one reasoning block. When the response has
+                    # text it lands here, and any tool-call turns built from the same
+                    # response carry none.
+                    turns.append(AgentTurn.assistant(content=content, reasoning=pending_reasoning))
+                    pending_reasoning = None
+                elif pending_reasoning:
+                    # A message with no text part (e.g. a refusal) still ends the response
+                    # that produced this reasoning; keep it here so it cannot slide onto a
+                    # later, unrelated turn.
+                    turns.append(AgentTurn.assistant(reasoning=pending_reasoning))
+                    pending_reasoning = None
 
             elif item_class == "ToolCallItem":
                 raw = getattr(item, "raw_item", None)
@@ -643,9 +748,21 @@ class OpenAIAgentsScaffold(Scaffold):
                         arguments=arguments,
                         metadata=raw_dict,
                     )
-                    turns.append(AgentTurn.assistant(content="", tool_calls=[tool_call]))
+                    # Without a text part the block lands on the first tool-call turn of
+                    # the response; the remaining tool-call turns carry none.
+                    turns.append(
+                        AgentTurn.assistant(
+                            content="", tool_calls=[tool_call], reasoning=pending_reasoning
+                        )
+                    )
+                    pending_reasoning = None
 
             elif item_class == "ToolCallOutputItem":
+                if pending_reasoning:
+                    # A tool output means the response that produced this reasoning is
+                    # over (its own items had no branch above); flush rather than carry it.
+                    turns.append(AgentTurn.assistant(reasoning=pending_reasoning))
+                    pending_reasoning = None
                 output = getattr(item, "output", None)
                 raw = getattr(item, "raw_item", None)
                 # Extract tool_call_id from raw_item
@@ -666,6 +783,11 @@ class OpenAIAgentsScaffold(Scaffold):
                     content=content,
                 )
                 turns.append(AgentTurn.tool([tool_result]))
+
+        if pending_reasoning:
+            # No assistant item followed this reasoning (the run stopped after it);
+            # keep it on an otherwise empty assistant turn rather than dropping it.
+            turns.append(AgentTurn.assistant(reasoning=pending_reasoning))
 
         return AgentTrajectory(turns=tuple(turns))
 

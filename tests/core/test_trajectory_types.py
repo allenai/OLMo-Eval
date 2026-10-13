@@ -281,6 +281,41 @@ class TestAgentTurnSerialization:
         assert restored.timestamp_ms == original.timestamp_ms
         assert restored.token_count == original.token_count
 
+    def test_to_dict_omits_reasoning_when_absent(self):
+        """Turns without reasoning must serialize exactly as before the field existed."""
+        turn = AgentTurn.assistant(content="Hello")
+        assert turn.reasoning is None
+        assert "reasoning" not in turn.to_dict()
+
+    def test_roundtrip_with_reasoning(self):
+        """Reasoning survives to_dict/from_dict and stays separate from content."""
+        original = AgentTurn.assistant(content="Answer", reasoning="Think it through first.")
+        data = original.to_dict()
+        assert data["content"] == "Answer"
+        assert data["reasoning"] == "Think it through first."
+        restored = AgentTurn.from_dict(data)
+        assert restored.reasoning == original.reasoning
+        assert restored.content == original.content
+
+    def test_from_dict_without_reasoning_key_reserializes_identically(self):
+        """A dict written before the reasoning field loads and re-serializes unchanged."""
+        data = {
+            "role": "assistant",
+            "content": "Searching",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "search", "arguments": '{"q": "test"}'},
+                }
+            ],
+            "timestamp_ms": 99999,
+            "token_count": 25,
+        }
+        turn = AgentTurn.from_dict(data)
+        assert turn.reasoning is None
+        assert turn.to_dict() == data
+
 
 class TestAgentTrajectorySerialization:
     """Tests for AgentTrajectory serialization."""
@@ -368,3 +403,16 @@ class TestAgentTrajectorySerialization:
         assert restored.state_snapshot == original.state_snapshot
         assert restored.metadata == original.metadata
         assert restored.tool_call_names() == original.tool_call_names()
+
+    def test_from_dict_without_reasoning_reserializes_identically(self):
+        """A trajectory saved before the reasoning field round-trips unchanged."""
+        data = {
+            "turns": [
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hi there"},
+            ],
+            "final_answer": "Hi there",
+        }
+        traj = AgentTrajectory.from_dict(data)
+        assert all(turn.reasoning is None for turn in traj.turns)
+        assert traj.to_dict() == data

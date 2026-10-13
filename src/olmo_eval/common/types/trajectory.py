@@ -15,7 +15,8 @@ class AgentTurn:
     """A single turn in an agent trajectory.
 
     Represents either an assistant message (with optional tool calls)
-    or a tool response.
+    or a tool response. Assistant turns may also carry the model's
+    reasoning text when the provider exposes it.
     """
 
     role: Literal["assistant", "tool", "user", "system"]
@@ -25,6 +26,7 @@ class AgentTurn:
     timestamp_ms: int | None = None
     token_count: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    reasoning: str | None = None
 
     @property
     def has_tool_calls(self) -> bool:
@@ -43,6 +45,7 @@ class AgentTurn:
         tool_calls: list[ToolCall] | None = None,
         timestamp_ms: int | None = None,
         token_count: int | None = None,
+        reasoning: str | None = None,
     ) -> "AgentTurn":
         """Create an assistant turn.
 
@@ -51,6 +54,7 @@ class AgentTurn:
             tool_calls: Optional list of tool calls made by the assistant.
             timestamp_ms: Optional timestamp in milliseconds.
             token_count: Optional token count for this turn.
+            reasoning: Optional reasoning text the model produced for this turn.
 
         Returns:
             A new AgentTurn with role="assistant".
@@ -61,6 +65,7 @@ class AgentTurn:
             tool_calls=tuple(tool_calls) if tool_calls else (),
             timestamp_ms=timestamp_ms,
             token_count=token_count,
+            reasoning=reasoning,
         )
 
     @classmethod
@@ -126,6 +131,8 @@ class AgentTurn:
             result["token_count"] = self.token_count
         if self.metadata:
             result["metadata"] = self.metadata
+        if self.reasoning is not None:
+            result["reasoning"] = self.reasoning
         return result
 
     @classmethod
@@ -146,6 +153,7 @@ class AgentTurn:
             timestamp_ms=data.get("timestamp_ms"),
             token_count=data.get("token_count"),
             metadata=data.get("metadata", {}),
+            reasoning=data.get("reasoning"),
         )
 
 
