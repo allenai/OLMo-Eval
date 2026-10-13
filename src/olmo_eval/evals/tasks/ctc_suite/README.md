@@ -47,6 +47,12 @@ jobs and a pooled results table: see [`scripts/ctc_suite/README.md`](../../../..
 | `CTC_SUITE_SHARDS` | unset | JSON `{"<subset>:<rung>": "<i>/<n>"}`: grade shard i of n of the `limit`-sampled rows. The shards partition the rows an unsharded run grades, so they pool back exactly. |
 | `CTC_SUITE_DATA_ROOT` | unset | Local `<subset>/rung_<tokens>.jsonl` tree instead of the HF dataset. |
 
+Every knob is read once, when a task is built, and resolved into its config, so each one that
+changes the prompt, the decode budget, the data or the graded rows also changes the **task hash**:
+a chat-format, marker-wrapped, rerank-capped, sharded or local-data run is never stored or cached
+under a plain run's hash. At their defaults they add nothing to the config, so existing hashes are
+unchanged. Set them before the run starts (the launcher passes them as job environment variables).
+
 ## low-CTC vs high-CTC
 
 `ctc:low` is the 12 rows where an answer-bearing document exists and the work is finding it --
@@ -160,11 +166,11 @@ cap is documented on its RosterRow.
   task×rung, half of it duplication. Pass `--no-save-requests` on xlong runs unless you need the
   prompts on disk; predictions are unaffected.
 
-### Grading changed after the published grid — for six rows
+### Grading changed after the published grid — for eight rows
 
-The vendored graders are golden-fixture tested against the pre-migration implementation, but four
-fixes have landed *since* the reference grid was produced, and each one raises a correct answer's
-score. **Numbers for these rows are not comparable across the change**, and where an old number
+The vendored graders are golden-fixture tested against the pre-migration implementation, but six
+fixes have landed *since* the reference grid was produced; the first four raise a correct answer's
+score, and the last two change what is graded or asked on specific rungs. **Numbers for these rows are not comparable across the change**, and where an old number
 exists it came from the old grader:
 
 | Row(s) | What changed | Effect |
@@ -173,11 +179,13 @@ exists it came from the old grader:
 | `ctc_oolong` | the parser and the stop rule both read the **last** of three templated markers (`Answer:`/`Label:`/`User:`) seen *so far*; previously the parser matched only `answer:` and the stop rule anchored on the earliest marker. The whole-string stop rule now replays the decode loop prefix by prefix, so a corpus line echoed after the answer (every oolong line carries `User:`) can no longer become the graded span | correct answers that were scored 0 now score correctly |
 | `ctc_grouping` | `pairwise_metrics` scored an all-singleton gold partition 0 even for an exact match | 48/500 r2k rows; the perfect-answer ceiling moves 0.904 → 1.0 |
 | `ctc_obliq` | decode budget 64 → 512 tokens | 27/126 r32k rows were truncated; the ceiling moves 0.953 → 1.0 |
+| `ctc_contradiction` (r64k and up) | gold pairs are canonicalised low-high, as predicted pairs always were (upstream `ctc` 80ab29bc). The rungs above 32k were grown by `expand_ctc_rung`, which remaps document indices without re-sorting, so ~50% of their gold pairs were stored high-low -- unmatchable under the set-intersection score (the reference grid's numbers), and a `ValueError` under this harness's earlier gold check. r2k-r32k gold was already sorted and scores identically | r64k-r1m: recall on the unsorted pairs goes from structurally 0 to scorable; old >32k numbers are **not comparable** (the reference grid's understate recall by roughly half). The held-out `ctc_contra_fever` rungs are grown the same way and get the same fix |
+| `ctc_xabsence` (every rung) | the ask follows the data (upstream `ctc` 80ab29bc): the suite's rows are one-sided Gutenberg exact copies (`orphan_side == "A"`), and now get the one-sided "Missing:" instruction worded for passages, as the reference renderer and the SFT data render them. The vendored spec previously sent the two-sided PARAPHRASE instruction ("Unmatched:"), describing a task the context does not contain. The parser accepts both anchors | a **prompt** change, so harness numbers from before it are **not comparable** with numbers after it; the new prompt is the reference renderer's |
 
 Everything else is unchanged in code — but **parity with the reference grid has not been measured
 for any row.** No per-row comparison of one model's scores through this harness against the
-reference grid's numbers exists yet, for the 16 rows whose graders did not change any more than
-for the six that did. Until that run happens (tracked in
+reference grid's numbers exists yet, for the 14 rows whose graders did not change any more than
+for the eight that did. Until that run happens (tracked in
 [#443](https://github.com/allenai/olmo-eval/issues/443)),
 treat numbers from this harness as internally consistent and comparable to each other, not as
 reproductions of the published grid.
