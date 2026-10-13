@@ -5,7 +5,11 @@ import time
 
 import pytest
 
-from olmo_eval.evals.extract import extract_think_answer, extract_think_answer_only
+from olmo_eval.evals.extract import (
+    extract_think_answer,
+    extract_think_answer_if_closed,
+    extract_think_answer_only,
+)
 
 # The reference harness's r1_style regexes, kept here as the oracle.
 
@@ -41,6 +45,49 @@ def test_only_variant_is_empty_without_closed_trace() -> None:
     assert extract_think_answer_only("<think>still going") == ""
     assert extract_think_answer_only("plain") == ""
     assert extract_think_answer_only("<think>p</think>\n4") == "\n4"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("<think>p</think>\n4", "\n4"),
+        ("p</think>\n4", "\n4"),
+        ("plain", "plain"),
+        ("<answer>4</answer>", "4"),
+        ("<think>still going", ""),
+        ("<think>a</think> draft <think>b</think> 4", " 4"),
+        ("<think>a</think> draft <think>still going", ""),
+        ("", ""),
+    ],
+    ids=[
+        "closed-trace",
+        "opening-tag-in-prompt",
+        "no-trace",
+        "answer-tags",
+        "unclosed-trace",
+        "several-closed-traces",
+        "reopened-trace",
+        "empty",
+    ],
+)
+def test_if_closed_variant_is_empty_while_a_trace_is_open(text: str, expected: str) -> None:
+    assert extract_think_answer_if_closed(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "<think>p</think>\n4",
+        "<think>p</think>",
+        "<think>a</think> draft <think>still going",
+        "<think>still going",
+        "plain",
+    ],
+)
+def test_if_closed_variant_is_unchanged_by_stripping_closed_traces_first(text: str) -> None:
+    stripped = extract_think_answer(text) if "</think>" in text else text
+
+    assert extract_think_answer_if_closed(stripped) == extract_think_answer_if_closed(text)
 
 
 def test_linear_on_long_answers() -> None:

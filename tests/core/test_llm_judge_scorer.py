@@ -1,6 +1,8 @@
 """Tests for olmo_eval.core.llm_judge_scorer module."""
 
 import asyncio
+import inspect
+import json
 import sys
 import types
 
@@ -11,7 +13,7 @@ from olmo_eval.common.scorers import (
     RubricJudgeScorer,
     SimpleQAJudgeScorer,
 )
-from olmo_eval.common.scorers.llm_judge import build_openai_judge_fn
+from olmo_eval.common.scorers.llm_judge import ConfiguredJudgeFn, build_openai_judge_fn
 from olmo_eval.common.types import Instance, LMOutput
 
 _MAX_TOKENS_REJECTION = (
@@ -101,6 +103,61 @@ class TestBuildOpenAIJudgeFn:
 
         with pytest.raises(RuntimeError, match="rate limit exceeded"):
             await judge("grade this")
+
+    def test_records_the_settings_that_affect_judge_output(self):
+        judge = build_openai_judge_fn(
+            model="gpt-5", max_tokens=64, temperature=0.5, reasoning_effort="low"
+        )
+
+        assert judge.judge_config == {
+            "model": "gpt-5",
+            "max_tokens": 64,
+            "temperature": 0.5,
+            "reasoning_effort": "low",
+        }
+
+    def test_records_the_default_model(self):
+        default_model = inspect.signature(build_openai_judge_fn).parameters["model"].default
+
+        assert build_openai_judge_fn().judge_config["model"] == default_model
+
+    def test_is_a_configured_judge(self):
+        assert isinstance(build_openai_judge_fn(), ConfiguredJudgeFn)
+
+    def test_a_plain_judge_function_is_not_a_configured_judge(self):
+        async def custom_judge(prompt: str) -> str:
+            return "A"
+
+        assert not isinstance(custom_judge, ConfiguredJudgeFn)
+
+
+class TestLLMJudgeScorerSerialization:
+    """Tests for how LLM judge scorers describe their judge when serialized."""
+
+    def test_records_the_judge_model(self):
+        scorer = SimpleQAJudgeScorer(judge_fn=build_openai_judge_fn(model="gpt-5"))
+
+        judge = scorer.to_dict()["judge_fn"]
+
+        assert judge["name"] == "build_openai_judge_fn.<locals>.judge"
+        assert judge["model"] == "gpt-5"
+
+    def test_different_judge_models_serialize_differently(self):
+        first = SimpleQAJudgeScorer(judge_fn=build_openai_judge_fn(model="gpt-4o-mini"))
+        second = SimpleQAJudgeScorer(judge_fn=build_openai_judge_fn(model="gpt-5"))
+
+        assert json.dumps(first.to_dict()) != json.dumps(second.to_dict())
+
+    def test_custom_judge_is_recorded_by_name(self):
+        async def custom_judge(prompt: str) -> str:
+            return "A"
+
+        assert SimpleQAJudgeScorer(judge_fn=custom_judge).to_dict()["judge_fn"] == {
+            "name": custom_judge.__qualname__
+        }
+
+    def test_provider_judge_has_no_judge_fn(self):
+        assert SimpleQAJudgeScorer(provider_name="judge").to_dict()["judge_fn"] is None
 
 
 class TestSimpleQAJudgeScorer:

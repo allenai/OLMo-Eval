@@ -530,6 +530,10 @@ class TestSafetyErrorMetric:
         metric = SafetyErrorMetric()
         assert metric.name == "parsing_error"
 
+    def test_fewer_errors_is_better(self):
+        """Test that pairwise comparisons treat fewer parsing errors as better."""
+        assert SafetyErrorMetric().pairwise_higher_is_better() is False
+
     def test_missing_errors_instance_level(self):
         """Test management of errors when is_parsing_error is missing."""
         metric = SafetyErrorMetric()
