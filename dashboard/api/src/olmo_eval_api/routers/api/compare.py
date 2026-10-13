@@ -243,7 +243,7 @@ async def compare_matrix(
     if is_runtime_metric(body.metric):
         # No bootstraps, so nothing worth caching.
         return await _runtime_matrix(session, body, subjects, baseline, rows, stats.alpha)
-    ckey = cache_key("matrix-v4", request, used, scope_hashes(node, defs))
+    ckey = cache_key("matrix-v5", request, used, scope_hashes(node, defs))
     cached = await get_cached(session, ckey, a.MatrixResponse)
     if cached is not None:
         return cached.model_copy(update={"subjects": live_subjects(cached.subjects, by_key)})
@@ -726,7 +726,7 @@ async def compare_pairwise(
         raise bad_request("margin must be >= 0")
     used = [tr for s in subjects for tr in s.trs.values()]
     rows, node, defs = await resolve_scope(session, body.scope, subjects)
-    ckey = cache_key("pairwise-v4", body.model_dump(mode="json"), used, scope_hashes(node, defs))
+    ckey = cache_key("pairwise-v5", body.model_dump(mode="json"), used, scope_hashes(node, defs))
     cached = await get_cached(session, ckey, a.PairwiseResponse)
     if cached is not None:
         by_key = {s.key: s for s in subjects}
@@ -743,7 +743,7 @@ async def compare_pairwise(
             loader.want(s.trs.get(t), metric_keys[t])
     await loader.load()
     tasks: list[tuple[str, dict[str, Side]]] = []
-    metas = []
+    metas: dict[str, dict] = {}
     skipped = 0
     for t in task_names:
         sides = {s.key: sd for s in subjects if (sd := loader.side(s.trs.get(t), metric_keys[t]))}
@@ -757,10 +757,16 @@ async def compare_pairwise(
         if not all(sd.pairable for sd in sides.values()):
             skipped += 1
         tasks.append((t, sides))
-        metas.append(row_meta(t, metric_keys[t], subjects, None))
-    directions = {m.get("higher_is_better") for m in metas if m}
+        metas[t] = row_meta(t, metric_keys[t], subjects, None)
+    metadata_names = (
+        leaf_weights(node, {}, set(metas), metric_keys=suite_metric_keys)
+        if node is not None and node.aggregation == "gap"
+        else metas
+    )
+    selected_metadata = [metas[name] for name in metadata_names if metas[name]]
+    directions = {m.get("higher_is_better") for m in selected_metadata}
     hib = directions.pop() if len(directions) == 1 else None
-    formats = {m.get("display_format") for m in metas if m}
+    formats = {m.get("display_format") for m in selected_metadata}
     display: a.DisplayFormat = "percent" if formats == {"percent"} else "raw"
     n_inst = {
         t: max(int(s.trs[t]["num_instances"] or 0) for s in subjects if t in s.trs)

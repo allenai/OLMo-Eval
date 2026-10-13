@@ -126,11 +126,13 @@ def score_suite(
         }
         if len(metrics) != 1 or None in metrics:
             score = None
+    scored = {n for n, value in leaf_scores.items() if value is not None}
+    weights = leaf_weights(node, n_inst, scored, metric_keys=metric_keys)
     stderr = None
     if score is not None and node.aggregation not in NO_SCORE_AGGREGATIONS:
-        scored = {n for n, v in leaf_scores.items() if v is not None}
-        stderr = propagate_stderr(leaf_weights(node, n_inst, scored), leaf_ses)
-    scored_metadata = [metadata[name] for name, value in leaf_scores.items() if value is not None]
+        stderr = propagate_stderr(weights, leaf_ses)
+    metadata_names = weights if node.aggregation == "gap" else scored
+    scored_metadata = [metadata[name] for name in metadata_names]
     formats = {meta.get("display_format", "raw") for meta in scored_metadata}
     directions = {meta.get("higher_is_better") for meta in scored_metadata}
     return SuiteScore(

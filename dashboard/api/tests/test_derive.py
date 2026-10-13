@@ -540,3 +540,33 @@ def test_incomplete_gap_keeps_individual_task_matrix_scores(out_metric, out_scor
     assert suite_row.cells[0].status == "partial"
     assert suite_row.cells[0].delta is None
     assert leaf_weights(node, {}, {"in", "out"}, metric_keys=suite_keys) == {}
+
+
+@pytest.mark.parametrize("reference_format,reference_direction", [("raw", None), ("percent", True)])
+def test_gap_format_and_direction_come_from_its_companion(
+    reference_format, reference_direction
+) -> None:
+    from olmo_eval_api.services.read_suites import score_suite
+
+    node = build_tree(
+        "pair", {"pair": ("gap", [{"type": "task", "name": "in"}, {"type": "task", "name": "out"}])}
+    )
+    tasks = {
+        name: {
+            "score": score,
+            "stderr": stderr,
+            "num_instances": 500,
+            "primary_metric": "error_rate",
+            "display_format": fmt,
+            "higher_is_better": direction,
+        }
+        for name, score, stderr, fmt, direction in (
+            ("in", 0.6, 0.03, reference_format, reference_direction),
+            ("out", 0.4, 0.02, "percent", False),
+        )
+    }
+    result = score_suite(node, tasks)
+    assert result.score == 0.4
+    assert result.stderr == pytest.approx(0.02)
+    assert result.display_format == "percent"
+    assert result.higher_is_better is False

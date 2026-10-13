@@ -991,3 +991,37 @@ async def test_gap_leaderboard_uses_one_metric_across_runs(
         assert scores["rankstrict01"] == pytest.approx(0.4)
     else:
         assert "rankstrict01" not in scores
+
+
+async def test_gap_comparisons_and_ranking_use_companion_metadata(
+    client: httpx.AsyncClient, session: Any
+) -> None:
+    subjects = ["r:metagap01", "r:metagap02"]
+    for run_id, score in (("metagap01", 0.0), ("metagap02", 1.0)):
+        await seed_run(
+            client,
+            run_id=run_id,
+            tasks={"in": [1.0] * 8, "out": [score] * 8},
+            suites=[suite("metapair", ["in", "out"], score=score, aggregation="gap")],
+        )
+    await session.execute(
+        text(
+            "UPDATE task_results SET metric_meta = NULL, "
+            "display_format = CASE WHEN task_name = 'out' THEN 'percent' ELSE 'raw' END, "
+            "higher_is_better = CASE WHEN task_name = 'out' THEN FALSE ELSE NULL END "
+            "WHERE run_id IN ('metagap01', 'metagap02')"
+        )
+    )
+    await session.commit()
+    request = {"subjects": subjects, "scope": "suite:metapair", "metric": "primary", "n_boot": 200}
+    matrix = await post(client, "/api/compare/matrix", request, "MatrixResponse")
+    aggregate = next(row for row in matrix["rows"] if row["key"] == "suite:metapair")
+    assert aggregate["meta"]["display_format"] == "percent"
+    assert aggregate["meta"]["higher_is_better"] is False
+    pairwise = await post(client, "/api/compare/pairwise", request, "PairwiseResponse")
+    assert pairwise["subjects"][0]["key"] == subjects[0]
+    assert pairwise["display_format"] == "percent"
+    leaderboard = await get(
+        client, "/api/suites/leaderboard", "LeaderboardResponse", suite="metapair", per_model="all"
+    )
+    assert [row["run_id"] for row in leaderboard["items"]] == ["metagap01", "metagap02"]
