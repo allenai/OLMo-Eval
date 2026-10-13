@@ -27,10 +27,13 @@ async def dispatch_requests(
     for result in results:
         if result.error is not None:
             error = result.error
+            message = str(error)
+            if len(message) > 500:
+                message = message[:500] + "…"
             outputs.append(
                 [
                     LMOutput(
-                        text="", metadata={REQUEST_ERROR_KEY: f"{type(error).__name__}: {error}"}
+                        text="", metadata={REQUEST_ERROR_KEY: f"{type(error).__name__}: {message}"}
                     )
                 ]
             )

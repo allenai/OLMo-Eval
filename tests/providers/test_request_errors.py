@@ -67,3 +67,21 @@ def test_terminal_failure_still_propagates(provider_type) -> None:
 
     with pytest.raises(TerminalProviderError, match="engine died"):
         asyncio.run(provider.agenerate([request]))
+
+
+@pytest.mark.parametrize("provider_type", [LiteLLMProvider, VLLMServerProvider])
+def test_failed_request_bounds_large_error_bodies(provider_type) -> None:
+    provider = provider_type.__new__(provider_type)
+    provider.model_name = "mock"
+    provider._tool_calls_parsed = None
+    provider.max_concurrency = 1
+    provider.max_retries = 0
+    provider._generate_single_async = AsyncMock(side_effect=ValueError("gateway " + "x" * 10_000))
+    request = LMRequest(request_type=RequestType.COMPLETION, prompt="q")
+
+    outputs = asyncio.run(provider.agenerate([request]))
+    error = request_error(outputs[0])
+
+    assert error is not None and error.startswith("ValueError: gateway ")
+    assert error.endswith("…")
+    assert len(error) <= len("ValueError: ") + 501
