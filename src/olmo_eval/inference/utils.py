@@ -32,19 +32,22 @@ def run_async[T](coro: Coroutine[Any, Any, T]) -> T:
 
 
 def patch_openai_agents_for_vllm() -> None:
-    """Patch openai-agents SDK to omit 'strict' field for vLLM compatibility.
+    """Patch the openai-agents SDK for vLLM compatibility.
 
-    vLLM doesn't support the 'strict' field in tool schemas.
-    The openai-agents SDK always includes it, even when strict_mode=False.
-    This patch makes the SDK omit the field when strict_json_schema is False.
-
-    See: https://github.com/vllm-project/vllm/issues/27746
+    - vLLM doesn't support the 'strict' field in tool schemas, which the SDK always
+      includes, even when strict_mode=False. The patch omits the field when
+      strict_json_schema is False. See https://github.com/vllm-project/vllm/issues/27746
+    - vLLM returns a reasoning parser's output in a ``reasoning`` field, while the SDK
+      only reads ``reasoning_content``. The patch reads either, so the model's
+      reasoning is kept as a reasoning item instead of being dropped.
 
     Call this once before creating any agents that will talk to vLLM.
     Safe to call multiple times (idempotent).
     """
     from agents import FunctionTool  # type: ignore[ty:unresolved-import]
     from agents.models.chatcmpl_converter import Converter  # type: ignore[ty:unresolved-import]
+
+    _patch_reasoning_field(Converter)
 
     # Check if already patched
     if getattr(Converter, "_vllm_patched", False):
@@ -62,3 +65,25 @@ def patch_openai_agents_for_vllm() -> None:
 
     Converter.tool_to_openai = _patched_tool_to_openai
     Converter._vllm_patched = True
+
+
+def _patch_reasoning_field(converter: Any) -> None:
+    """Make the SDK's converter read vLLM's ``reasoning`` field as ``reasoning_content``."""
+    if getattr(converter, "_vllm_reasoning_patched", False):
+        return
+
+    original = converter.message_to_output_items
+
+    @classmethod
+    def _patched_message_to_output_items(cls, message, *args, **kwargs):
+        reasoning = getattr(message, "reasoning", None)
+        if (
+            isinstance(reasoning, str)
+            and reasoning
+            and not getattr(message, "reasoning_content", None)
+        ):
+            message = message.model_copy(update={"reasoning_content": reasoning})
+        return original(message, *args, **kwargs)
+
+    converter.message_to_output_items = _patched_message_to_output_items
+    converter._vllm_reasoning_patched = True
