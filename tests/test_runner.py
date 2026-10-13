@@ -1372,6 +1372,18 @@ class TestGapSuiteAggregation:
         assert "+200.00" not in output
         assert " pp" not in output
 
+    @pytest.mark.parametrize("companion_metadata", [True, False])
+    def test_gap_logs_use_companion_units(self, companion_metadata, capsys):
+        from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
+        from olmo_eval.runners.processing.metrics import log_summary
+
+        tasks = {"task_in": self._task(0.6, display_format="raw"), "task_out": self._task(0.45)}
+        if not companion_metadata:
+            tasks["task_out"]["metric_meta"] = {"exact_match": {"higher_is_better": True}}
+        suites = compute_suite_aggregations([self.SUITE], tasks)
+        log_summary({"tasks": tasks, "suites": suites})
+        assert "-15.00 pp)" in capsys.readouterr().out
+
     def test_json_keeps_reference_companion_and_gap(self):
         from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
         from olmo_eval.runners.processing.metrics import (

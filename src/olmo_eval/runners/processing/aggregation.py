@@ -164,12 +164,13 @@ def _compute_gap(
     from olmo_eval.upload.metadata import metric_meta_for_spec
 
     metric_name = reference_metric.rsplit(":", 1)[0]
-    meta = task_results[reference_spec].get("metric_meta") or metric_meta_for_spec(
-        reference_spec, [metric_name]
+    meta = task_results[companion_spec].get("metric_meta") or {}
+    display_format = (meta.get(companion_metric) or meta.get(metric_name) or {}).get(
+        "display_format"
     )
-    display_format = (meta.get(reference_metric) or meta.get(metric_name) or {}).get(
-        "display_format", "raw"
-    )
+    if display_format is None:
+        registered_meta = metric_meta_for_spec(companion_spec, [metric_name])
+        display_format = (registered_meta.get(metric_name) or {}).get("display_format", "raw")
     return {
         "metrics": {
             "primary_score": {
