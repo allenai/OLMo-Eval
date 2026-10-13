@@ -26,8 +26,8 @@ python scripts/ctc_suite/launch_ctc_suite.py --run-name <name> --resubmit
 
 | `--rows` | Rows |
 |---|---|
-| `all` (default) | the 22-row CTC suite + the 2 held-out OOD rows (`ctc_contra_fever`, `ctc_outlier_review`) |
-| `roster` | the 22 rows |
+| `roster` (default) | the 22-row CTC suite |
+| `all` | the 22 rows + the 2 held-out OOD rows (`ctc_contra_fever`, `ctc_outlier_review`) -- opt-in; refused until the OOD ladders are uploaded |
 | `setA` | the 12 rows the setA SFT data is IID with (nq, hpqa, qdmatch_nq, outlier, oolong, contradiction, xabsence, reorder, rerank, strmatch, textgroups, grouping) + the 2 OOD rows |
 | `a,b,c` | an explicit list of row names |
 
@@ -79,8 +79,8 @@ next to its value; carry both wherever the number goes (±0.026 at 300, ±0.046 
 | `compressive` | 1 | landmark blocks are tied to absolute position, so rows cannot share a padded batch |
 | `full` | `--full-batch-size` (8) at ≤32k, 1 above | several 64k+ KV caches do not fit together |
 
-Planned cost for `--rows all` with the defaults: **compressive ~40 GPU-h in 30 jobs, full ~33 GPU-h
-in 26 jobs** (planner estimates; real has been ~35% lower). The 256k rung is the largest single
+Planned cost for `--rows all` (22 rows + 2 OOD) with the defaults: **compressive ~40 GPU-h in 30
+jobs, full ~33 GPU-h in 26 jobs** (planner estimates; real has been ~35% lower). The 256k rung is the largest single
 item (~15 GPU-h across 16 rows) and its per-example cost is still extrapolated.
 
 **Full-arm batching, validated 2026-09-23** on a dense Qwen3.5-4B (32 rows each at r8k): scores
@@ -106,7 +106,7 @@ bitwise-identical, so `--full-batch-size 1` if you need bitwise determinism; bs=
 - **Every row's data on the HF dataset.** The planner refuses rows with no
   `data/<subset>/` in `PrasannSinghal/ctc-suite-eval` -- currently both OOD rows
   (`ctc_contra_fever`, `ctc_outlier_review`), so `--rows all` / `--rows setA` fail until their
-  ladders are uploaded; pass an explicit `--rows` list without them meanwhile.
+  ladders are uploaded. That is why the default is `--rows roster`; the OOD rows are opt-in.
 - **This branch pushed.** gantry clones the current branch at its pushed commit; unpushed changes
   are not in the job.
 - **`--olmo-core-ref` carrying the FLA autotune fix** (default `prasann/landmark`). Without it every

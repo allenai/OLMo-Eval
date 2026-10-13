@@ -11,8 +11,9 @@ landmark -- and collect the results into one table.
     # after the jobs finish: pool every job (and shard) into one table
     python scripts/ctc_suite/launch_ctc_suite.py --run-name q35-4b-setA-full --collect
 
-What it runs. Every CTC suite row -- the 22-row roster plus the 2 held-out OOD rows by default
-(``--rows roster`` for the 22 only, ``--rows setA`` for the 12 the setA SFT data is IID with + OOD)
+What it runs. Every row of the 22-row CTC roster by default (``--rows all`` adds the 2 held-out
+OOD rows, ``--rows setA`` is the 12 the setA SFT data is IID with + OOD; both are opt-in, since the
+OOD ladders are not on the HF dataset yet)
 -- at every rung up to 256k, with eval sizes from ``--policy`` (default
 300 per rung at 2k-32k, 100 at 64k/128k/256k), through olmo-eval's native ``olmo_core``
 provider with ``CTC_SUITE_PROMPT_FORMAT=chat`` -- the prompt body byte-identical to the CTC SFT
@@ -601,9 +602,10 @@ def main() -> None:
     ap.add_argument("--arm", choices=["full", "compressive"], default="compressive")
     ap.add_argument(
         "--rows",
-        default="all",
-        help="'all' (the 22-row CTC suite + the 2 held-out OOD rows; default), 'roster' (the 22 "
-        "only), 'setA' (the 12 rows the setA SFT data is IID with + the 2 OOD rows), or a list",
+        default="roster",
+        help="'roster' (the 22-row CTC suite; default), 'all' (the 22 + the 2 held-out OOD rows), "
+        "'setA' (the 12 rows the setA SFT data is IID with + the 2 OOD rows), or a list. The OOD "
+        "ladders are not on the HF dataset yet, so 'all'/'setA' are refused until they are",
     )
     ap.add_argument("--policy", default=DEFAULT_POLICY)
     ap.add_argument(
@@ -720,10 +722,19 @@ def main() -> None:
 
     missing = rows_without_data(rows)
     if missing:
+        from olmo_eval.evals.tasks.ctc_suite import OOD_ROSTER
+
+        ood = [r for r in missing if r in OOD_ROSTER]
+        why = (
+            f" {ood} are the held-out OOD rows, whose ladders are not uploaded yet: they are "
+            "opt-in and run only once their data/<subset>/ directories exist."
+            if ood
+            else ""
+        )
         ap.error(
             f"no data in the suite's HF dataset for {missing}: their cells would fail at load (and "
-            "take the rest of their job down with them). Upload the ladders, or leave the rows out "
-            "with an explicit --rows list"
+            f"take the rest of their job down with them).{why} Upload the ladders, or leave the "
+            "rows out (the default --rows roster, or an explicit --rows list)"
         )
 
     row_limits = dict(DEFAULT_ROW_LIMITS)
