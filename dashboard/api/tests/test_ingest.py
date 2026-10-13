@@ -347,7 +347,9 @@ async def test_identical_task_result_reupload_keeps_instances(
         request = s.TaskResultIn.model_validate(payload)
         legacy_body = {
             "request": request.model_dump(mode="json", exclude={"generation_counts"}),
-            "files": {},
+            "files": {
+                path: None for path in (request.predictions_path, request.requests_path) if path
+            },
         }
         digest = hashlib.sha256(json.dumps(legacy_body, sort_keys=True).encode()).hexdigest()
         await session.execute(
