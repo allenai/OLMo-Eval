@@ -876,3 +876,58 @@ async def test_gap_ingest_metadata_follows_companion(
     ).one()
     assert row.display_format == "percent"
     assert row.higher_is_better is False
+
+
+@pytest.mark.parametrize("invalid_pair", ["different_metrics", "unscored", "missing_task"])
+async def test_ingest_withholds_invalid_gap_scores(
+    client: httpx.AsyncClient, session: Any, invalid_pair: str
+) -> None:
+    run_id = "invalidgap01"
+    response = await client.put(
+        f"/v1/runs/{run_id}", json=run_payload(run_id=run_id, model_name="test-org/gap-validation")
+    )
+    assert response.status_code == 200, response.text
+    tasks = [
+        ("in", "strict:default", 0.6),
+        (
+            "out",
+            "flex:default" if invalid_pair == "different_metrics" else "strict:default",
+            None if invalid_pair == "unscored" else 0.4,
+        ),
+    ]
+    if invalid_pair == "missing_task":
+        tasks.pop()
+    for name, metric, score in tasks:
+        response = await client.post(
+            f"/v1/runs/{run_id}/task-results",
+            json=task_payload(
+                name, task_hash=f"hash-{name}", primary_metric=metric, corpus_score=score, n=1
+            ),
+        )
+        assert response.status_code == 200, response.text
+    response = await client.post(
+        f"/v1/runs/{run_id}/complete",
+        json={
+            "status": "complete",
+            "suites": [suite("pair", ["in", "out"], score=0.9, aggregation="gap")],
+            "expected_task_results": len(tasks),
+            "expected_artifacts": 0,
+        },
+    )
+    assert response.status_code == 200, response.text
+    row = (
+        await session.execute(
+            text(
+                "SELECT score, stderr, primary_metric, metrics FROM suite_results "
+                "WHERE run_id = :run"
+            ),
+            {"run": run_id},
+        )
+    ).one()
+    assert row.score is None and row.stderr is None
+    assert row.primary_metric is None and row.metrics == {}
+    assert (
+        await session.execute(
+            text("SELECT headline FROM runs WHERE run_id = :run"), {"run": run_id}
+        )
+    ).scalar_one() is None

@@ -999,6 +999,8 @@ def _headline(run: Run, suites: list[SuiteResult], trs: list[TaskResult]) -> dic
             "stderr": x.stderr,
             "display_format": x.display_format,
         }
+    if any(x.parent_suite is None and x.aggregation == "gap" for x in suites):
+        return None
     if len(trs) == 1:
         tr = trs[0]
         return {
@@ -1102,7 +1104,15 @@ async def complete_run(
         present = {name: by_task[name] for name in leaf_names if name in by_task}
         scored = {name for name, tr in present.items() if tr.score is not None}
         n_inst = {name: tr.num_instances for name, tr in present.items()}
-        weights = leaf_weights(tree, n_inst, scored)
+        metric_keys = (
+            {name: tr.primary_metric for name, tr in present.items()}
+            if x.aggregation == "gap"
+            else None
+        )
+        weights = leaf_weights(tree, n_inst, scored, metric_keys=metric_keys)
+        valid_aggregate = x.aggregation != "gap" or (len(scored) == 2 and bool(weights))
+        if not valid_aggregate:
+            weights = {}
         metadata_tasks = (
             [present[name] for name in weights] if x.aggregation == "gap" else present.values()
         )
@@ -1116,12 +1126,12 @@ async def complete_run(
             description=x.description,
             children=children,
             definition_hash=def_hash,
-            score=derive.finite_or_none(x.score),
+            score=derive.finite_or_none(x.score) if valid_aggregate else None,
             stderr=propagate_stderr(weights, {k: tr.stderr for k, tr in present.items()}),
             num_tasks=x.num_tasks,
             n_instances=sum(n_inst.values()),
-            metrics=derive.flatten_metrics(x.metrics),
-            primary_metric=x.primary_metric,
+            metrics=derive.flatten_metrics(x.metrics) if valid_aggregate else {},
+            primary_metric=x.primary_metric if valid_aggregate else None,
             display_format="percent" if formats == {"percent"} else "raw",
             higher_is_better=directions.pop() if len(directions) == 1 else None,
             tasks_missing=[name for name in leaf_names if name not in by_task],

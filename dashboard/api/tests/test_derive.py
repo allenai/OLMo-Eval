@@ -19,6 +19,21 @@ from olmo_eval_api.services.suites import (
 from olmo_eval_api.settings import Settings
 
 
+def test_incomplete_gap_headline_does_not_fall_back_to_task_mean() -> None:
+    from olmo_eval_api.db.models import Run, SuiteResult, TaskResult
+    from olmo_eval_api.services.ingest import _headline
+
+    run = Run(run_id="run", model_id="model", task_specs=["pair"])
+    gap = SuiteResult(run_id="run", parent_suite=None, score=None, aggregation="gap")
+    tasks = [
+        TaskResult(run_id="run", score=value, display_format="percent", higher_is_better=True)
+        for value in (0.5, 1.0)
+    ]
+    assert _headline(run, [gap], tasks) is None
+    bare = _headline(run, [], tasks)
+    assert bare is not None and bare["score"] == 0.75
+
+
 def test_model_id_and_key_hash() -> None:
     assert (
         derive.model_id("meta-llama/Llama-3.1-8B-Instruct", "16614dd9d1ac227a")
