@@ -1,22 +1,24 @@
-"""Tests for the OpenAI Agents scaffold (requires the optional agents deps)."""
-
-import contextlib
-import logging
-from types import SimpleNamespace
-from typing import Any
+"""Tests for the OpenAI Agents scaffold (requires the optional agents/openai deps)."""
 
 import pytest
 
-from olmo_eval.common.types import LMRequest, RequestType
-from olmo_eval.harness.config import HarnessConfig
-from olmo_eval.harness.scaffolds.openai_agents import (
+pytest.importorskip("agents")
+pytest.importorskip("openai")
+
+import contextlib  # noqa: E402
+import logging  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+from typing import Any  # noqa: E402
+
+from olmo_eval.common.types import LMRequest, RequestType  # noqa: E402
+from olmo_eval.harness.config import HarnessConfig  # noqa: E402
+from olmo_eval.harness.scaffolds.openai_agents import (  # noqa: E402
     DEFAULT_CHAT_TEMPLATE_KWARGS,
     FORCED_FINAL_ANSWER_INSTRUCTION,
     OpenAIAgentsScaffold,
     _make_tool_error_formatter,
 )
-
-pytest.importorskip("agents")
+from olmo_eval.harness.tools import Tool  # noqa: E402
 
 
 def _function_call(name: str, arguments: str = "{}"):
@@ -547,6 +549,44 @@ class TestNativeUnknownToolRecovery:
             "Available tools: paper_search. Call one of these exact names."
         )
 
+    @pytest.mark.anyio
+    async def test_the_forced_final_answer_is_told_it_has_no_tools(self, monkeypatch):
+        """The forced final call drops every tool, so it must not name the ones it dropped."""
+        from agents import Agent, Runner
+
+        agent = Agent(name="test-agent", instructions="Use tools.")
+        run_calls = []
+
+        async def fake_run(**kwargs):
+            run_calls.append(kwargs)
+            if len(run_calls) == 1:
+                raise _max_turns_exceeded_with_run_data(_FakeRunData(new_items=[]))
+            return SimpleNamespace(final_output="Forced final answer")
+
+        _patch_scaffold_agent(monkeypatch, agent)
+        monkeypatch.setattr(Runner, "run", staticmethod(fake_run))
+
+        await OpenAIAgentsScaffold().run(
+            provider=SimpleNamespace(),
+            config=HarnessConfig(
+                name="test",
+                max_turns=1,
+                tools=(_named_tool("paper_search"),),
+            ),
+            request=_agent_request(),
+            enable_compaction=False,
+        )
+
+        bad_call = SimpleNamespace(kind="tool_not_found", tool_name="web_search", call_id="c1")
+        loop_config = run_calls[0]["run_config"]
+        final_config = run_calls[1]["run_config"]
+
+        assert "paper_search" in loop_config.tool_error_formatter(bad_call)
+        assert final_config.tool_not_found_behavior == "return_error_to_model"
+        assert final_config.tool_error_formatter(bad_call) == (
+            "Error: tool 'web_search' does not exist. No tools are available."
+        )
+
 
 class TestModelRefusal:
     @pytest.mark.anyio
@@ -571,3 +611,253 @@ class TestModelRefusal:
 
         assert "I cannot help with that." in result.final_output.text
         assert result.error is not None
+
+
+def _chat_message(*, content=None, tool_calls=None):
+    from openai.types.chat import ChatCompletionMessage
+
+    return ChatCompletionMessage(role="assistant", content=content, tool_calls=tool_calls)
+
+
+def _chat_tool_call(call_id: str, name: str, arguments: str = "{}"):
+    from openai.types.chat import ChatCompletionMessageFunctionToolCall
+    from openai.types.chat.chat_completion_message_function_tool_call import Function
+
+    return ChatCompletionMessageFunctionToolCall(
+        id=call_id,
+        type="function",
+        function=Function(name=name, arguments=arguments),
+    )
+
+
+def _chat_completion(message):
+    from openai.types.chat import ChatCompletion
+    from openai.types.chat.chat_completion import Choice
+
+    finish_reason = "tool_calls" if message.tool_calls else "stop"
+    return ChatCompletion(
+        id="chatcmpl-test",
+        choices=[Choice(finish_reason=finish_reason, index=0, message=message)],
+        created=0,
+        model="test-model",
+        object="chat.completion",
+    )
+
+
+def _calls_tool(name: str, arguments: str = "{}", call_id: str | None = None):
+    return _chat_message(tool_calls=[_chat_tool_call(call_id or f"call_{name}", name, arguments)])
+
+
+class _ScriptedClient:
+    """A real AsyncOpenAI whose completions are scripted, recording what the model was sent."""
+
+    def __init__(self, script):
+        from openai import AsyncOpenAI
+
+        self.client = AsyncOpenAI(api_key="test", base_url="http://example.com/v1")
+        self.script = list(script)
+        self.sent_messages = []
+        self.sent_tool_names = []
+
+        async def create(**kwargs):
+            self.sent_messages.append(kwargs.get("messages"))
+            tools = kwargs.get("tools") or []
+            self.sent_tool_names.append(
+                [t.get("function", {}).get("name") for t in tools if isinstance(t, dict)]
+            )
+            message = self.script.pop(0) if self.script else _chat_message(content="fallback")
+            return _chat_completion(message)
+
+        self.client.chat.completions.create = create  # type: ignore[method-assign]
+
+    def tool_results_seen(self):
+        """Every tool result the model was handed, read off the last request's history."""
+        results = []
+        for message in (self.sent_messages[-1] if self.sent_messages else []) or []:
+            if isinstance(message, dict) and message.get("role") == "tool":
+                results.append(str(message.get("content", "")))
+        return results
+
+
+def _search_config(**kwargs):
+    async def search(query: str) -> str:
+        return f"results for {query}"
+
+    return HarnessConfig(
+        name="test",
+        tools=(Tool.from_function(search, name="search", description="Search for information."),),
+        **kwargs,
+    )
+
+
+async def _run_scaffold(scripted, config, *, agent=None):
+    class ProviderStub:
+        model_name = "test-model"
+
+        def get_openai_client(self):
+            return scripted.client
+
+    scaffold = OpenAIAgentsScaffold()
+    if agent is not None:
+        scaffold._get_or_create_agent = (  # type: ignore[method-assign]
+            lambda provider, config, sandbox_manager=None: agent
+        )
+    return await scaffold.run(
+        provider=ProviderStub(),
+        config=config,
+        request=_agent_request(),
+        enable_compaction=False,
+    )
+
+
+class TestUnknownToolCallThroughTheScaffold:
+    """Drive the SDK's real dispatch through scaffold.run, not through Runner.run directly.
+
+    An unknown tool name used to abort the instance and replace the answer with an error
+    string. These pin that the opt-in in run() is what keeps the loop alive, and that the
+    fumble is still legible afterwards.
+    """
+
+    @pytest.mark.anyio
+    async def test_the_raw_failure_this_opt_in_replaces(self):
+        """Without the opt-in the SDK still raises, so the opt-in is load-bearing."""
+        from agents import Agent, OpenAIChatCompletionsModel, Runner
+        from agents.exceptions import ModelBehaviorError
+
+        scripted = _ScriptedClient(
+            [
+                _calls_tool("thought", '{"text":"let me think"}'),
+                _chat_message(content="Never reached."),
+            ]
+        )
+        agent = Agent(
+            name="openai_agents",
+            instructions="",
+            model=OpenAIChatCompletionsModel(openai_client=scripted.client, model="test-model"),
+            tools=[],
+        )
+
+        with pytest.raises(ModelBehaviorError) as excinfo:
+            await Runner.run(starting_agent=agent, input="What did you find?", max_turns=6)
+
+        assert str(excinfo.value) == "Tool thought not found in agent openai_agents"
+
+    @pytest.mark.anyio
+    async def test_unknown_tool_call_recovers_and_answer_survives(self):
+        scripted = _ScriptedClient(
+            [
+                _calls_tool("thought", '{"text":"let me think"}'),
+                _calls_tool("search", '{"query":"olmo"}'),
+                _chat_message(content="The answer survived."),
+            ]
+        )
+
+        result = await _run_scaffold(scripted, _search_config(max_turns=6))
+
+        assert result.final_output.text == "The answer survived."
+        assert result.error is None
+        assert result.max_turns_reached is False
+
+        tool_results = scripted.tool_results_seen()
+        assert any("thought" in r and "does not exist" in r for r in tool_results)
+        assert any("Available tools: search" in r for r in tool_results)
+        assert "results for olmo" in tool_results
+
+        for advertised in scripted.sent_tool_names:
+            assert advertised == ["search"]
+
+        assert result.trajectory.total_tool_calls == 2
+
+    @pytest.mark.anyio
+    async def test_repeated_unknown_tool_calls_still_finish(self):
+        scripted = _ScriptedClient(
+            [
+                _calls_tool("thought", call_id="call_1"),
+                _calls_tool("thought", call_id="call_2"),
+                _calls_tool("ponder", call_id="call_3"),
+                _chat_message(content="Answer after three bad calls."),
+            ]
+        )
+
+        result = await _run_scaffold(scripted, _search_config(max_turns=8))
+
+        assert result.final_output.text == "Answer after three bad calls."
+        assert result.error is None
+        tool_results = scripted.tool_results_seen()
+        assert len([r for r in tool_results if "does not exist" in r]) == 3
+        assert any("ponder" in r for r in tool_results)
+
+    @pytest.mark.anyio
+    async def test_unknown_tool_calls_consume_the_turn_budget(self):
+        """Endless unknown calls must hit the existing max-turns path, not spin forever."""
+        scripted = _ScriptedClient([_calls_tool("thought", call_id=f"call_{i}") for i in range(10)])
+
+        result = await _run_scaffold(scripted, _search_config(max_turns=3))
+
+        assert result.max_turns_reached is True
+        assert len(scripted.sent_messages) <= 10
+
+    @pytest.mark.anyio
+    async def test_the_fumbled_name_stays_in_the_trajectory(self):
+        """Scoring and inspection need the name the model actually called."""
+        scripted = _ScriptedClient(
+            [
+                _calls_tool("thought", '{"text":"let me think"}', call_id="call_1"),
+                _calls_tool("search", '{"query":"olmo"}', call_id="call_2"),
+                _chat_message(content="done"),
+            ]
+        )
+
+        result = await _run_scaffold(scripted, _search_config(max_turns=6))
+
+        called = [
+            call.function.name for turn in result.trajectory.turns for call in turn.tool_calls
+        ]
+        assert called == ["thought", "search"]
+
+        errored = [
+            r.content
+            for turn in result.trajectory.turns
+            for r in turn.tool_results
+            if "does not exist" in r.content
+        ]
+        assert len(errored) == 1
+        assert "thought" in errored[0]
+
+    @pytest.mark.anyio
+    async def test_an_unknown_call_on_the_forced_final_turn_gives_up_softly(self):
+        """The forced final answer runs with no tools and one turn, so it cannot recover.
+
+        What matters is that the instance still comes back as a scored result with the
+        fallback answer instead of raising out of the scaffold.
+        """
+        scripted = _ScriptedClient(
+            [
+                _calls_tool("search", '{"query":"olmo"}', call_id="call_1"),
+                _calls_tool("search", '{"query":"olmo2"}', call_id="call_2"),
+                _calls_tool("thought", '{"text":"still thinking"}', call_id="call_3"),
+            ]
+        )
+
+        result = await _run_scaffold(scripted, _search_config(max_turns=2))
+
+        assert result.max_turns_reached is True
+        assert result.final_output.text == "[Max turns exceeded]"
+        assert result.error == "Max turns (2) exceeded"
+        assert scripted.sent_tool_names[-1] == []
+
+    @pytest.mark.anyio
+    async def test_normal_run_is_unaffected(self):
+        scripted = _ScriptedClient(
+            [
+                _calls_tool("search", '{"query":"olmo"}'),
+                _chat_message(content="Normal answer."),
+            ]
+        )
+
+        result = await _run_scaffold(scripted, _search_config(max_turns=6))
+
+        assert result.final_output.text == "Normal answer."
+        assert result.error is None
+        assert scripted.tool_results_seen() == ["results for olmo"]
+        assert result.trajectory.total_tool_calls == 1

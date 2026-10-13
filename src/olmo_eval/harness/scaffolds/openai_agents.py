@@ -546,6 +546,10 @@ class OpenAIAgentsScaffold(Scaffold):
             mcp_servers=[],
             model_settings=model_settings,
         )
+        if run_config is not None:
+            # The formatter from the main loop names the tools that loop had. This call
+            # has none, so a model that calls one anyway must not be pointed at them.
+            run_config = replace(run_config, tool_error_formatter=_make_tool_error_formatter([]))
         final_result = await Runner.run(
             starting_agent=final_agent,
             input=final_input,
