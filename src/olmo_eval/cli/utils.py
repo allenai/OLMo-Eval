@@ -3,7 +3,6 @@
 import dataclasses
 import json
 from dataclasses import dataclass
-from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 import click
@@ -225,13 +224,6 @@ def extract_priority_from_overrides(
             filtered[task_spec] = new_overrides
 
     return extracted_priority, filtered
-
-
-def format_timestamp(ts: datetime | None) -> str:
-    """Format a timestamp for display."""
-    if ts is None:
-        return "-"
-    return ts.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _coerce_value(value: str) -> Any:

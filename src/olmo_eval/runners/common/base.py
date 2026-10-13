@@ -4,15 +4,11 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from olmo_eval.common.constants.infrastructure import BEAKER_RESULT_DIR
 from olmo_eval.common.types import SamplingParams
 from olmo_eval.evals.tasks.common.base import TaskConfig
-from olmo_eval.runners.common.models import S3Config
-
-if TYPE_CHECKING:
-    from olmo_eval.storage import StorageBackend
 
 
 @dataclass
@@ -26,13 +22,9 @@ class BaseEvalRunner(ABC):
     # Core required fields
     task_specs: list[str]
     output_dir: str = BEAKER_RESULT_DIR
-    storages: list[StorageBackend] = field(default_factory=list)
 
     # Per-task overrides
     task_overrides: dict[str, dict[str, Any]] = field(default_factory=dict)
-
-    # S3 upload configuration (optional)
-    s3_config: S3Config | None = None
 
     # Experiment metadata
     experiment_name: str | None = None

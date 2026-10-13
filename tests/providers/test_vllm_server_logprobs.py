@@ -652,6 +652,8 @@ class TestVLLMServerProviderLogprobs:
         assert payload["prompt"] == context_tokens + continuation_tokens
         assert len(outputs) == 1
         assert outputs[0].metadata["num_tokens"] == 1
+        # num_tokens_all counts context plus continuation, as sent.
+        assert outputs[0].metadata["num_tokens_all"] == len(context_tokens) + 1
 
     @pytest.mark.anyio
     async def test_logprobs_respects_authoritative_request_max_length(self, provider):
@@ -681,6 +683,8 @@ class TestVLLMServerProviderLogprobs:
         assert payload["prompt"] == [2, 3, 4]
         assert len(outputs) == 1
         assert outputs[0].metadata["num_tokens"] == 1
+        # After left-truncation, num_tokens_all is what was actually sent.
+        assert outputs[0].metadata["num_tokens_all"] == 3
 
     @pytest.mark.anyio
     async def test_logprobs_threads_sampling_temperature(self, provider):

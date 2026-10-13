@@ -1,0 +1,276 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  position: relative;
+}
+
+.scroller {
+  overflow: auto;
+  position: relative;
+  min-width: 0;
+  outline: none;
+  overscroll-behavior-x: contain;
+}
+
+.scroller:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.grid {
+  position: relative;
+  min-width: 100%;
+}
+
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: grid;
+  background: var(--row);
+  border-bottom: 1px solid var(--border);
+}
+
+.th {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  padding: 0 8px;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+  min-width: 0;
+  background: var(--row);
+  user-select: none;
+}
+
+.th > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.thSortable {
+  cursor: pointer;
+}
+
+.thSortable:hover {
+  color: var(--fg);
+}
+
+.thSorted {
+  color: var(--fg);
+}
+
+.thRight {
+  justify-content: flex-end;
+}
+
+.thCenter {
+  justify-content: center;
+}
+
+.sortIcon {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--accent);
+  flex: none;
+}
+
+.sortIcon svg {
+  width: 12px;
+  height: 12px;
+}
+
+.resizer {
+  position: absolute;
+  right: -3px;
+  top: 6px;
+  bottom: 6px;
+  width: 7px;
+  cursor: col-resize;
+  z-index: 2;
+}
+
+.resizer::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border-strong);
+  opacity: 0;
+}
+
+.th:hover .resizer::after,
+.resizer:active::after {
+  opacity: 1;
+}
+
+.row {
+  position: absolute;
+  left: 0;
+  display: grid;
+  align-items: stretch;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  cursor: default;
+}
+
+.clickable {
+  cursor: pointer;
+}
+
+.row:hover,
+.row:hover .td {
+  background: var(--row-hover);
+}
+
+.selected,
+.selected .td {
+  background: var(--accent-soft) !important;
+}
+
+.focused::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent);
+  z-index: 3;
+}
+
+.td {
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  font-size: var(--fs-table);
+  line-height: 18px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  background: var(--surface);
+}
+
+.tdRight {
+  justify-content: flex-end;
+}
+
+.tdCenter {
+  justify-content: center;
+}
+
+.pinned {
+  position: sticky;
+  z-index: 2;
+}
+
+.pinnedLast {
+  box-shadow: 1px 0 0 var(--border);
+}
+
+.header .pinned {
+  z-index: 4;
+}
+
+.groupRow {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  background: var(--row);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.groupRow svg {
+  width: 14px;
+  height: 14px;
+  color: var(--muted);
+  transition: transform 0.12s ease;
+}
+
+.groupCollapsed svg {
+  transform: rotate(-90deg);
+}
+
+/* Trailing column that holds row actions. Sticky so the actions stay reachable when the
+   table scrolls sideways; the background follows the row's hover and selected states. */
+.actions {
+  position: sticky;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  padding: 0 6px;
+  background: inherit;
+  z-index: 2;
+  visibility: hidden;
+}
+
+.row:hover .actions,
+.focused .actions {
+  visibility: visible;
+}
+
+.actionsHead {
+  position: sticky;
+  right: 0;
+  padding: 0;
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 32px;
+  padding: 4px 10px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--surface);
+  border-radius: 0 0 var(--radius) var(--radius);
+}
+
+.empty {
+  position: sticky;
+  left: 0;
+  width: 100%;
+}
+
+.chooser {
+  width: 260px;
+}
+
+.chooserList {
+  max-height: 320px;
+  overflow: auto;
+  padding: 4px 8px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chooserItem {
+  display: flex;
+  align-items: center;
+  height: 26px;
+}
