@@ -888,3 +888,41 @@ async def test_latest_result_prefers_runs_without_an_instance_limit(
     )
 
     assert await _latest_arc_score(client) == 1.0
+
+
+@pytest.mark.parametrize("old_aggregation", ["gap", "average"])
+@pytest.mark.parametrize("latest_aggregation", ["gap", "average"])
+@pytest.mark.parametrize("same_metric", [False, True])
+async def test_runs_gap_baselines_use_stored_suite_versions(
+    client: httpx.AsyncClient, old_aggregation: str, latest_aggregation: str, same_metric: bool
+) -> None:
+    for run_id, score, metric in (
+        ("historyA1", 0.5, "strict:default"),
+        ("historyB1", 0.4, "strict:default" if same_metric else "flex:default"),
+    ):
+        await seed_run(
+            client,
+            run_id=run_id,
+            tasks={"old_in": [score], "old_out": [score]},
+            primary_metric=metric,
+            suites=[
+                suite("versioned", ["old_in", "old_out"], score=score, aggregation=old_aggregation)
+            ],
+        )
+    await seed_run(
+        client,
+        run_id="latestV1",
+        tasks={"new_in": [0.6], "new_out": [0.7]},
+        suites=[
+            suite("versioned", ["new_in", "new_out"], score=0.7, aggregation=latest_aggregation)
+        ],
+    )
+    result = await get(
+        client, "/api/runs", "RunsListResponse", cols="suite:versioned", baseline="r:historyB1"
+    )
+    row = next(row for row in result["items"] if row["run_id"] == "historyA1")
+    delta = row["scores"]["suite:versioned"]["delta"]
+    if old_aggregation == "gap" and not same_metric:
+        assert delta is None
+    else:
+        assert delta["delta"] == pytest.approx(0.1)

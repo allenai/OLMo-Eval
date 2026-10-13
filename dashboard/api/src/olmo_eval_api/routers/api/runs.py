@@ -27,7 +27,13 @@ from olmo_eval_api.services.queries import (
     run_summary,
     run_summary_fields,
 )
-from olmo_eval_api.services.read_suites import load_defs, score_suite, tree
+from olmo_eval_api.services.read_suites import (
+    SuiteDefs,
+    definition_hashes,
+    load_defs,
+    score_suite,
+    tree,
+)
 from olmo_eval_api.services.search_text import SEARCH_TEXT_SQL
 from olmo_eval_api.services.subjects import resolve_one
 from olmo_eval_api.services.suites import leaves
@@ -177,12 +183,27 @@ async def list_runs(
     )
     baseline_info = None
     baseline_cells: dict[str, Side] = {}
-    baseline_subject = None
+    baseline_metadata: dict[str, dict[str, Any]] = {}
     if baseline:
         subject = await resolve_one(session, baseline)
-        baseline_subject = subject
         baseline_info = subject.info()
-        baseline_cells = await baseline_column_sides(session, subject, columns)
+        if subject.run is not None:
+            baseline_rows = await page_scores(
+                session, [subject.run["run_id"]], columns, check_metrics=True
+            )
+            baseline_cells = {key: side for (_, key), (_, side) in baseline_rows.items()}
+            baseline_metadata = {key: cell for (_, key), (cell, _) in baseline_rows.items()}
+        else:
+            defs = await load_defs(session)
+            baseline_cells = await baseline_column_sides(session, subject, columns, suite_defs=defs)
+            for key, kind, name in columns:
+                if kind == "suite" and name in defs:
+                    node = tree(name, defs)
+                    baseline_metadata[key] = {
+                        "_suite_aggregation": node.aggregation,
+                        "_suite_hashes": definition_hashes([node], defs),
+                        "_gap_metric": gap_metric_identity(subject.trs, leaves(node)),
+                    }
     items = []
     for row in rows:
         values = {}
@@ -191,14 +212,9 @@ async def list_runs(
             side = cell[1] if cell else None
             delta = None
             base = baseline_cells.get(m.key)
-            compatible = True
-            if cell is not None and "_gap_names" in cell[0]:
-                compatible = (
-                    baseline_subject is not None
-                    and cell[0]["_gap_metric"] is not None
-                    and gap_metric_identity(baseline_subject.trs, cell[0]["_gap_names"])
-                    == cell[0]["_gap_metric"]
-                )
+            compatible = cell is None or suite_columns_compatible(
+                cell[0], baseline_metadata.get(m.key, {})
+            )
             if compatible and base is not None and side is not None:
                 delta = a.DeltaStats(**unpaired(side, base, 0.05, m.higher_is_better).as_dict())
             values[m.key] = (
@@ -236,6 +252,17 @@ def gap_metric_identity(tasks: Mapping[str, Mapping[Any, Any]], names: Sequence[
     return next(iter(metrics)) if len(metrics) == 1 else None
 
 
+def suite_columns_compatible(row: Mapping[str, Any], baseline: Mapping[str, Any]) -> bool:
+    if "gap" not in (row.get("_suite_aggregation"), baseline.get("_suite_aggregation")):
+        return True
+    return (
+        row.get("_suite_aggregation") == baseline.get("_suite_aggregation")
+        and row.get("_suite_hashes") == baseline.get("_suite_hashes")
+        and row.get("_gap_metric") is not None
+        and row.get("_gap_metric") == baseline.get("_gap_metric")
+    )
+
+
 async def page_scores(
     session: Any,
     run_ids: list[str],
@@ -267,15 +294,25 @@ async def page_scores(
             }
             side = Side(r["task_name"], r["task_hash"], r["score"], r["stderr"], r["score_is_mean"])
             out[(r["run_id"], f"task:{r['task_name']}")] = (cell, side)
+    stored_defs: dict[str, SuiteDefs] = {}
     if suites:
         rows = await session.execute(
             text(
-                "SELECT run_id, suite_name, score, stderr, n_instances FROM suite_results "
-                "WHERE run_id = ANY(:r) AND suite_name = ANY(:s)"
+                "SELECT run_id, suite_name, score, stderr, n_instances, aggregation, children, "
+                "definition_hash FROM suite_results WHERE run_id = ANY(:r) "
+                + ("" if check_metrics else "AND suite_name = ANY(:s)")
             ),
             {"r": run_ids, "s": suites},
         )
         for r in rows.mappings():
+            stored_defs.setdefault(r["run_id"], {})[r["suite_name"]] = (
+                r["aggregation"],
+                r["children"],
+                None,
+                r["definition_hash"],
+            )
+            if r["suite_name"] not in suites:
+                continue
             cell = {
                 "score": r["score"],
                 "stderr": r["stderr"],
@@ -285,12 +322,16 @@ async def page_scores(
             side = Side(r["suite_name"], None, r["score"], r["stderr"], False)
             out[(r["run_id"], f"suite:{r['suite_name']}")] = (cell, side)
     if suites and check_metrics:
-        defs = await load_defs(session)
-        gaps = {
-            f"suite:{name}": leaves(tree(name, defs))
-            for name in suites
-            if name in defs and defs[name][0] == "gap"
-        }
+        gaps: dict[tuple[str, str], list[str]] = {}
+        for (run_id, key), (cell, _) in out.items():
+            if not key.startswith("suite:"):
+                continue
+            defs = stored_defs[run_id]
+            node = tree(key.removeprefix("suite:"), defs)
+            cell["_suite_aggregation"] = node.aggregation
+            cell["_suite_hashes"] = definition_hashes([node], defs)
+            if node.aggregation == "gap":
+                gaps[(run_id, key)] = leaves(node)
         names = sorted({name for members in gaps.values() for name in members})
         if names:
             metric_rows = await session.execute(
@@ -306,17 +347,22 @@ async def page_scores(
             for row in metric_rows.mappings():
                 by_run.setdefault(row["run_id"], {})[row["task_name"]] = row
             for (run_id, key), (cell, _) in out.items():
-                if key in gaps:
-                    cell["_gap_names"] = gaps[key]
-                    cell["_gap_metric"] = gap_metric_identity(by_run.get(run_id, {}), gaps[key])
+                if (run_id, key) in gaps:
+                    cell["_gap_metric"] = gap_metric_identity(
+                        by_run.get(run_id, {}), gaps[(run_id, key)]
+                    )
     return out
 
 
 async def baseline_column_sides(
-    session: Any, subject: Any, columns: list[tuple[str, str, str]]
+    session: Any,
+    subject: Any,
+    columns: list[tuple[str, str, str]],
+    *,
+    suite_defs: SuiteDefs | None = None,
 ) -> dict[str, Side]:
     out: dict[str, Side] = {}
-    defs = None
+    defs = suite_defs
     for key, kind, name in columns:
         if kind == "task":
             tr = subject.trs.get(name)

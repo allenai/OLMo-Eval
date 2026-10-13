@@ -458,7 +458,13 @@ def _matrix_suite_row(
     cells = []
     for s in subjects:
         r = results[s.key]
-        status: a.CellStatus = "missing" if r.present == 0 else ("partial" if r.missing else "ok")
+        status: a.CellStatus = (
+            "missing"
+            if r.present == 0
+            else (
+                "partial" if r.missing or (node.aggregation == "gap" and r.score is None) else "ok"
+            )
+        )
         cells.append(
             a.MatrixCell(
                 status=status,

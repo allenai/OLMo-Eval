@@ -293,6 +293,7 @@ def test_gap_matrix_overrides_validate_metrics_before_scores_and_deltas() -> Non
         spec, [subject], subject, sides, body, None, metric_keys={"in": "strict", "out": "flex"}
     )
     assert row.cells[0].score is None
+    assert row.cells[0].status == "partial"
     assert row.cells[0].delta is None
     row = _matrix_suite_row(
         spec, [subject], None, sides, body, None, metric_keys={"in": "strict", "out": "strict"}
@@ -352,3 +353,23 @@ def test_gap_baseline_metric_identity_requires_a_complete_shared_primary(metrics
     }
     assert gap_metric_identity(tasks, ["in", "out"]) == expected
     assert gap_metric_identity({"out": tasks["out"]}, ["in", "out"]) is None
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {},
+        {"_suite_aggregation": "average"},
+        {"_suite_hashes": {"pair": "v2"}},
+        {"_gap_metric": "flex"},
+    ],
+)
+def test_gap_columns_require_the_same_stored_definition_and_metric(changes):
+    from olmo_eval_api.routers.api.runs import suite_columns_compatible
+
+    row = {
+        "_suite_aggregation": "gap",
+        "_suite_hashes": {"pair": "v1", "nested": "child-v1"},
+        "_gap_metric": "strict",
+    }
+    assert suite_columns_compatible(row, {**row, **changes}) is (not changes)
