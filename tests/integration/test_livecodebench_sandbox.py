@@ -10,6 +10,7 @@ is covered by the unit tests.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import subprocess
 from collections.abc import AsyncIterator
@@ -192,3 +193,103 @@ async def test_release_files_are_the_v3_window(
     assert len(livecodebench_instances) == 612
     instance = next(iter(livecodebench_instances.values()))
     assert tuple(instance.metadata["test_files"]) == RELEASE_V3_FILES
+
+
+@pytest.mark.anyio
+async def test_long_command_does_not_block_staging(sandbox) -> None:
+    running = asyncio.create_task(sandbox.execute_command("sleep 2; echo finished", timeout=10))
+    try:
+        await asyncio.sleep(0.2)
+        staged = await asyncio.wait_for(
+            sandbox.execute_with_files(
+                "cat /tmp/staging-probe.txt", {"/tmp/staging-probe.txt": "ok"}, timeout=5
+            ),
+            timeout=1.5,
+        )
+        assert staged.success and staged.output == "ok"
+        assert not running.done()
+        assert (await running).success
+    finally:
+        if not running.done():
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+
+@pytest.mark.anyio
+async def test_deadline_kills_term_ignoring_child_and_pool_remains_usable(sandbox) -> None:
+    code = (
+        "import os, signal, time\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        "child = os.fork()\n"
+        "if child: open('/tmp/deadline-child.pid', 'w').write(str(child))\n"
+        "time.sleep(60)\n"
+    )
+    result = await asyncio.wait_for(
+        sandbox.execute_with_files(
+            "python3 /tmp/deadline-probe.py", {"/tmp/deadline-probe.py": code}, timeout=0.5
+        ),
+        timeout=15,
+    )
+    assert not result.success and result.error == "timeout"
+    probe = await sandbox.execute_command(
+        "pid=$(cat /tmp/deadline-child.pid); "
+        "[ ! -e /proc/$pid/stat ] || [ $(awk '{print $3}' /proc/$pid/stat) = Z ]",
+        timeout=5,
+    )
+    assert probe.success
+    assert (await sandbox.execute_command("echo usable", timeout=5)).output == "usable\n"
+
+
+@pytest.mark.anyio
+async def test_cancellation_kills_nested_timeout_session(sandbox) -> None:
+    code = (
+        "import os, signal, time\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        "open('/tmp/cancel-probe.pid', 'w').write(str(os.getpid()))\n"
+        "time.sleep(60)\n"
+    )
+    running = asyncio.create_task(
+        sandbox.execute_with_files(
+            "timeout --kill-after=5s 60 python3 /tmp/cancel-probe.py",
+            {"/tmp/cancel-probe.py": code},
+            timeout=90,
+        )
+    )
+    try:
+        for _ in range(30):
+            if (await sandbox.execute_command("test -s /tmp/cancel-probe.pid", timeout=5)).success:
+                break
+            await asyncio.sleep(0.1)
+        else:
+            pytest.fail("The nested command did not start")
+        running.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await running
+        probe = await sandbox.execute_command(
+            "pid=$(cat /tmp/cancel-probe.pid); "
+            "[ ! -e /proc/$pid/stat ] || [ $(awk '{print $3}' /proc/$pid/stat) = Z ]",
+            timeout=5,
+        )
+        assert probe.success
+    finally:
+        if not running.done():
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+
+@pytest.mark.anyio
+async def test_quote_heavy_code_preserves_the_execution_argument(sandbox) -> None:
+    code = 'print(len("' + "'" * 20000 + '"))'
+    result = await sandbox.execute_code(code, timeout=5)
+    assert result.success and result.output == "20000\n"
+
+
+@pytest.mark.anyio
+async def test_background_process_survives_successful_command(sandbox):
+    started = await sandbox.execute_command(
+        "sleep 30 >/dev/null 2>&1 & echo $! > /tmp/background.pid"
+    )
+    assert started.success
+    alive = await sandbox.execute_command("kill -0 $(cat /tmp/background.pid)")
+    assert alive.success
+    await sandbox.execute_command("kill $(cat /tmp/background.pid)")

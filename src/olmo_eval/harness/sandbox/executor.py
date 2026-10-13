@@ -11,7 +11,7 @@ import os
 import random
 import time
 import uuid
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
@@ -144,6 +144,7 @@ class SandboxExecutor:
         self._session_lock: asyncio.Lock = asyncio.Lock()
         self._quarantined_reason: str | None = None
         self._health_check_lock: asyncio.Lock = asyncio.Lock()
+        self._local_command_supported: bool | None = None
 
     def _log(self, level: int, msg: str) -> None:
         """Log a message with optional name prefix."""
@@ -217,6 +218,33 @@ class SandboxExecutor:
 
             self._runtime = self._deployment.runtime
             self._quarantined_reason = None
+            if self.config.exec_shell:
+                self._local_command_supported = False
+            elif self.config.mode == SandboxMode.DOCKER and getattr(
+                self._deployment, "container_name", None
+            ):
+                probe = await self._execute_stream_control(
+                    [
+                        "sh",
+                        "-c",
+                        "command -v bash >/dev/null && "
+                        "setsid --help | grep -q -- --wait && "
+                        "timeout --help | grep -q -- --kill-after",
+                    ],
+                    5.0,
+                )
+                if probe.exit_code not in (0, 1):
+                    raise SandboxTransportError(
+                        f"Sandbox capability probe failed (exit {probe.exit_code}): {probe.stderr}"
+                    )
+                self._local_command_supported = probe.exit_code == 0
+                if not self._local_command_supported:
+                    if not await self._deployment.is_alive(timeout=_HEALTH_CHECK_TIMEOUT):
+                        raise RuntimeError("Sandbox became unhealthy during capability probing")
+                    self._log(
+                        logging.WARNING,
+                        "GNU process-control tools unavailable; using HTTP commands",
+                    )
             self._log(logging.DEBUG, "Sandbox deployment ready!")
 
             if (
@@ -474,6 +502,9 @@ class SandboxExecutor:
     ) -> ExecutionResult:
         """Execute a command in the sandbox and return structured result.
 
+        Background processes survive normal completion. Local command deadlines
+        and cancellation terminate the command's remaining session processes.
+
         Args:
             command: The bash command to execute.
             timeout: Optional timeout override in seconds.
@@ -489,35 +520,47 @@ class SandboxExecutor:
         if self._runtime is None:
             raise RuntimeError("Sandbox not started. Call start() first or use async context.")
 
-        from swerex.runtime.abstract import Command
-
         effective_timeout = timeout if timeout is not None else self.config.command_timeout
         prefix = log_prefix or self.name or "sandbox"
 
         if stream:
             return await self._execute_streaming(command, effective_timeout, prefix)
 
+        if (
+            self.config.mode == SandboxMode.DOCKER
+            and getattr(self._deployment, "container_name", None)
+            and not self.config.exec_shell
+            and self._local_command_supported is not False
+        ):
+            return await self._execute_local_command(command, effective_timeout)
+
+        return await self._execute_remote_command(["bash", "-c", command], effective_timeout)
+
+    async def _execute_remote_command(
+        self, argv: Sequence[str], effective_timeout: float
+    ) -> ExecutionResult:
+        """Execute an HTTP command without replaying a delivered request."""
+        from swerex.runtime.abstract import Command
+
         try:
-            runtime_command = Command(
-                command=["bash", "-c", command],
-                timeout=effective_timeout,
-            )
             response = await self._run_with_transport_retries(
                 lambda: asyncio.wait_for(
-                    self._runtime.execute(runtime_command),
+                    self._runtime.execute(Command(command=list(argv), timeout=effective_timeout)),
                     timeout=effective_timeout + 1.0,
                 ),
                 operation="command execution",
+                can_retry=lambda exc: isinstance(exc, aiohttp.ClientConnectorError),
             )
-        except Exception as e:
-            # Check for timeout errors (swerex.exceptions.CommandTimeoutError)
-            if _is_command_timeout(e):
+        except SandboxTransportError:
+            raise
+        except Exception as exc:
+            if _is_command_timeout(exc):
                 return ExecutionResult(
-                    success=False,
-                    output=f"Command timed out after {effective_timeout}s",
-                    exit_code=-1,
-                    error="timeout",
+                    False, f"Command timed out after {effective_timeout}s", -1, "timeout"
                 )
+            if self._is_transport_error(exc):
+                await self._quarantine_if_unresponsive(exc)
+                raise SandboxTransportError(f"Command execution failed: {exc}") from exc
             raise
 
         # Combine stdout and stderr
@@ -532,6 +575,90 @@ class SandboxExecutor:
             output="".join(output_parts) if output_parts else "",
             exit_code=response.exit_code,
         )
+
+    async def _execute_local_command(
+        self, command: str | Sequence[str], timeout: float
+    ) -> ExecutionResult:
+        """Run a local container command with independent session cleanup."""
+        command_id = uuid.uuid4().hex
+        pid_file = f"/tmp/_sandbox_pgid_{command_id}"
+        marker = f"__OLMO_STARTED_{command_id}__\n"
+        script = (
+            f"cat /proc/$$/stat > {pid_file} && "
+            f"printf '%s\\n' {marker.rstrip()} && "
+            f'exec timeout --kill-after=5s {timeout}s "$@"'
+        )
+        cleanup_script = """
+ready=0
+for attempt in {1..20}; do
+    if IFS= read -r row 2>/dev/null < "$1"; then ready=1; break; fi
+    sleep 0.1
+done
+[ "$ready" = 1 ] || exit 0
+session=${row%% *}
+read -r -a recorded <<< "${row##*) }"
+if IFS= read -r leader < /proc/$session/stat 2>/dev/null; then
+    read -r -a current <<< "${leader##*) }"
+    if [ "${recorded[19]}" != "${current[19]}" ]; then rm -f "$1"; exit 0; fi
+fi
+for pass in 1 2 3; do
+    found=0
+    for file in /proc/[0-9]*/stat; do
+        IFS= read -r row < "$file" 2>/dev/null || continue
+        read -r -a fields <<< "${row##*) }"
+        [ "${fields[3]}" = "$session" ] && [ "${fields[0]}" != Z ] || continue
+        kill -KILL -- "${row%% *}" 2>/dev/null || true
+        found=1
+    done
+    [ "$found" = 1 ] || break
+done
+rm -f "$1"
+"""
+        cleanup = ["bash", "-c", cleanup_script, "_", pid_file]
+        argv = ["bash", "-c", command] if isinstance(command, str) else list(command)
+        started = time.monotonic()
+        cleanup_session = True
+        try:
+            try:
+                response = await self._execute_stream_control(
+                    ["setsid", "--wait", "bash", "-c", script, "_", *argv], timeout + 10.0
+                )
+            except TimeoutError as exc:
+                await self._quarantine_if_unresponsive(exc)
+                raise SandboxTransportError(
+                    f"Container command did not return within {timeout + 10.0}s"
+                ) from exc
+            except OSError as exc:
+                await self._quarantine_if_unresponsive(exc)
+                raise SandboxTransportError(f"Container execution failed: {exc}") from exc
+            if not response.stdout.startswith(marker):
+                error = RuntimeError(response.stderr or "Container command never started")
+                await self._quarantine_if_unresponsive(error)
+                raise SandboxTransportError(str(error)) from error
+            timed_out = (
+                response.exit_code in (9, 124, 137) and time.monotonic() - started >= timeout
+            )
+            cleanup_session = timed_out
+            return ExecutionResult(
+                response.exit_code == 0,
+                response.stdout[len(marker) :] + response.stderr,
+                response.exit_code,
+                "timeout" if timed_out else None,
+            )
+        finally:
+            control = cleanup if cleanup_session else ["rm", "-f", pid_file]
+            cleanup_task = asyncio.create_task(self._execute_stream_control(control, timeout=5.0))
+            try:
+                cleaned = await asyncio.shield(cleanup_task)
+                if cleaned.exit_code != 0:
+                    raise RuntimeError(cleaned.stderr or "Command session cleanup failed")
+            except asyncio.CancelledError:
+                with contextlib.suppress(Exception):
+                    await cleanup_task
+                raise
+            except Exception as exc:
+                await self._quarantine_if_unresponsive(exc)
+                self._log(logging.WARNING, f"Could not clean up command session: {exc}")
 
     async def _execute_streaming(
         self, command: str, timeout: float, prefix: str
@@ -780,7 +907,9 @@ class SandboxExecutor:
 
         return ExecutionResult(exit_code == 0, full_output, exit_code)
 
-    async def _execute_stream_control(self, command: str, timeout: float) -> _ControlCommandResult:
+    async def _execute_stream_control(
+        self, command: str | Sequence[str], timeout: float
+    ) -> _ControlCommandResult:
         """Run a short streaming-control command with a real client timeout.
 
         DockerDeployment exposes the container name, so local container modes can
@@ -788,25 +917,25 @@ class SandboxExecutor:
         in-container swe-rex HTTP server and makes a stuck poll individually
         cancellable. Modal has no local container CLI and keeps using swe-rex.
         """
+        argv = ["bash", "-c", command] if isinstance(command, str) else list(command)
         container_name = getattr(self._deployment, "container_name", None)
         if self.config.mode == SandboxMode.DOCKER and container_name:
             process = await asyncio.create_subprocess_exec(
                 self.config.container_runtime,
                 "exec",
                 container_name,
-                "bash",
-                "-c",
-                command,
+                *argv,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
             try:
                 stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
-            except TimeoutError:
-                process.kill()
-                with contextlib.suppress(TimeoutError):
-                    await asyncio.wait_for(process.wait(), timeout=5.0)
-                raise
+            finally:
+                if process.returncode is None:
+                    with contextlib.suppress(ProcessLookupError):
+                        process.kill()
+                    with contextlib.suppress(TimeoutError):
+                        await asyncio.shield(asyncio.wait_for(process.wait(), timeout=5.0))
             return _ControlCommandResult(
                 stdout=stdout.decode(errors="backslashreplace"),
                 stderr=stderr.decode(errors="backslashreplace"),
@@ -816,7 +945,7 @@ class SandboxExecutor:
         from swerex.runtime.abstract import Command  # type: ignore[ty:unresolved-import]
 
         response = await asyncio.wait_for(
-            self._runtime.execute(Command(command=["bash", "-c", command], timeout=timeout)),
+            self._runtime.execute(Command(command=argv, timeout=timeout)),
             timeout=timeout + 1.0,
         )
         return _ControlCommandResult(
@@ -873,6 +1002,9 @@ class SandboxExecutor:
     ) -> ExecutionResult:
         """Execute code in the specified language.
 
+        Background processes survive normal completion. Local command deadlines
+        and cancellation terminate the command's remaining session processes.
+
         Args:
             code: Source code to execute.
             language: Programming language (default: "python").
@@ -902,39 +1034,22 @@ class SandboxExecutor:
             )
 
         try:
-            from swerex.runtime.abstract import Command
-
             effective_timeout = timeout if timeout is not None else self.config.command_timeout
-
-            runtime_command = Command(
-                command=[interpreter, "-c", code],
-                timeout=effective_timeout,
-            )
-            response = await self._run_with_transport_retries(
-                lambda: self._runtime.execute(runtime_command),
-                operation="code execution",
-            )
-
-            output = response.stdout or ""
-            if response.stderr:
-                output += response.stderr
-
-            return ExecutionResult(
-                success=response.exit_code == 0,
-                output=output,
-                exit_code=response.exit_code,
-            )
-
-        except Exception as e:
-            error_msg = str(e) or repr(e)
-            if self._is_transport_error(e):
+            argv = [interpreter, "-c", code]
+            if (
+                self.config.mode == SandboxMode.DOCKER
+                and getattr(self._deployment, "container_name", None)
+                and not self.config.exec_shell
+                and self._local_command_supported is not False
+            ):
+                return await self._execute_local_command(argv, effective_timeout)
+            return await self._execute_remote_command(argv, effective_timeout)
+        except SandboxTransportError:
+            raise
+        except Exception as exc:
+            if self._is_transport_error(exc):
                 raise
-            self._log(logging.DEBUG, f"Code execution failed: {error_msg}")
-            return ExecutionResult(
-                success=False,
-                output="",
-                error=error_msg,
-            )
+            return ExecutionResult(False, error=str(exc) or repr(exc))
 
     async def _ensure_session(self) -> None:
         """Create the session if it doesn't exist."""
@@ -1083,6 +1198,7 @@ class SandboxExecutor:
         operation_fn: Callable[[], Awaitable[_T]],
         *,
         operation: str,
+        can_retry: Callable[[Exception], bool] | None = None,
     ) -> _T:
         """Retry transient transport failures before considering quarantine."""
         max_attempts = _TRANSPORT_RETRIES + 1
@@ -1092,10 +1208,10 @@ class SandboxExecutor:
             except Exception as exc:
                 if not self._is_transport_error(exc):
                     raise
-                if attempt >= max_attempts:
+                if attempt >= max_attempts or (can_retry is not None and not can_retry(exc)):
                     await self._quarantine_if_unresponsive(exc)
                     raise SandboxTransportError(
-                        f"{operation} exhausted {max_attempts} transport attempt(s): {exc}"
+                        f"{operation} failed after {attempt} transport attempt(s): {exc}"
                     ) from exc
                 delay = _exponential_backoff(
                     _TRANSPORT_RETRY_INITIAL_DELAY,
@@ -1127,7 +1243,17 @@ class SandboxExecutor:
             last_health_error = "health check returned false"
             for attempt in range(1, max_attempts + 1):
                 try:
-                    alive = bool(await self._deployment.is_alive(timeout=_HEALTH_CHECK_TIMEOUT))
+                    if self.config.mode == SandboxMode.DOCKER and getattr(
+                        self._deployment, "container_name", None
+                    ):
+                        probe = await self._execute_stream_control(
+                            "true", timeout=_HEALTH_CHECK_TIMEOUT
+                        )
+                        alive = probe.exit_code == 0 and bool(
+                            await self._deployment.is_alive(timeout=_HEALTH_CHECK_TIMEOUT)
+                        )
+                    else:
+                        alive = bool(await self._deployment.is_alive(timeout=_HEALTH_CHECK_TIMEOUT))
                 except Exception as exc:
                     alive = False
                     last_health_error = str(exc) or repr(exc)
