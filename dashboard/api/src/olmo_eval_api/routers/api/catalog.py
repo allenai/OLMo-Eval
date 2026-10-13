@@ -981,6 +981,7 @@ async def suite_leaderboard(
     runs = await fetch_runs(session, {r["run_id"] for r in rows})
     entries = []
     hib_values = set()
+    display_formats = set()
     population = {key: latest_by_task(value) for key, value in grouped.items()}
     metric_keys = primary_gap_metric_keys(node, (population[key] for key in sorted(population)))
     for gkey, trs in population.items():
@@ -988,6 +989,7 @@ async def suite_leaderboard(
         if result.score is None:
             continue
         hib_values.add(result.higher_is_better)
+        display_formats.add(result.display_format)
         newest = max(trs.values(), key=lambda x: x["run_created_at"])
         child_scores: dict[str, float | None] = {}
         for child in node.children:
@@ -1022,7 +1024,14 @@ async def suite_leaderboard(
         name=suite,
         task_hash=None,
         metric="primary",
-        meta=None,
+        meta=a.MetricMeta(
+            display_format="percent" if display_formats == {"percent"} else "raw",
+            higher_is_better=hib,
+            kind="bounded" if display_formats == {"percent"} else "unbounded",
+            unit=None,
+        )
+        if entries
+        else None,
         children=[a.SuiteChild(type=c.type, name=c.name) for c in node.children],
         items=[a.LeaderboardRow(**e) for e in page],
         next_cursor=nxt,
