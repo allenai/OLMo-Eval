@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -249,9 +250,10 @@ async def test_gap_run_baselines_use_the_runs_metric(
     if common_metric:
         await session.execute(
             text(
-                "UPDATE task_results SET metrics = metrics || '{\"strict:default\":0.4}'::jsonb "
-                "WHERE run_id = 'flexible001'"
-            )
+                "UPDATE task_results SET metrics = metrics || CAST(:extra AS jsonb) "
+                "WHERE run_id = :run"
+            ),
+            {"extra": json.dumps({"strict:default": 0.4}), "run": "flexible001"},
         )
         await session.commit()
     body = await get(
