@@ -1103,8 +1103,11 @@ async def complete_run(
         scored = {name for name, tr in present.items() if tr.score is not None}
         n_inst = {name: tr.num_instances for name, tr in present.items()}
         weights = leaf_weights(tree, n_inst, scored)
-        formats = {tr.display_format for tr in present.values()}
-        directions = {tr.higher_is_better for tr in present.values()}
+        metadata_tasks = (
+            [present[name] for name in weights] if x.aggregation == "gap" else present.values()
+        )
+        formats = {tr.display_format for tr in metadata_tasks}
+        directions = {tr.higher_is_better for tr in metadata_tasks}
         row = SuiteResult(
             run_id=run_id,
             suite_name=x.name,

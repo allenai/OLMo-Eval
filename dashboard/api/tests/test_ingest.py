@@ -832,3 +832,47 @@ async def test_ingest_mode_rejects_dashboard_routes(engine: Any, settings: Any) 
             assert (await c.get("/api/me")).status_code == 404
             assert (await c.get("/health")).json()["mode"] == "ingest"
             assert (await c.get("/v1/whoami")).status_code == 401
+
+
+async def test_gap_ingest_metadata_follows_companion(
+    client: httpx.AsyncClient, session: Any
+) -> None:
+    run_id = "metastore01"
+    response = await client.put(
+        f"/v1/runs/{run_id}", json=run_payload(run_id=run_id, model_name="test-org/metadata-model")
+    )
+    assert response.status_code == 200, response.text
+    for name, score, fmt, direction in (("in", 0.6, "raw", None), ("out", 0.4, "percent", False)):
+        response = await client.post(
+            f"/v1/runs/{run_id}/task-results",
+            json=task_payload(
+                name,
+                task_hash=f"hash-{name}",
+                primary_metric="acc:default",
+                corpus_score=score,
+                n=1,
+                display_format=fmt,
+                higher_is_better=direction,
+            ),
+        )
+        assert response.status_code == 200, response.text
+    response = await client.post(
+        f"/v1/runs/{run_id}/complete",
+        json={
+            "status": "complete",
+            "finished_at": None,
+            "duration_seconds": 1.0,
+            "suites": [suite("metapair", ["in", "out"], score=0.4, aggregation="gap")],
+            "expected_task_results": 2,
+            "expected_artifacts": 0,
+        },
+    )
+    assert response.status_code == 200, response.text
+    row = (
+        await session.execute(
+            text("SELECT display_format, higher_is_better FROM suite_results WHERE run_id = :run"),
+            {"run": run_id},
+        )
+    ).one()
+    assert row.display_format == "percent"
+    assert row.higher_is_better is False
