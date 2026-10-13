@@ -897,8 +897,8 @@ async def test_runs_gap_baselines_use_stored_suite_versions(
     client: httpx.AsyncClient, old_aggregation: str, latest_aggregation: str, same_metric: bool
 ) -> None:
     for run_id, score, metric in (
-        ("historyA1", 0.5, "strict:default"),
-        ("historyB1", 0.4, "strict:default" if same_metric else "flex:default"),
+        ("historya1", 0.5, "strict:default"),
+        ("historyb1", 0.4, "strict:default" if same_metric else "flex:default"),
     ):
         await seed_run(
             client,
@@ -911,16 +911,16 @@ async def test_runs_gap_baselines_use_stored_suite_versions(
         )
     await seed_run(
         client,
-        run_id="latestV1",
+        run_id="latestv1",
         tasks={"new_in": [0.6], "new_out": [0.7]},
         suites=[
             suite("versioned", ["new_in", "new_out"], score=0.7, aggregation=latest_aggregation)
         ],
     )
     result = await get(
-        client, "/api/runs", "RunsListResponse", cols="suite:versioned", baseline="r:historyB1"
+        client, "/api/runs", "RunsListResponse", cols="suite:versioned", baseline="r:historyb1"
     )
-    row = next(row for row in result["items"] if row["run_id"] == "historyA1")
+    row = next(row for row in result["items"] if row["run_id"] == "historya1")
     delta = row["scores"]["suite:versioned"]["delta"]
     if old_aggregation == "gap" and not same_metric:
         assert delta is None
