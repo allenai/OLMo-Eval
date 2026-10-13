@@ -355,9 +355,12 @@ def submit(args, bins: list[list[Cell]], only: set[int] | None = None) -> None:
     ).stdout.strip()
     # gantry clones THIS repo at its current (pushed) commit; OLMo-core comes from --olmo-core-ref
     # the base image ships an old ai2-olmo-eval that shadows an editable install: remove it and
-    # install this checkout non-editably
+    # install this checkout non-editably. transformers/huggingface_hub are pinned because the
+    # image's huggingface_hub is too old for transformers 5 (`cannot import name 'silent_tqdm'`);
+    # the pins are the versions this repo's uv.lock resolves, so a job runs what CI tested (and
+    # transformers satisfies the hf extra's >=5.8,<5.13 floor). Bump them together with uv.lock.
     install = (
-        "pip uninstall -y ai2-olmo-eval olmo-eval; pip install . 'transformers==5.7.0' "
+        "pip uninstall -y ai2-olmo-eval olmo-eval; pip install . 'transformers==5.8.1' "
         "'huggingface_hub==1.12.2' && "
         f"pip install 'ai2-olmo-core[fla] @ git+https://github.com/allenai/OLMo-core.git@"
         f"{args.olmo_core_ref}' dataclass-extensions"

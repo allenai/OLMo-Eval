@@ -146,7 +146,7 @@ bitwise-identical, so `--full-batch-size 1` if you need bitwise determinism; bs=
 | Symptom | Cause / fix |
 |---|---|
 | `No module named 'olmo_eval.cli'` | the base image ships an old `ai2-olmo-eval` that shadows an editable install; the launcher uninstalls it and installs this checkout non-editably |
-| `cannot import name 'silent_tqdm'` | `huggingface_hub` too old; the launcher pins `transformers==5.7.0` / `huggingface_hub==1.12.2` |
+| `cannot import name 'silent_tqdm'` | the image's `huggingface_hub` is too old; the launcher pins `transformers==5.8.1` / `huggingface_hub==1.12.2`, the versions `uv.lock` resolves (keep them in step with it) |
 | `Invalid OLMo-core checkpoint ... dataset.tokenizer` | pass `validate_checkpoint=false` + `allow_tokenizer_fallback=true` (the launcher does) |
 | every example takes ~10-25 s regardless of length | `--olmo-core-ref` lacks the FLA autotune fix |
 | a job exits 143 with "preempted by ... allocated workloads are scheduled ahead of unallocated ones" | expected for unallocated jobs; `--resubmit` reruns just the missing ones |
