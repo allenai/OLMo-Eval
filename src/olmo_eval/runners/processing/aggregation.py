@@ -153,7 +153,7 @@ def _compute_gap(
 
     reference_metric = task_results[reference_spec].get("primary_metric")
     companion_metric = task_results[companion_spec].get("primary_metric")
-    if reference_metric != companion_metric:
+    if not isinstance(reference_metric, str) or reference_metric != companion_metric:
         logger.warning(
             f"Suite {suite_name}: {reference_spec} reports {reference_metric} but "
             f"{companion_spec} reports {companion_metric}; omitting the gap."
