@@ -269,6 +269,26 @@ class TestExtractAnswer:
         output = LMOutput(text="ANSWER:A")
         assert task.extract_answer(output) == "A"
 
+    def test_answer_pattern_bold_label(self, task):
+        output = LMOutput(text="**Answer:** B")
+        assert task.extract_answer(output) == "B"
+
+    def test_answer_pattern_followed_by_word_falls_back(self, task):
+        output = LMOutput(text="ANSWER: the correct choice is C")
+        assert task.extract_answer(output) == "C"
+
+    def test_answer_pattern_letter_on_next_line(self, task):
+        output = LMOutput(text="ANSWER:\nC\n\nOption A was close.")
+        assert task.extract_answer(output) == "C"
+
+    def test_answer_pattern_without_colon(self, task):
+        output = LMOutput(text="Reasoning about the options.\n\n**Answer** C")
+        assert task.extract_answer(output) == "C"
+
+    def test_answer_pattern_without_colon_ignores_prose(self, task):
+        output = LMOutput(text="Let me answer a) first. So it is (B)")
+        assert task.extract_answer(output) == "B"
+
     def test_last_answer_pattern_wins(self, task):
         output = LMOutput(text="ANSWER: A\nWait, actually ANSWER: C")
         assert task.extract_answer(output) == "C"

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import uuid
 from typing import Any
 
@@ -25,63 +24,6 @@ def generate_experiment_id() -> str:
         12
     """
     return uuid.uuid4().hex[:12]
-
-
-def get_author() -> str:
-    """Get the current user for experiment attribution.
-
-    Checks environment variables in order:
-    1. BEAKER_AUTHOR - set by olmo-eval beaker launch for Beaker jobs
-    2. USER, USERNAME, LOGNAME - standard Unix user env vars
-    3. Falls back to getpass.getuser() if no env var is set.
-
-    Returns:
-        Username string.
-    """
-    import getpass
-
-    return (
-        os.environ.get("BEAKER_AUTHOR")
-        or os.environ.get("USER")
-        or os.environ.get("USERNAME")
-        or os.environ.get("LOGNAME")
-        or getpass.getuser()
-    )
-
-
-def get_git_ref() -> str:
-    """Get the current git commit hash.
-
-    Returns:
-        Git commit hash (short form) or "unknown" if not in a git repo.
-    """
-    import subprocess
-
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if result.returncode == 0:
-            return result.stdout.strip()
-    except Exception:
-        pass
-    return "unknown"
-
-
-def get_workspace() -> str:
-    """Get the Beaker workspace for experiment attribution.
-
-    Checks environment variables in order:
-    1. BEAKER_WORKSPACE - set by olmo-eval beaker launch for Beaker jobs
-    2. Falls back to "default" if no env var is set.
-
-    Returns:
-        Workspace string.
-    """
-    return os.environ.get("BEAKER_WORKSPACE", "default")
 
 
 def sanitize_spec_for_filename(spec: str) -> str:

@@ -41,10 +41,8 @@ from olmo_eval.common.types import (
     Split,
 )
 from olmo_eval.data import DataLoader, DataSource
+from olmo_eval.evals.extract import ANSWER_LINE_PATTERN
 from olmo_eval.evals.tasks.common import Task, register, register_variant
-
-# Regex for "ANSWER: X" pattern (case-insensitive)
-_ANSWER_PATTERN = re.compile(r"ANSWER\s*:\s*([A-Z])", re.IGNORECASE)
 
 # Matches REFUSE_CHOICE from the official LAB-Bench evaluation code
 _REFUSE_CHOICE = "Insufficient information to answer the question"
@@ -76,12 +74,12 @@ class PrecisionMetric(Metric):
             return 0.0
         return sum(r.scores.get(scorer_name, 0.0) for r in committed) / len(committed)
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         # Precision excludes refusals before averaging, so raw MC scorer values
         # are not interchangeable with the stored task metric.
         return False
 
-    def pairwise_display_format(self) -> str:
+    def display_format(self) -> str:
         return "percentage"
 
 
@@ -101,11 +99,11 @@ class CoverageMetric(Metric):
         committed = sum(1 for r in responses if not _is_refusal(r))
         return committed / len(responses)
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         # Coverage is derived from refusal handling, not the MC scorer signal.
         return False
 
-    def pairwise_display_format(self) -> str:
+    def display_format(self) -> str:
         return "percentage"
 
 
@@ -279,7 +277,7 @@ class LabBenchTask(Task):
 
     def extract_answer(self, output: LMOutput) -> str | None:
         """Extract the last ``ANSWER: X`` letter from model output."""
-        matches = list(_ANSWER_PATTERN.finditer(output.text))
+        matches = list(ANSWER_LINE_PATTERN.finditer(output.text))
         return matches[-1].group(1).upper() if matches else None
 
 

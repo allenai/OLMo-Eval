@@ -12,6 +12,7 @@ from .decoding import (
     DecodeError,
     decode_text,
     decode_text_lenient,
+    decode_tool_calls,
     is_empty_output,
     is_function_calling_format,
 )
@@ -22,6 +23,7 @@ __all__ = [
     "BFCLScorer",
     "decode_text",
     "decode_text_lenient",
+    "decode_tool_calls",
     "DecodeError",
     "GORILLA_TO_OPENAPI",
     "IRRELEVANCE_CATEGORIES",

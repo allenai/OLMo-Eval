@@ -9,7 +9,6 @@ from .agent import (
     TrajectoryMetrics,
 )
 from .base import (
-    EvalResult,
     Instance,
     LMOutput,
     LMRequest,
@@ -19,7 +18,6 @@ from .base import (
     Response,
     SamplingParams,
     Split,
-    StoredTaskResult,
     TopLogProb,
     compute_model_hash,
     compute_task_hash,
@@ -69,7 +67,6 @@ __all__ = [
     "compute_task_hash",
     "DatabaseToolType",
     "DtypeLiteral",
-    "EvalResult",
     "ExecutionMetrics",
     "FileSystemToolType",
     "Function",
@@ -98,7 +95,6 @@ __all__ = [
     "SERPER_FETCH_WEBPAGE",
     "SERPER_WEB_SEARCH",
     "Split",
-    "StoredTaskResult",
     "ToolCall",
     "ToolCategory",
     "ToolMetrics",

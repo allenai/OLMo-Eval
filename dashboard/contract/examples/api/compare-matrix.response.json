@@ -1,0 +1,263 @@
+{
+  "subjects": [
+    {
+      "key": "r:7c1e9a0b42d8",
+      "kind": "run",
+      "label": "Qwen3-8B",
+      "model": {
+        "model_id": "403a845436a6",
+        "name": "Qwen/Qwen3-8B",
+        "model_hash": "a1b2c3d4e5f60718",
+        "series": "Qwen/Qwen3-8B",
+        "series_label": "Qwen3-8B",
+        "family": "qwen3",
+        "step": null,
+        "tokens_seen": null
+      },
+      "run": {
+        "run_id": "7c1e9a0b42d8",
+        "launch_id": null,
+        "experiment_name": "qwen3-8b-omniscience_judge",
+        "experiment_group": "qwen3-8b-omniscience_judge-20260929-101500",
+        "status": "complete",
+        "upload_state": "complete",
+        "stale": false,
+        "model": {
+          "model_id": "403a845436a6",
+          "name": "Qwen/Qwen3-8B",
+          "model_hash": "a1b2c3d4e5f60718",
+          "series": "Qwen/Qwen3-8B",
+          "series_label": "Qwen3-8B",
+          "family": "qwen3",
+          "step": null,
+          "tokens_seen": null
+        },
+        "author": "chrisg",
+        "uploaded_by": "chrisg@allenai.org",
+        "tags": [],
+        "created_at": "2026-09-29T17:15:40+00:00",
+        "started_at": "2026-09-29T17:15:31+00:00",
+        "finished_at": "2026-09-29T17:52:02+00:00",
+        "duration_seconds": 2191.0,
+        "num_tasks": 1,
+        "num_failed_tasks": 0,
+        "num_instances": 600,
+        "headline": {
+          "kind": "task",
+          "name": "omniscience:judge",
+          "score": -21.7,
+          "stderr": null,
+          "display_format": "raw"
+        },
+        "beaker_experiment_id": "01M3B0XC6YQ4D3J7W2F9TEXK8H",
+        "beaker_workspace": "ai2/olmo-eval-debug",
+        "git_commit": "e81a69bf44a4d7a86033d7ccc7fb7d0e41db48a7",
+        "git_branch": "maliam/omniscience",
+        "gcs_prefix": "gs://ai2-skiff2-olmo-eval-results/runs/7c1e9a0b42d8/",
+        "links": {
+          "beaker_experiment": "https://beaker.org/ex/01M3B0XC6YQ4D3J7W2F9TEXK8H",
+          "beaker_result_dataset": "https://beaker.org/ds/01M3TFPE2X873CCF4KMSKRME4D",
+          "beaker_workspace": "https://beaker.org/ws/ai2/olmo-eval-debug",
+          "gcs_console": "https://console.cloud.google.com/storage/browser/ai2-skiff2-olmo-eval-results/runs/db385601e335?project=ai2-skiff2-olmo-eval",
+          "github_commit": "https://github.com/allenai/olmo-eval-internal/commit/e81a69bf44a4d7a86033d7ccc7fb7d0e41db48a7"
+        }
+      },
+      "run_ids": [
+        "7c1e9a0b42d8"
+      ],
+      "latest_at": "2026-09-29T17:52:02+00:00"
+    },
+    {
+      "key": "m:3b9d2f1e0a7c",
+      "kind": "model",
+      "label": "olmo3-7b-midtrain @ step 14000",
+      "model": {
+        "model_id": "3b9d2f1e0a7c",
+        "name": "olmo3-7b-midtrain-step14000",
+        "model_hash": "0f1e2d3c4b5a6978",
+        "series": "olmo3-7b-midtrain",
+        "series_label": "olmo3-7b-midtrain",
+        "family": "olmo3",
+        "step": 14000,
+        "tokens_seen": null
+      },
+      "run": null,
+      "run_ids": [
+        "a41f0c2d9e7b"
+      ],
+      "latest_at": "2026-09-30T23:12:00+00:00"
+    }
+  ],
+  "baseline": "r:7c1e9a0b42d8",
+  "scope": "suite:arc:rc:olmo3base",
+  "metric": "primary",
+  "rows": [
+    {
+      "key": "suite:arc:rc:olmo3base",
+      "kind": "suite",
+      "name": "arc:rc:olmo3base",
+      "depth": 0,
+      "parent": null,
+      "aggregation": "average",
+      "metric_key": null,
+      "meta": {
+        "higher_is_better": true,
+        "display_format": "percent",
+        "unit": null,
+        "kind": "bounded"
+      },
+      "cells": [
+        {
+          "status": "ok",
+          "score": 0.7115,
+          "stderr": 0.0081,
+          "n": 3548,
+          "task_result_id": null,
+          "run_id": null,
+          "task_hash": null,
+          "delta": null,
+          "children_missing": 0
+        },
+        {
+          "status": "ok",
+          "score": 0.7342,
+          "stderr": 0.008,
+          "n": 3548,
+          "task_result_id": null,
+          "run_id": null,
+          "task_hash": null,
+          "delta": {
+            "delta": 0.0227,
+            "ci_low": 0.0101,
+            "ci_high": 0.0349,
+            "p_value": 0.004,
+            "n_shared": 3548,
+            "method": "paired_bootstrap",
+            "significant": true,
+            "improved": true,
+            "hash_mismatch": false,
+            "alpha": 0.05,
+            "n_boot": 2000,
+            "note": null
+          },
+          "children_missing": 0
+        }
+      ]
+    },
+    {
+      "key": "task:arc_easy:rc:olmo3base",
+      "kind": "task",
+      "name": "arc_easy:rc:olmo3base",
+      "depth": 1,
+      "parent": "arc:rc:olmo3base",
+      "aggregation": null,
+      "metric_key": "acc_per_char:default",
+      "meta": {
+        "higher_is_better": true,
+        "display_format": "percent",
+        "unit": null,
+        "kind": "binary"
+      },
+      "cells": [
+        {
+          "status": "ok",
+          "score": 0.792,
+          "stderr": 0.008,
+          "n": 2376,
+          "task_result_id": 3001,
+          "run_id": "7c1e9a0b42d8",
+          "task_hash": "9f8e7d6c5b4a0000",
+          "delta": null,
+          "children_missing": 0
+        },
+        {
+          "status": "ok",
+          "score": 0.812,
+          "stderr": 0.008,
+          "n": 2376,
+          "task_result_id": 4101,
+          "run_id": "a41f0c2d9e7b",
+          "task_hash": "9f8e7d6c5b4a0000",
+          "delta": {
+            "delta": 0.032,
+            "ci_low": 0.011,
+            "ci_high": 0.054,
+            "p_value": 0.004,
+            "n_shared": 2376,
+            "method": "paired_bootstrap",
+            "significant": true,
+            "improved": true,
+            "hash_mismatch": false,
+            "alpha": 0.05,
+            "n_boot": 2000,
+            "note": null
+          },
+          "children_missing": 0
+        }
+      ]
+    },
+    {
+      "key": "task:arc_challenge:rc:olmo3base",
+      "kind": "task",
+      "name": "arc_challenge:rc:olmo3base",
+      "depth": 1,
+      "parent": "arc:rc:olmo3base",
+      "aggregation": null,
+      "metric_key": "acc_per_char:default",
+      "meta": {
+        "higher_is_better": true,
+        "display_format": "percent",
+        "unit": null,
+        "kind": "binary"
+      },
+      "cells": [
+        {
+          "status": "ok",
+          "score": 0.591,
+          "stderr": 0.0142,
+          "n": 1172,
+          "task_result_id": 3002,
+          "run_id": "7c1e9a0b42d8",
+          "task_hash": "9f8e7d6c5b4a0001",
+          "delta": null,
+          "children_missing": 0
+        },
+        {
+          "status": "ok",
+          "score": 0.611,
+          "stderr": 0.0142,
+          "n": 1172,
+          "task_result_id": 4102,
+          "run_id": "a41f0c2d9e7b",
+          "task_hash": "9f8e7d6c5b4a0001",
+          "delta": {
+            "delta": 0.032,
+            "ci_low": 0.011,
+            "ci_high": 0.054,
+            "p_value": 0.004,
+            "n_shared": 1172,
+            "method": "paired_bootstrap",
+            "significant": true,
+            "improved": true,
+            "hash_mismatch": false,
+            "alpha": 0.05,
+            "n_boot": 2000,
+            "note": null
+          },
+          "children_missing": 0
+        }
+      ]
+    }
+  ],
+  "coverage": {
+    "n_subjects": 2,
+    "n_tasks": 2,
+    "complete": 4,
+    "missing": 0,
+    "failed": 0,
+    "hash_mismatch": 0
+  },
+  "mde80": 0.0153,
+  "alpha": 0.05,
+  "computed_at": "2026-10-01T16:05:00+00:00"
+}

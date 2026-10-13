@@ -79,7 +79,7 @@ def _cached_torch_backend_class() -> type:
     new K/V into the cache and run SDPA over the cached prefix.
 
     Scope (asserted): no sliding window, no context parallelism, no
-    intra-document masking. Queries at absolute positions ``pos..pos+T-1``
+    intra-document masking, no attention sinks. Queries at absolute positions ``pos..pos+T-1``
     attend keys ``0..pos+T-1`` causally; ``or_mask`` / ``and_mask`` (sized
     ``(B, 1, T, T)`` over the current forward's tokens) are aligned to the key
     axis by left-padding, which is exact for the prefill call (``pos == 0``,
@@ -120,8 +120,12 @@ def _cached_torch_backend_class() -> type:
             kv_cache_manager=None,
             or_mask=None,
             and_mask=None,
+            sinks=None,
         ):
             if kv_cache_manager is None:
+                # `sinks` exists only in OLMo-core builds whose attention backends take
+                # attention-sink logits; pass it through only when set, so older builds work.
+                sink_kwargs = {} if sinks is None else {"sinks": sinks}
                 return super().forward(
                     qkv,
                     cu_doc_lens=cu_doc_lens,
@@ -133,6 +137,7 @@ def _cached_torch_backend_class() -> type:
                     local_k_slice=local_k_slice,
                     or_mask=or_mask,
                     and_mask=and_mask,
+                    **sink_kwargs,
                 )
 
             if isinstance(qkv, torch.Tensor):
@@ -158,6 +163,10 @@ def _cached_torch_backend_class() -> type:
             if self.cp_enabled:
                 raise RuntimeError(
                     f"'{type(self).__name__}' doesn't support KV caching with context parallelism"
+                )
+            if sinks is not None:
+                raise RuntimeError(
+                    f"'{type(self).__name__}' doesn't support KV caching with attention sinks"
                 )
 
             q, k, v = qkv
