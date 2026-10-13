@@ -7,6 +7,8 @@ import logging
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
 from olmo_eval.common.metrics import AccuracyMetric
 from olmo_eval.common.types import (
     Function,
@@ -344,3 +346,28 @@ def test_overlapping_suite_members_count_each_task_once() -> None:
     assert counts is not None
     assert counts["generations"] == 15
     assert counts["cap_hit"] == 3
+
+
+@pytest.mark.parametrize("spec", ["sage_short_form", "sage_open_ended"])
+@pytest.mark.parametrize(
+    "text,expected_empty",
+    [("<think>target</think>  ", True), ("<think>target", True), ("answer<think>target", False)],
+)
+@pytest.mark.parametrize("has_tool_call", [False, True])
+def test_sage_empty_counts_match_its_scored_text(spec, text, expected_empty, has_tool_call):
+    from olmo_eval.evals.tasks.sage import make_gold
+
+    task = get_task(spec)
+    assert task.config.strip_thinking is False
+    response = _response((text, "stop"))
+    gold = make_gold("gold", "target")
+    response.instance.metadata.update({"gold": gold, "golds": [(gold, 1)]})
+    if has_tool_call:
+        response.outputs[0].tool_calls = [
+            ToolCall(id="call", function=Function(name="search", arguments="{}"))
+        ]
+    scored = asyncio.run(task.score_responses([response]))
+    counts = count_generations(scored)
+    assert counts is not None
+    assert counts["empty"] == int(expected_empty and not has_tool_call)
+    assert response.outputs[0].text == text

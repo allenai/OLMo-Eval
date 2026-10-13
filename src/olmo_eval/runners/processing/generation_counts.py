@@ -20,12 +20,7 @@ _THINK_CLOSE = "</think>"
 
 
 def count_generations(responses: Sequence[Response]) -> dict[str, int] | None:
-    """Count how a task's generated outputs ended; None if it generated nothing.
-
-    Call after thinking traces are stripped. ``unclosed_think`` sees only a
-    ``<think>`` the model wrote itself; a template-opened trace that is cut off
-    counts as ``cap_hit``, which is a lower bound when the finish reason is unknown.
-    """
+    """Count generation outcomes after scoring; None if there are no generations."""
     counts = dict.fromkeys(GENERATION_COUNT_KEYS, 0)
     for response in responses:
         if response.request.request_type == RequestType.LOGLIKELIHOOD:
@@ -41,7 +36,8 @@ def count_generations(responses: Sequence[Response]) -> dict[str, int] | None:
                 counts["finish_reason_unknown"] += 1
             elif finish_reason == "length":
                 counts["cap_hit"] += 1
-            if not text.strip() and not output.has_tool_calls:
+            empty = metadata.get("scoring_text_empty", not text.strip())
+            if empty and not output.has_tool_calls:
                 counts["empty"] += 1
             if raw.rfind(_THINK_OPEN) > raw.rfind(_THINK_CLOSE):
                 counts["unclosed_think"] += 1
