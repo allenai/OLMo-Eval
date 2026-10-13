@@ -134,7 +134,7 @@ class TestRegistration:
         assert domain_metrics
         for metric in domain_metrics:
             assert isinstance(metric, OmniscienceAccuracyMetric)
-            assert metric.pairwise_display_format() == "percentage"
+            assert metric.display_format() == "percentage"
 
     def test_every_metric_shares_one_judge(self, task):
         scorers = {id(metric.scorer()) for metric in task.config.metrics}
@@ -661,18 +661,22 @@ class TestInstanceMetrics:
         with pytest.raises(ValueError, match="<subset>__<category>__<metric>"):
             OmniscienceAccuracyMetric(name=name)
 
-    def test_pairwise_comparison_settings(self):
+    def test_comparison_settings(self):
         for metric in (
             OmniscienceIndexMetric(),
             HallucinationRateMetric(),
             OmniscienceAccuracyMetric(),
         ):
-            assert metric.supports_pairwise_scorer_fallback() is False
+            assert metric.supports_scorer_fallback() is False
 
-        assert OmniscienceIndexMetric().pairwise_higher_is_better() is True
-        assert OmniscienceAccuracyMetric().pairwise_higher_is_better() is True
-        assert HallucinationRateMetric().pairwise_higher_is_better() is False
-        assert HallucinationRateMetric().pairwise_display_format() == "percentage"
+        assert OmniscienceIndexMetric().higher_is_better() is True
+        assert OmniscienceAccuracyMetric().higher_is_better() is True
+        assert HallucinationRateMetric().higher_is_better() is False
+
+    def test_display_formats(self):
+        assert OmniscienceIndexMetric().display_format() == "raw"
+        assert OmniscienceAccuracyMetric().display_format() == "percentage"
+        assert HallucinationRateMetric().display_format() == "percentage"
 
 
 class TestEndToEnd:

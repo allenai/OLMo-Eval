@@ -953,5 +953,5 @@ class SafetyErrorMetric(Metric):
     def supports_scorer_fallback(self) -> bool:
         return False
 
-    def pairwise_higher_is_better(self) -> bool:
+    def higher_is_better(self) -> bool:
         return False

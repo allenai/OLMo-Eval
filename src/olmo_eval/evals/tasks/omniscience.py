@@ -376,7 +376,7 @@ class _OmniscienceMetric(Metric):
         """Whether the response belongs to the subset this metric covers."""
         return self.subset == "any" or response.instance.metadata.get(self.subset) == self.category
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False
 
 
@@ -412,10 +412,10 @@ class HallucinationRateMetric(_OmniscienceMetric):
         grade: float(grade == "INCORRECT") for grade in GRADES if grade != "CORRECT"
     }
 
-    def pairwise_higher_is_better(self) -> bool:
+    def higher_is_better(self) -> bool:
         return False
 
-    def pairwise_display_format(self) -> str:
+    def display_format(self) -> str:
         return "percentage"
 
 
@@ -434,6 +434,16 @@ class OmniscienceAccuracyMetric(_OmniscienceMetric):
 # =============================================================================
 
 
+def extract_final_answer(text: str) -> str:
+    """Return the answer after the model's reasoning, or an empty string if a trace is still open.
+
+    A ``<think>`` with no closing tag after it means the model never finished
+    reasoning, so it gave no final answer.
+    """
+    answer = extract_think_answer(text) or ""
+    return "" if "<think>" in answer else answer
+
+
 def _graded_by(metric: Metric, judge: OmniscienceScorer) -> Metric:
     """Return the metric with ``judge`` as its scorer if it grades with an Omniscience judge."""
     if isinstance(metric.scorer(), OmniscienceScorer):
@@ -449,7 +459,7 @@ class Omniscience(Task):
     split = Split.TRAIN
     sampling_params: SamplingParams = DEFAULT_SAMPLING
     formatter = ChatFormatter()
-    answer_extractor = extract_think_answer
+    answer_extractor = extract_final_answer
 
     def __init__(self, config: TaskConfig) -> None:
         """Build the task, grading with the config's judge settings when any are set.
