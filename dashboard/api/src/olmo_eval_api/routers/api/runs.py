@@ -195,8 +195,18 @@ async def list_runs(
             baseline_metadata = {key: cell for (_, key), (cell, _) in baseline_rows.items()}
             missing_columns = [column for column in columns if column[0] not in baseline_cells]
             if missing_columns:
+                fallback_defs = await load_defs(session)
+                fallback_columns = [
+                    column
+                    for column in missing_columns
+                    if column[1] != "suite"
+                    or column[2] not in fallback_defs
+                    or fallback_defs[column[2]][0] != "gap"
+                ]
                 baseline_cells.update(
-                    await baseline_column_sides(session, subject, missing_columns)
+                    await baseline_column_sides(
+                        session, subject, fallback_columns, suite_defs=fallback_defs
+                    )
                 )
         else:
             defs = await load_defs(session)

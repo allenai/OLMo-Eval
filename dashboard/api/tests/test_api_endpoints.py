@@ -929,8 +929,9 @@ async def test_runs_gap_baselines_use_stored_suite_versions(
 
 
 @pytest.mark.parametrize("aggregation", ["average", "gap"])
+@pytest.mark.parametrize("redefined_gap", [False, True])
 async def test_bare_task_baselines_retain_non_gap_suite_fallback(
-    client: httpx.AsyncClient, aggregation: str
+    client: httpx.AsyncClient, aggregation: str, redefined_gap: bool
 ) -> None:
     await seed_run(
         client,
@@ -939,12 +940,19 @@ async def test_bare_task_baselines_retain_non_gap_suite_fallback(
         suites=[suite("fallback", ["a", "b"], score=0.5, aggregation=aggregation)],
     )
     await seed_run(client, run_id="fallbackb01", tasks={"a": [0.4], "b": [0.4]}, suites=[])
+    if redefined_gap:
+        await seed_run(
+            client,
+            run_id="fallbacknew01",
+            tasks={"a": [0.7], "b": [0.7]},
+            suites=[suite("fallback", ["a", "b"], score=0.7, aggregation="gap")],
+        )
     result = await get(
         client, "/api/runs", "RunsListResponse", cols="suite:fallback", baseline="r:fallbackb01"
     )
     row = next(row for row in result["items"] if row["run_id"] == "fallbacka01")
     delta = row["scores"]["suite:fallback"]["delta"]
-    if aggregation == "gap":
+    if aggregation == "gap" or redefined_gap:
         assert delta is None
     else:
         assert delta["delta"] == pytest.approx(0.1)
