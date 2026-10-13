@@ -1001,7 +1001,7 @@ async def test_gap_comparisons_and_ranking_use_companion_metadata(
         await seed_run(
             client,
             run_id=run_id,
-            tasks={"in": [1.0] * 8, "out": [score] * 8},
+            tasks={"in": [1.0] * 32, "out": [score] * 32},
             suites=[suite("metapair", ["in", "out"], score=score, aggregation="gap")],
         )
     await session.execute(
@@ -1019,6 +1019,7 @@ async def test_gap_comparisons_and_ranking_use_companion_metadata(
     assert aggregate["meta"]["display_format"] == "percent"
     assert aggregate["meta"]["higher_is_better"] is False
     pairwise = await post(client, "/api/compare/pairwise", request, "PairwiseResponse")
+    assert pairwise["higher_is_better"] is False
     assert pairwise["subjects"][0]["key"] == subjects[0]
     assert pairwise["display_format"] == "percent"
     leaderboard = await get(
