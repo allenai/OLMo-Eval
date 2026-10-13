@@ -51,6 +51,7 @@ describe("pages", () => {
   it("Run tasks and config tabs render", async () => {
     renderAt(`/runs/${runId}?tab=tasks`);
     await waitFor(() => expect(screen.getAllByText("gsm8k:cot:olmo3").length).toBeGreaterThan(0), { timeout: 5000 });
+    expect(screen.getAllByText("gsm8k:cot:olmo3")[0].closest('[role="row"]')).toHaveStyle({ height: "30px" });
   });
 
   it("Compare heatmap renders the group's subjects", async () => {

@@ -325,7 +325,7 @@ export function TasksTab(ctx: RunCtx) {
       <Panel pad="none" refetching={ctx.tasks.isFetching && !ctx.tasks.isLoading}>
         <DataTable
           tableId="run-tasks"
-          rowHeight={72}
+          rowHeight={rows.some((row) => row.generation_counts || row.baseline?.generation_counts) ? 72 : undefined}
           columns={columns}
           rows={rows}
           getRowId={(r) => String(r.task_result_id)}
