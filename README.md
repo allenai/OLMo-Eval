@@ -200,7 +200,7 @@ register(Suite(
 
 A gap suite is omitted unless both tasks scored on the same primary metric, and it cannot be nested in another suite.
 
-The held-out companion score is the value to rank and optimize. The gap is a diagnostic guard, shown in percentage points in the log summary; reducing the reference score never improves the suite's primary score.
+The held-out companion score is the value to rank and optimize. The gap is a diagnostic guard, shown in percentage points in the log summary; reducing the reference score never improves the suite's primary score. In `metrics.json`, `suite_metrics["omega:dev"]["primary_score"]` retains `reference`, `companion`, and `gap`; `summary` selects the companion.
 
 ### Formatters
 

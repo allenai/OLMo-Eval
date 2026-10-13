@@ -439,12 +439,15 @@ def stratified_pairs(
     max_pair_resamples: int | None = None,
     block_cells: int | None = None,
     corpus_weight_fn: Any = None,
+    qualifying_weight_fn: Any = None,
 ) -> dict[tuple[str, str], PairAccumulator]:
     """Combine per-task bootstrap means across tasks for each (row, col) subject pair.
 
     ``tasks`` lists (task_name, {subject: Side}). ``weight_fn(qualifying_task_names)`` returns
     task weights summing to 1. Tasks qualify for a pair when both sides are per-instance means
-    with at least MIN_SHARED shared instances.
+    with at least MIN_SHARED shared instances. An optional ``qualifying_weight_fn`` receives
+    qualifying names and names with corpus scores on both sides, so corpus completeness and
+    bootstrap eligibility can be evaluated separately.
 
     Pair columns are processed in blocks (``column_blocks``), so peak memory does not grow with
     the number of pairs. ``max_work`` caps the sum over tasks of pairs x union instances x
@@ -470,13 +473,16 @@ def stratified_pairs(
             if plan_pair(a, b).method == "paired_bootstrap":
                 qualifying[p].append(task_name)
     for p in pairs:
-        acc[p].weights = weight_fn(qualifying[p]) if qualifying[p] else {}
+        present = [
+            task
+            for task, score in acc[p].corpus_a.items()
+            if score is not None and acc[p].corpus_b.get(task) is not None
+        ]
+        if qualifying_weight_fn is not None:
+            acc[p].weights = qualifying_weight_fn(qualifying[p], present)
+        else:
+            acc[p].weights = weight_fn(qualifying[p]) if qualifying[p] else {}
         if corpus_weight_fn is not None:
-            present = [
-                task
-                for task, score in acc[p].corpus_a.items()
-                if score is not None and acc[p].corpus_b.get(task) is not None
-            ]
             acc[p].corpus_weights = corpus_weight_fn(present)
 
     work: list[tuple[str, Mapping[str, Side], list[tuple[str, str]], np.ndarray]] = []

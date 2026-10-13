@@ -337,3 +337,18 @@ def test_primary_gap_metrics_come_from_one_complete_subject() -> None:
         "in": "chosen",
         "out": "chosen",
     }
+
+
+@pytest.mark.parametrize(
+    "metrics,expected",
+    [(("strict", "strict"), "strict"), (("strict", "flex"), None), (("strict", None), None)],
+)
+def test_gap_baseline_metric_identity_requires_a_complete_shared_primary(metrics, expected):
+    from olmo_eval_api.routers.api.runs import gap_metric_identity
+
+    tasks = {
+        name: {"score": 0.0, "primary_metric": metric}
+        for name, metric in zip(("in", "out"), metrics, strict=True)
+    }
+    assert gap_metric_identity(tasks, ["in", "out"]) == expected
+    assert gap_metric_identity({"out": tasks["out"]}, ["in", "out"]) is None

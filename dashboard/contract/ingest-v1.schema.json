@@ -1519,7 +1519,8 @@
           ]
         },
         "metrics": {
-          "$ref": "#/definitions/NestedMetrics"
+          "$ref": "#/definitions/NestedMetrics",
+          "description": "A gap suite retains primary_score reference, companion, and gap diagnostics."
         },
         "name": {
           "type": "string"
@@ -1549,7 +1550,7 @@
           ]
         },
         "score": {
-          "description": "Suite primary score, null for display_only/none.",
+          "description": "Suite primary score; the held-out companion for gap, null for display_only/none or an incomplete gap.",
           "type": [
             "number",
             "null"

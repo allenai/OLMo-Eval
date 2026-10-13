@@ -30,6 +30,7 @@ from olmo_eval_api.services.queries import (
 from olmo_eval_api.services.read_suites import load_defs, score_suite, tree
 from olmo_eval_api.services.search_text import SEARCH_TEXT_SQL
 from olmo_eval_api.services.subjects import resolve_one
+from olmo_eval_api.services.suites import leaves
 from olmo_eval_api.stats.paired import Side, unpaired
 
 from .deps import SessionDep, UserDep
@@ -171,11 +172,15 @@ async def list_runs(
         next_cursor = encode_cursor([last["sort_value"], last["run_id"]])
 
     meta = await column_meta(session, columns)
-    scores = await page_scores(session, [r["run_id"] for r in rows], columns)
+    scores = await page_scores(
+        session, [r["run_id"] for r in rows], columns, check_metrics=bool(baseline)
+    )
     baseline_info = None
     baseline_cells: dict[str, Side] = {}
+    baseline_subject = None
     if baseline:
         subject = await resolve_one(session, baseline)
+        baseline_subject = subject
         baseline_info = subject.info()
         baseline_cells = await baseline_column_sides(session, subject, columns)
     items = []
@@ -186,7 +191,15 @@ async def list_runs(
             side = cell[1] if cell else None
             delta = None
             base = baseline_cells.get(m.key)
-            if base is not None and side is not None:
+            compatible = True
+            if cell is not None and "_gap_names" in cell[0]:
+                compatible = (
+                    baseline_subject is not None
+                    and cell[0]["_gap_metric"] is not None
+                    and gap_metric_identity(baseline_subject.trs, cell[0]["_gap_names"])
+                    == cell[0]["_gap_metric"]
+                )
+            if compatible and base is not None and side is not None:
                 delta = a.DeltaStats(**unpaired(side, base, 0.05, m.higher_is_better).as_dict())
             values[m.key] = (
                 a.ScoreColumnValue(
@@ -207,8 +220,28 @@ async def list_runs(
     )
 
 
+def gap_metric_identity(tasks: Mapping[str, Mapping[Any, Any]], names: Sequence[str]) -> str | None:
+    if len(names) != 2:
+        return None
+    metrics = set()
+    for name in names:
+        task = tasks.get(name)
+        if (
+            task is None
+            or task.get("score") is None
+            or not isinstance(task.get("primary_metric"), str)
+        ):
+            return None
+        metrics.add(task["primary_metric"])
+    return next(iter(metrics)) if len(metrics) == 1 else None
+
+
 async def page_scores(
-    session: Any, run_ids: list[str], columns: list[tuple[str, str, str]]
+    session: Any,
+    run_ids: list[str],
+    columns: list[tuple[str, str, str]],
+    *,
+    check_metrics: bool = False,
 ) -> dict[tuple[str, str], tuple[dict[str, Any], Side]]:
     out: dict[tuple[str, str], tuple[dict[str, Any], Side]] = {}
     tasks = [n for _, k, n in columns if k == "task"]
@@ -251,6 +284,31 @@ async def page_scores(
             }
             side = Side(r["suite_name"], None, r["score"], r["stderr"], False)
             out[(r["run_id"], f"suite:{r['suite_name']}")] = (cell, side)
+    if suites and check_metrics:
+        defs = await load_defs(session)
+        gaps = {
+            f"suite:{name}": leaves(tree(name, defs))
+            for name in suites
+            if name in defs and defs[name][0] == "gap"
+        }
+        names = sorted({name for members in gaps.values() for name in members})
+        if names:
+            metric_rows = await session.execute(
+                text(
+                    "SELECT DISTINCT ON (run_id, task_name) run_id, task_name, "
+                    "primary_metric, score "
+                    "FROM task_results WHERE run_id = ANY(:r) AND task_name = ANY(:t) "
+                    "ORDER BY run_id, task_name, updated_at DESC, id DESC"
+                ),
+                {"r": run_ids, "t": names},
+            )
+            by_run: dict[str, dict[str, Any]] = {}
+            for row in metric_rows.mappings():
+                by_run.setdefault(row["run_id"], {})[row["task_name"]] = row
+            for (run_id, key), (cell, _) in out.items():
+                if key in gaps:
+                    cell["_gap_names"] = gaps[key]
+                    cell["_gap_metric"] = gap_metric_identity(by_run.get(run_id, {}), gaps[key])
     return out
 
 

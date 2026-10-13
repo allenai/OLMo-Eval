@@ -92,6 +92,7 @@ def leaf_weights(
     present: set[str],
     *,
     metric_keys: Mapping[str, str | None] | None = None,
+    score_present: set[str] | None = None,
 ) -> dict[str, float]:
     """Weights over present leaves summing to 1 (empty when no leaf is present).
 
@@ -108,7 +109,8 @@ def leaf_weights(
         return {node.name: 1.0} if node.name in present else {}
     if node.aggregation == "gap":
         names = leaves(node)
-        if len(names) != 2 or not set(names).issubset(present):
+        scored = present if score_present is None else score_present
+        if len(names) != 2 or names[1] not in present or not set(names).issubset(scored):
             return {}
         if metric_keys is not None:
             metrics = {metric_keys.get(name) for name in names}

@@ -19,6 +19,14 @@ from olmo_eval.runners.processing.utils import get_primary_metric
 logger = get_logger("runners.metrics")
 
 
+def _suite_metrics(results: dict[str, Any]) -> dict[str, Any]:
+    return {
+        name: data["metrics"]
+        for name, data in results.get("suites", {}).items()
+        if data.get("metrics")
+    }
+
+
 def build_single_model_metrics(
     results: dict[str, Any],
     experiment_id: str | None = None,
@@ -108,6 +116,7 @@ def build_single_model_metrics(
                 summary[suite_name] = ScoreSummary(metric=metric_scorer, score=score)
 
     return MetricsOutput(
+        suite_metrics=_suite_metrics(results) or None,
         timestamp=results.get("timestamp", ""),
         config=config_dict,
         tasks=[t.to_dict() for t in tasks_list],
@@ -207,6 +216,12 @@ def build_multi_model_metrics(
                     )
 
     return MetricsOutput(
+        suite_metrics={
+            name: metrics
+            for name, data in results.get("models", {}).items()
+            if (metrics := _suite_metrics(data))
+        }
+        or None,
         timestamp=results.get("timestamp", ""),
         config={"models": models_config},
         tasks=[t.to_dict() for t in tasks_list],

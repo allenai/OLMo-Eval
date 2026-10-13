@@ -237,6 +237,7 @@ def suite_delta(
         tasks,
         [("a", "b")],
         lambda names: leaf_weights(node, n_inst, set(names)),
+        qualifying_weight_fn=lambda q, p: leaf_weights(node, n_inst, set(q), score_present=set(p)),
         alpha=stats.alpha,
         n_boot=stats.n_boot,
         seed=stats.seed,
@@ -309,7 +310,7 @@ async def run_suites(
     }
     defs = {**(await load_defs(session)), **stored_defs}
     key = cache_key(
-        "run-suites-v2",
+        "run-suites-v3",
         {"run_id": run_id, "baseline": baseline, **stats.__dict__},
         trs_list + (list(subject.trs.values()) if subject else []),
         definition_hashes([tree(r["suite_name"], defs) for r in ordered], defs),

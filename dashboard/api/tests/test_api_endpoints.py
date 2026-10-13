@@ -260,6 +260,11 @@ async def test_gap_run_baselines_use_the_runs_metric(
         client, "/api/runs/strict001/suites", "RunSuitesResponse", baseline="r:flexible001"
     )
     baseline = body["items"][0]["baseline"]
+    listed = await get(
+        client, "/api/runs", "RunsListResponse", cols="suite:pair", baseline="r:flexible001"
+    )
+    strict = next(row for row in listed["items"] if row["run_id"] == "strict001")
+    assert strict["scores"]["suite:pair"]["delta"] is None
     if common_metric:
         assert baseline["score"] == 0.4
         assert baseline["delta"]["delta"] == pytest.approx(0.1)

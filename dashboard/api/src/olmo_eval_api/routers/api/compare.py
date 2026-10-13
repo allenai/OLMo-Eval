@@ -239,7 +239,7 @@ async def compare_matrix(
     if is_runtime_metric(body.metric):
         # No bootstraps, so nothing worth caching.
         return await _runtime_matrix(session, body, subjects, baseline, rows, stats.alpha)
-    ckey = cache_key("matrix-v2", request, used, scope_hashes(node, defs))
+    ckey = cache_key("matrix-v3", request, used, scope_hashes(node, defs))
     cached = await get_cached(session, ckey, a.MatrixResponse)
     if cached is not None:
         return cached.model_copy(update={"subjects": live_subjects(cached.subjects, by_key)})
@@ -440,6 +440,9 @@ def _matrix_suite_row(
             tasks,
             [(k, baseline.key) for k in others],
             lambda q: leaf_weights(node, n_inst, set(q), metric_keys=metric_keys),
+            qualifying_weight_fn=lambda q, p: leaf_weights(
+                node, n_inst, set(q), metric_keys=metric_keys, score_present=set(p)
+            ),
             alpha=stats.alpha,
             n_boot=stats.n_boot,
             seed=stats.seed,
@@ -710,7 +713,7 @@ async def compare_pairwise(
         raise bad_request("margin must be >= 0")
     used = [tr for s in subjects for tr in s.trs.values()]
     rows, node, defs = await resolve_scope(session, body.scope, subjects)
-    ckey = cache_key("pairwise-v2", body.model_dump(mode="json"), used, scope_hashes(node, defs))
+    ckey = cache_key("pairwise-v3", body.model_dump(mode="json"), used, scope_hashes(node, defs))
     cached = await get_cached(session, ckey, a.PairwiseResponse)
     if cached is not None:
         by_key = {s.key: s for s in subjects}
@@ -771,6 +774,11 @@ async def compare_pairwise(
             max_work=MAX_PAIRWISE_WORK,
             max_pair_resamples=MAX_PAIR_RESAMPLES,
             corpus_weight_fn=weight_fn,
+            qualifying_weight_fn=lambda q, p: (
+                leaf_weights(node, n_inst, set(q), metric_keys=metric_keys, score_present=set(p))
+                if node is not None
+                else weight_fn(q)
+            ),
         )
     )
     pair_out: list[a.PairStats] = []

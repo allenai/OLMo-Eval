@@ -1372,6 +1372,37 @@ class TestGapSuiteAggregation:
         assert "+200.00" not in output
         assert " pp" not in output
 
+    def test_json_keeps_reference_companion_and_gap(self):
+        from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
+        from olmo_eval.runners.processing.metrics import (
+            build_multi_model_metrics,
+            build_single_model_metrics,
+        )
+
+        tasks = {"task_in": self._task(0.6), "task_out": self._task(0.45)}
+        results = {"tasks": tasks, "suites": compute_suite_aggregations([self.SUITE], tasks)}
+        single = build_single_model_metrics(results).to_dict()
+        multi = build_multi_model_metrics({"models": {"m": results}}).to_dict()
+        for metrics in (
+            single["suite_metrics"][self.SUITE],
+            multi["suite_metrics"]["m"][self.SUITE],
+        ):
+            assert metrics["primary_score"] == pytest.approx(
+                {"reference": 0.6, "companion": 0.45, "gap": -0.15}
+            )
+        assert single["summary"][self.SUITE]["metric"] == "primary_score:companion"
+
+    def test_registered_omega_gap_logs_percentage_points_without_synthetic_metadata(self, capsys):
+        from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
+        from olmo_eval.runners.processing.metrics import log_summary
+
+        tasks = {"omega_500:hillclimb": self._task(0.6), "omega_500_out": self._task(0.45)}
+        for data in tasks.values():
+            data.pop("metric_meta")
+        suites = compute_suite_aggregations(["omega:dev"], tasks)
+        log_summary({"tasks": tasks, "suites": suites})
+        assert "-15.00 pp)" in capsys.readouterr().out
+
 
 class TestGetPrimaryMetric:
     """Tests for get_primary_metric function.
