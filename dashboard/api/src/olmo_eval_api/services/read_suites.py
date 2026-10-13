@@ -29,7 +29,7 @@ def suite_generation_counts(
     total: dict[str, int] = {}
     for name in leaves(node):
         task = tasks.get(name)
-        if task is None or not task.get("metrics") or task.get("error"):
+        if task is None or task.get("score") is None:
             continue
         counts = task.get("generation_counts")
         if counts is not None:

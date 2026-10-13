@@ -189,13 +189,21 @@ def test_aggregate_and_stderr() -> None:
     assert propagate_stderr({"a": 1.0}, {"a": None}) is None
 
 
-def test_suite_generation_counts_sum_members_and_omit_failed_or_legacy_results() -> None:
+def test_suite_generation_counts_match_scored_members_and_omit_legacy_counts() -> None:
     from olmo_eval_api.services.read_suites import suite_generation_counts
 
     tasks = {
-        "a": {"metrics": {"acc:x": 0.5}, "generation_counts": {"generations": 4, "cap_hit": 2}},
+        "a": {
+            "score": 0.5,
+            "metrics": {"acc:x": 0.5},
+            "generation_counts": {"generations": 4, "cap_hit": 2},
+        },
         "b": {"metrics": {}, "error": "failed", "generation_counts": {"generations": 50}},
-        "gen": {"metrics": {"acc:x": 0.5}, "generation_counts": {"generations": 6, "empty": 1}},
+        "gen": {
+            "score": 0.5,
+            "metrics": {"acc:x": 0.5},
+            "generation_counts": {"generations": 6, "empty": 1},
+        },
         "outside": {"metrics": {"acc:x": 1.0}, "generation_counts": {"generations": 99}},
     }
     node = build_tree("root", DEFS)
@@ -211,3 +219,27 @@ def test_quantile_box_uses_mean_when_sent() -> None:
     assert box is not None and box.mean == 3.0
     box = _quantile_box({**q, "mean": 3.5})
     assert box is not None and box.mean == 3.5
+
+
+def test_suite_counts_include_derived_scores_even_without_corpus_metrics_or_with_errors() -> None:
+    from olmo_eval_api.services.read_suites import suite_generation_counts
+
+    node = build_tree(
+        "derived",
+        {
+            "derived": (
+                "average",
+                [
+                    {"type": "task", "name": "a"},
+                    {"type": "task", "name": "b"},
+                    {"type": "task", "name": "c"},
+                ],
+            )
+        },
+    )
+    tasks = {
+        "a": {"score": 0.5, "metrics": {}, "generation_counts": {"generations": 4}},
+        "b": {"score": 0.6, "error": "partial", "generation_counts": {"generations": 6}},
+        "c": {"score": None, "metrics": {"acc:x": 0.5}, "generation_counts": {"generations": 99}},
+    }
+    assert suite_generation_counts(node, tasks) == {"generations": 10}
