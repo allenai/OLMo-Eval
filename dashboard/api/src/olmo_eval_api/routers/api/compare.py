@@ -134,8 +134,10 @@ def scope_metric_keys(
     subjects: Sequence[Subject],
     baseline: Subject | None,
     node: SuiteNode | None,
+    *,
+    require_gap_anchor: bool = True,
 ) -> dict[str, str | None]:
-    """Select comparison metrics, choosing a gap pair from one complete subject."""
+    """Select metrics for task rows or aggregates using complete GAP pairs."""
     keys = {task: row_metric(task, metric, subjects, baseline) for task in tasks}
     if metric != "primary" or node is None:
         return keys
@@ -144,7 +146,8 @@ def scope_metric_keys(
     def walk(suite: SuiteNode) -> None:
         if suite.aggregation == "gap":
             names = leaves(suite)
-            keys.update(dict.fromkeys(names))
+            if require_gap_anchor:
+                keys.update(dict.fromkeys(names))
             for subject in order:
                 if not all(name in subject.trs for name in names):
                     continue
@@ -240,13 +243,16 @@ async def compare_matrix(
     if is_runtime_metric(body.metric):
         # No bootstraps, so nothing worth caching.
         return await _runtime_matrix(session, body, subjects, baseline, rows, stats.alpha)
-    ckey = cache_key("matrix-v3", request, used, scope_hashes(node, defs))
+    ckey = cache_key("matrix-v4", request, used, scope_hashes(node, defs))
     cached = await get_cached(session, ckey, a.MatrixResponse)
     if cached is not None:
         return cached.model_copy(update={"subjects": live_subjects(cached.subjects, by_key)})
 
     task_names = list(dict.fromkeys(r.name for r in rows if r.kind == "task"))
-    metric_keys = scope_metric_keys(task_names, body.metric, subjects, baseline, node)
+    metric_keys = scope_metric_keys(
+        task_names, body.metric, subjects, baseline, node, require_gap_anchor=False
+    )
+    suite_metric_keys = scope_metric_keys(task_names, body.metric, subjects, baseline, node)
     loader = SideLoader(session)
     for t in task_names:
         for s in subjects:
@@ -281,7 +287,7 @@ async def compare_matrix(
                 assert spec.node is not None
                 out_rows.append(
                     _matrix_suite_row(
-                        spec, subjects, baseline, sides, body, stats, metric_keys=metric_keys
+                        spec, subjects, baseline, sides, body, stats, metric_keys=suite_metric_keys
                     )
                 )
 
@@ -720,14 +726,17 @@ async def compare_pairwise(
         raise bad_request("margin must be >= 0")
     used = [tr for s in subjects for tr in s.trs.values()]
     rows, node, defs = await resolve_scope(session, body.scope, subjects)
-    ckey = cache_key("pairwise-v3", body.model_dump(mode="json"), used, scope_hashes(node, defs))
+    ckey = cache_key("pairwise-v4", body.model_dump(mode="json"), used, scope_hashes(node, defs))
     cached = await get_cached(session, ckey, a.PairwiseResponse)
     if cached is not None:
         by_key = {s.key: s for s in subjects}
         return cached.model_copy(update={"subjects": live_subjects(cached.subjects, by_key)})
 
     task_names = list(dict.fromkeys(r.name for r in rows if r.kind == "task"))
-    metric_keys = scope_metric_keys(task_names, body.metric, subjects, None, node)
+    metric_keys = scope_metric_keys(
+        task_names, body.metric, subjects, None, node, require_gap_anchor=False
+    )
+    suite_metric_keys = scope_metric_keys(task_names, body.metric, subjects, None, node)
     loader = SideLoader(session)
     for t in task_names:
         for s in subjects:
@@ -760,7 +769,7 @@ async def compare_pairwise(
     if node is not None:
 
         def weight_fn(names: Sequence[str]) -> dict[str, float]:
-            return leaf_weights(node, n_inst, set(names), metric_keys=metric_keys)
+            return leaf_weights(node, n_inst, set(names), metric_keys=suite_metric_keys)
     else:
 
         def weight_fn(names: Sequence[str]) -> dict[str, float]:
@@ -782,7 +791,9 @@ async def compare_pairwise(
             max_pair_resamples=MAX_PAIR_RESAMPLES,
             corpus_weight_fn=weight_fn,
             qualifying_weight_fn=lambda q, p: (
-                leaf_weights(node, n_inst, set(q), metric_keys=metric_keys, score_present=set(p))
+                leaf_weights(
+                    node, n_inst, set(q), metric_keys=suite_metric_keys, score_present=set(p)
+                )
                 if node is not None
                 else weight_fn(q)
             ),

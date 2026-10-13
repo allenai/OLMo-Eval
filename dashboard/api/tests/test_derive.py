@@ -453,3 +453,90 @@ def test_gap_metric_selection_requires_a_complete_primary_pair() -> None:
         "in": None,
         "out": None,
     }
+
+
+@pytest.mark.parametrize("out_metric,out_score", [("flex", 0.4), ("strict", None)])
+def test_incomplete_gap_keeps_individual_task_matrix_scores(out_metric, out_score) -> None:
+    from olmo_eval_api.routers.api.compare import (
+        RowSpec,
+        _matrix_suite_row,
+        _matrix_task_row,
+        scope_metric_keys,
+    )
+    from olmo_eval_api.schemas.api import MatrixRequest
+    from olmo_eval_api.services.subjects import Subject
+    from olmo_eval_api.stats.paired import Side
+
+    node = build_tree(
+        "pair", {"pair": ("gap", [{"type": "task", "name": "in"}, {"type": "task", "name": "out"}])}
+    )
+    subject = Subject(
+        "r:model001",
+        "run",
+        {},
+        {"run_id": "model001"},
+        trs={
+            name: {
+                "id": i,
+                "run_id": "model001",
+                "task_hash": "hash",
+                "primary_metric": metric,
+                "score": score,
+                "stderr": 0.02,
+                "num_instances": 500,
+                "error": None,
+                "metric_meta": None,
+                "metric_kind": "bounded",
+                "display_format": "percent",
+                "higher_is_better": True,
+            }
+            for i, (name, metric, score) in enumerate(
+                [("in", "strict", 0.5), ("out", out_metric, out_score)], start=1
+            )
+        },
+    )
+    task_keys = scope_metric_keys(
+        ["in", "out"], "primary", [subject], None, node, require_gap_anchor=False
+    )
+    suite_keys = scope_metric_keys(["in", "out"], "primary", [subject], None, node)
+    assert task_keys == {"in": "strict", "out": out_metric}
+    assert suite_keys == {"in": None, "out": None}
+    sides = {
+        name: {subject.key: Side(name, "hash", tr["score"], 0.02, False)}
+        for name, tr in subject.trs.items()
+    }
+    body = MatrixRequest(subjects=[subject.key], scope="suite:pair", metric="primary")
+    coverage = dict.fromkeys(["complete", "missing", "failed", "hash_mismatch"], 0)
+    for name, tr in subject.trs.items():
+        if tr["score"] is None:
+            continue
+        row = _matrix_task_row(
+            RowSpec(f"task:{name}", "task", name, 1, "suite:pair"),
+            [subject],
+            None,
+            sides[name],
+            task_keys[name],
+            body,
+            None,
+            False,
+            [],
+            coverage,
+        )
+        assert row.cells[0].score == tr["score"]
+        assert row.cells[0].status == "ok"
+        assert row.metric_key == tr["primary_metric"]
+        assert row.meta is not None and row.meta.display_format == "percent"
+    assert coverage["missing"] == 0
+    suite_row = _matrix_suite_row(
+        RowSpec("suite:pair", "suite", "pair", 0, None, "gap", node),
+        [subject],
+        None,
+        sides,
+        body,
+        None,
+        metric_keys=suite_keys,
+    )
+    assert suite_row.cells[0].score is None
+    assert suite_row.cells[0].status == "partial"
+    assert suite_row.cells[0].delta is None
+    assert leaf_weights(node, {}, {"in", "out"}, metric_keys=suite_keys) == {}
