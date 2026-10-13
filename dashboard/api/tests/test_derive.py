@@ -189,6 +189,20 @@ def test_aggregate_and_stderr() -> None:
     assert propagate_stderr({"a": 1.0}, {"a": None}) is None
 
 
+def test_suite_generation_counts_sum_members_and_omit_failed_or_legacy_results() -> None:
+    from olmo_eval_api.services.read_suites import suite_generation_counts
+
+    tasks = {
+        "a": {"metrics": {"acc:x": 0.5}, "generation_counts": {"generations": 4, "cap_hit": 2}},
+        "b": {"metrics": {}, "error": "failed", "generation_counts": {"generations": 50}},
+        "gen": {"metrics": {"acc:x": 0.5}, "generation_counts": {"generations": 6, "empty": 1}},
+        "outside": {"metrics": {"acc:x": 1.0}, "generation_counts": {"generations": 99}},
+    }
+    node = build_tree("root", DEFS)
+    assert suite_generation_counts(node, tasks) == {"generations": 10, "cap_hit": 2, "empty": 1}
+    assert suite_generation_counts(node, {"a": {"metrics": {"acc:x": 0.5}}}) is None
+
+
 def test_quantile_box_uses_mean_when_sent() -> None:
     from olmo_eval_api.routers.api.run_tabs import _quantile_box
 

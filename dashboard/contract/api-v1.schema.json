@@ -5577,6 +5577,20 @@
         "display_format": {
           "$ref": "#/definitions/DisplayFormat"
         },
+        "generation_counts": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/definitions/Count"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Summed diagnostics from the suite's contributing task results."
+        },
         "higher_is_better": {
           "type": [
             "boolean",

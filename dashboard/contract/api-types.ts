@@ -521,6 +521,8 @@ export interface SuiteBaselineCell {
 }
 
 export interface SuiteResultRow {
+    /** Summed diagnostics from the suite's contributing task results. */
+    generation_counts?: { [count: string]: Count } | null;
     name: string;
     parent: string | null;
     depth: Count;

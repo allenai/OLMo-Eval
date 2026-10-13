@@ -247,6 +247,33 @@ async def test_generation_counts_are_readable_without_instance_rows(
     assert body["items"][0]["instances_stored"] == 0
 
 
+async def test_suite_rows_report_member_generation_counts(
+    client: httpx.AsyncClient, session: Any
+) -> None:
+    run_id = "suitecounts01"
+    await seed_run(
+        client,
+        run_id=run_id,
+        tasks={"t1": [1.0], "t2": [0.0], "outside": [1.0]},
+        suites=[suite("counted", ["t1", "t2"], score=0.5)],
+    )
+    for name, counts in (
+        ("t1", {"generations": 4, "cap_hit": 2}),
+        ("t2", {"generations": 6, "empty": 1}),
+        ("outside", {"generations": 99}),
+    ):
+        await session.execute(
+            text(
+                "UPDATE task_results SET generation_counts = CAST(:counts AS jsonb) "
+                "WHERE run_id = :run AND task_name = :task"
+            ),
+            {"counts": json.dumps(counts), "run": run_id, "task": name},
+        )
+    await session.commit()
+    body = await get(client, f"/api/runs/{run_id}/suites", "RunSuitesResponse")
+    assert body["items"][0]["generation_counts"] == {"generations": 10, "cap_hit": 2, "empty": 1}
+
+
 async def test_run_task_results_with_baseline(client: httpx.AsyncClient, seeded: dict) -> None:
     run_id = seeded["step3000"]
     body = await get(client, f"/api/runs/{run_id}/task-results", "RunTaskResultsResponse")

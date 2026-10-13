@@ -27,7 +27,13 @@ from olmo_eval_api.services.queries import (
     model_ref,
     run_summary,
 )
-from olmo_eval_api.services.read_suites import definition_hashes, load_defs, score_suite, tree
+from olmo_eval_api.services.read_suites import (
+    definition_hashes,
+    load_defs,
+    score_suite,
+    suite_generation_counts,
+    tree,
+)
 from olmo_eval_api.services.runtime import RunTiming, derive_runtime, load_run_timings
 from olmo_eval_api.services.subjects import (
     TR_COLUMNS,
@@ -371,6 +377,7 @@ async def run_suites(
                 n_instances=int(r["n_instances"] or 0),
                 display_format=r["display_format"],
                 higher_is_better=r["higher_is_better"],
+                generation_counts=suite_generation_counts(node, run_trs),
                 tasks_missing=list(r["tasks_missing"] or []),
                 baseline=base_cell,
             )

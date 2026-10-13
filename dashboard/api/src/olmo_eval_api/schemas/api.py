@@ -1025,6 +1025,7 @@ class SuiteResultRow(_Response):
     depth: int
     description: str | None
     display_format: DisplayFormat
+    generation_counts: dict[str, int] | None = Field(default=None)
     higher_is_better: bool | None
     n_instances: int
     name: str
