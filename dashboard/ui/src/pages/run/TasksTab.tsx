@@ -125,10 +125,10 @@ export function TasksTab(ctx: RunCtx) {
         id: "base",
         header: "Base",
         title: "Baseline score",
-        width: 80,
+        width: 190,
         align: "right",
         sortValue: (r) => r.baseline?.score,
-        cell: (r) => (r.baseline ? <ScoreValue score={r.baseline.score} format={scoreFormat(r)} showStderr={false} muted /> : <span className="faint">—</span>),
+        cell: (r) => (r.baseline ? <ScoreValue score={r.baseline.score} format={scoreFormat(r)} showStderr={false} muted generationCounts={r.baseline.generation_counts} /> : <span className="faint">—</span>),
         csv: (r) => r.baseline?.score,
       },
       {

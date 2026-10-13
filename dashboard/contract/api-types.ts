@@ -450,6 +450,8 @@ export interface TaskRuntime {
 // ---------------------------------------------------------------------------
 
 export interface BaselineCell {
+    /** Generation diagnostics for the baseline task or suite. */
+    generation_counts?: { [count: string]: Count } | null;
     task_result_id: TaskResultId;
     run_id: RunId;
     task_hash: string;
@@ -515,6 +517,8 @@ export interface RunTaskResultsResponse {
 // ---------------------------------------------------------------------------
 
 export interface SuiteBaselineCell {
+    /** Generation diagnostics for the baseline task or suite. */
+    generation_counts?: { [count: string]: Count } | null;
     score: number | null;
     stderr: number | null;
     delta: DeltaStats;

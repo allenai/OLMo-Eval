@@ -110,7 +110,7 @@ async def run_task_results_endpoint(
         subject = await resolve_one(session, baseline)
     used = list(trs) + (list(subject.trs.values()) if subject else [])
     key = cache_key(
-        "run-task-results",
+        "run-task-results-v2",
         {"run_id": run_id, "baseline": baseline, **stats.__dict__},
         used,
     )
@@ -157,6 +157,7 @@ async def run_task_results_endpoint(
                     stderr=side_b.stderr,
                     n=int(base["num_instances"] or 0),
                     metrics=base["metrics"] or {},
+                    generation_counts=base.get("generation_counts"),
                     delta=delta_model(d),
                     contingency=a.Contingency(**cont) if cont else None,
                 )
@@ -312,7 +313,7 @@ async def run_suites(
     }
     defs = {**(await load_defs(session)), **stored_defs}
     key = cache_key(
-        "run-suites",
+        "run-suites-v2",
         {"run_id": run_id, "baseline": baseline, **stats.__dict__},
         trs_list + (list(subject.trs.values()) if subject else []),
         definition_hashes([tree(r["suite_name"], defs) for r in ordered], defs),
@@ -351,7 +352,10 @@ async def run_suites(
                     run_trs, base_trs, node, loader, stats, corpus, r["higher_is_better"]
                 )
                 base_cells[r["suite_name"]] = a.SuiteBaselineCell(
-                    score=agg.score, stderr=agg.stderr, delta=delta
+                    score=agg.score,
+                    stderr=agg.stderr,
+                    delta=delta,
+                    generation_counts=suite_generation_counts(node, base_trs),
                 )
 
         # Bootstraps are CPU-bound; a worker thread keeps the event loop serving other requests.

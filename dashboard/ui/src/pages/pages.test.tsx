@@ -2,7 +2,10 @@
 import { QueryClientProvider } from "@tanstack/react-query";
 import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
+import { runSuites, runTaskResults } from "@/mocks/api";
+import { server } from "@/mocks/node";
 import { getWorld } from "@/mocks/fixtures";
 import { createQueryClient } from "@/queryClient";
 import { createAppRouter } from "@/router";
@@ -86,6 +89,23 @@ describe("pages", () => {
     cleanup();
     renderAt("/tasks");
     await waitFor(() => expect(screen.getAllByText("gsm8k:cot:olmo3").length).toBeGreaterThan(0), { timeout: 5000 });
+  });
+
+  it.each(["tasks", "overview"])("%s keeps baseline generation diagnostics beside its score", async (tab) => {
+    const baseline = world.runs.find((r) => r.summary.run_id !== runId && r.model.series === run.model.series)!;
+    const counts = { generations: 123, cap_hit: 47, empty: 9 };
+    server.use(
+      http.get(`/api/runs/${runId}/task-results`, ({ request }) => {
+        const result = runTaskResults(runId, new URL(request.url).searchParams);
+        return HttpResponse.json({ ...result, items: result.items.map((row) => ({ ...row, baseline: row.baseline ? { ...row.baseline, generation_counts: counts } : null })) });
+      }),
+      http.get(`/api/runs/${runId}/suites`, ({ request }) => {
+        const result = runSuites(runId, new URL(request.url).searchParams);
+        return HttpResponse.json({ ...result, items: result.items.map((row) => ({ ...row, baseline: row.baseline ? { ...row.baseline, generation_counts: counts } : null })) });
+      }),
+    );
+    renderAt(`/runs/${runId}?tab=${tab}&baseline=r:${baseline.summary.run_id}`);
+    expect((await screen.findAllByText("cap 47/123 · empty 9", {}, { timeout: 8000 })).length).toBeGreaterThan(0);
   });
 
   it("Unknown runs show a not-found state", async () => {

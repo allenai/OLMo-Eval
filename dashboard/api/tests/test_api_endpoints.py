@@ -889,3 +889,45 @@ async def test_latest_result_prefers_runs_without_an_instance_limit(
     )
 
     assert await _latest_arc_score(client) == 1.0
+
+
+async def test_baseline_generation_counts_cover_task_and_suite_cells_without_predictions(
+    client: httpx.AsyncClient, session: Any
+) -> None:
+    for run_id in ("countbase01", "countmodel01"):
+        await seed_run(
+            client,
+            run_id=run_id,
+            tasks={"t1": [1.0], "t2": [0.0]},
+            suites=[suite("counted", ["t1", "t2"], score=0.5)],
+        )
+    for task, counts in (
+        ("t1", {"generations": 12, "cap_hit": 3}),
+        ("t2", {"generations": 15, "empty": 2}),
+    ):
+        await session.execute(
+            text(
+                "UPDATE task_results SET generation_counts = CAST(:counts AS jsonb) "
+                "WHERE run_id = :run AND task_name = :task"
+            ),
+            {"counts": json.dumps(counts), "run": "countbase01", "task": task},
+        )
+    await session.execute(text("DELETE FROM instance_results"))
+    await session.execute(text("DELETE FROM task_result_vectors"))
+    await session.commit()
+    tasks = await get(
+        client,
+        "/api/runs/countmodel01/task-results",
+        "RunTaskResultsResponse",
+        baseline="r:countbase01",
+    )
+    row = next(row for row in tasks["items"] if row["task_name"] == "t1")
+    assert row["baseline"]["generation_counts"] == {"generations": 12, "cap_hit": 3}
+    suites = await get(
+        client, "/api/runs/countmodel01/suites", "RunSuitesResponse", baseline="r:countbase01"
+    )
+    assert suites["items"][0]["baseline"]["generation_counts"] == {
+        "generations": 27,
+        "cap_hit": 3,
+        "empty": 2,
+    }

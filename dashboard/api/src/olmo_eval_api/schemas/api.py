@@ -180,6 +180,7 @@ class DeltaStats(_Response):
 class BaselineCell(_Response):
     contingency: Contingency | None
     delta: DeltaStats
+    generation_counts: dict[str, int] | None = Field(default=None)
     metrics: dict[str, float | None]
     n: int
     run_id: RunId
@@ -1014,6 +1015,7 @@ class RunRow(_Response):
 
 class SuiteBaselineCell(_Response):
     delta: DeltaStats
+    generation_counts: dict[str, int] | None = Field(default=None)
     score: float | None
     stderr: float | None
 

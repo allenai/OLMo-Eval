@@ -179,7 +179,7 @@ function TreeRows({
             <span className={cx(s.right, "mono muted")} style={{ fontSize: 12 }}>
               {row ? formatCount(row.n_instances) : ""}
             </span>
-            <span className={s.right}>{row?.baseline ? <ScoreValue score={row.baseline.score} format={row.display_format} showStderr={false} muted /> : null}</span>
+            <span className={s.right}>{row?.baseline ? <ScoreValue score={row.baseline.score} format={row.display_format} showStderr={false} muted generationCounts={row.baseline.generation_counts} /> : null}</span>
             <span className={s.right}>{d ? <DeltaValue stats={d} format={row!.display_format} higherIsBetter={row!.higher_is_better} /> : null}</span>
             <span className={cx(s.right, "mono muted")} style={{ fontSize: 11 }}>
               {d ? formatCI(d.ci_low, d.ci_high, row!.display_format) : ""}
@@ -229,7 +229,7 @@ function TreeRows({
         <span className={cx(s.right, "mono muted")} style={{ fontSize: 12 }}>
           {formatCount(row.n)}
         </span>
-        <span className={s.right}>{b ? <ScoreValue score={b.score} format={fmt} showStderr={false} muted /> : null}</span>
+        <span className={s.right}>{b ? <ScoreValue score={b.score} format={fmt} showStderr={false} muted generationCounts={b.generation_counts} /> : null}</span>
         <span className={s.right}>{b ? <DeltaValue stats={b.delta} format={fmt} higherIsBetter={m.higherIsBetter} /> : null}</span>
         <span className={cx(s.right, "mono muted")} style={{ fontSize: 11 }}>
           {b ? formatCI(b.delta.ci_low, b.delta.ci_high, fmt) : ""}

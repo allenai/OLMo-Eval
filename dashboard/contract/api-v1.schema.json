@@ -197,6 +197,20 @@
         "delta": {
           "$ref": "#/definitions/DeltaStats"
         },
+        "generation_counts": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/definitions/Count"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Generation diagnostics for the baseline task or suite."
+        },
         "metrics": {
           "$ref": "#/definitions/FlatMetrics"
         },
@@ -5428,6 +5442,20 @@
       "properties": {
         "delta": {
           "$ref": "#/definitions/DeltaStats"
+        },
+        "generation_counts": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/definitions/Count"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Generation diagnostics for the baseline task or suite."
         },
         "score": {
           "type": [
