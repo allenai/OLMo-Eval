@@ -909,6 +909,8 @@ async def test_ingest_withholds_invalid_gap_scores(
         f"/v1/runs/{run_id}/complete",
         json={
             "status": "complete",
+            "finished_at": None,
+            "duration_seconds": 1.0,
             "suites": [suite("pair", ["in", "out"], score=0.9, aggregation="gap")],
             "expected_task_results": len(tasks),
             "expected_artifacts": 0,
