@@ -241,11 +241,15 @@ async def model_series(
 
 
 def _panel_score(
-    node: SuiteNode | None, task: str | None, trs: Mapping[str, Mapping[Any, Any]], metric: str
+    node: SuiteNode | None,
+    task: str | None,
+    trs: Mapping[str, Mapping[Any, Any]],
+    metric: str,
+    metric_keys: Mapping[str, str | None] | None = None,
 ) -> tuple[float | None, float | None, int | None, Mapping[Any, Any] | None]:
     """(score, stderr, n, task result) for a task or suite panel from merged task results."""
     if node is not None:
-        result = score_suite(node, trs)
+        result = score_suite(node, trs, metric_keys=metric_keys)
         return result.score, result.stderr, result.n_instances or None, None
     tr = trs.get(task or "")
     if tr is None:
@@ -362,14 +366,21 @@ async def model_progression(
         )
     model_by_id = {m["m_model_id"]: m for m in models}
     ref_subjects, _ = await resolve_subjects(session, _csv(references))
+    by_run: dict[str, list[Mapping[Any, Any]]] = {}
+    for tr in all_trs:
+        by_run.setdefault(tr["run_id"], []).append(tr)
+    run_population = [latest_by_task(run_trs) for run_trs in by_run.values()]
+    population = list(merged.values()) if merge == "latest" else list(run_population)
+    population.extend(subject.trs for subject in ref_subjects)
     panels = []
     for kind, name, node in panels_spec:
+        metric_keys = primary_gap_metric_keys(node, population) if node is not None else None
         points: list[a.ProgressionPoint] = []
         meta = None
         if merge == "latest":
             for mid in model_ids:
                 trs = merged[mid]
-                score, stderr, n, tr = _panel_score(node, name, trs, metric)
+                score, stderr, n, tr = _panel_score(node, name, trs, metric, metric_keys)
                 if score is None:
                     continue
                 if tr is not None and meta is None:
@@ -393,12 +404,8 @@ async def model_progression(
                     )
                 )
         else:
-            by_run: dict[str, list[Mapping[Any, Any]]] = {}
-            for tr in all_trs:
-                by_run.setdefault(tr["run_id"], []).append(tr)
-            for run_trs in by_run.values():
-                trs = latest_by_task(run_trs)
-                score, stderr, n, tr = _panel_score(node, name, trs, metric)
+            for trs in run_population:
+                score, stderr, n, tr = _panel_score(node, name, trs, metric, metric_keys)
                 if score is None:
                     continue
                 if tr is not None and meta is None:
@@ -422,8 +429,14 @@ async def model_progression(
                 )
             points.sort(key=lambda p: (p.step is None, p.step or 0, p.date))
         if node is not None and meta is None:
-            sample = next((trs for trs in merged.values() if trs), {})
-            result = score_suite(node, sample) if sample else None
+            result = next(
+                (
+                    score
+                    for trs in population
+                    if (score := score_suite(node, trs, metric_keys=metric_keys)).score is not None
+                ),
+                None,
+            )
             meta = a.MetricMeta(
                 higher_is_better=result.higher_is_better if result else None,
                 display_format=result.display_format if result else "raw",
@@ -432,7 +445,7 @@ async def model_progression(
             )
         refs = []
         for s in ref_subjects:
-            score, stderr, _, _ = _panel_score(node, name, s.trs, metric)
+            score, stderr, _, _ = _panel_score(node, name, s.trs, metric, metric_keys)
             refs.append(
                 a.ProgressionReference(subject=s.key, label=s.label, score=score, stderr=stderr)
             )

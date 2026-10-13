@@ -168,6 +168,34 @@ def scope_metric_keys(
     return keys
 
 
+def matrix_metric_keys(
+    rows: Sequence[RowSpec],
+    metric: str,
+    subjects: Sequence[Subject],
+    baseline: Subject | None,
+) -> list[dict[str, str | None]]:
+    """Select comparison metrics independently for each matrix row."""
+    parents = {spec.name: spec.node for spec in rows if spec.kind == "suite"}
+    row_metrics = []
+    for spec in rows:
+        parent = parents.get(spec.parent) if spec.kind == "task" else spec.node
+        node_for_metrics = (
+            parent if parent is not None and parent.aggregation == "gap" else spec.node
+        )
+        names = leaves(node_for_metrics) if node_for_metrics is not None else [spec.name]
+        row_metrics.append(
+            scope_metric_keys(
+                names,
+                metric,
+                subjects,
+                baseline,
+                node_for_metrics,
+                require_gap_anchor=spec.kind == "suite",
+            )
+        )
+    return row_metrics
+
+
 def row_meta(
     task: str, key: str | None, subjects: Sequence[Subject], baseline: Subject | None
 ) -> dict:
@@ -243,31 +271,34 @@ async def compare_matrix(
     if is_runtime_metric(body.metric):
         # No bootstraps, so nothing worth caching.
         return await _runtime_matrix(session, body, subjects, baseline, rows, stats.alpha)
-    ckey = cache_key("matrix-v5", request, used, scope_hashes(node, defs))
+    ckey = cache_key("matrix-v6", request, used, scope_hashes(node, defs))
     cached = await get_cached(session, ckey, a.MatrixResponse)
     if cached is not None:
         return cached.model_copy(update={"subjects": live_subjects(cached.subjects, by_key)})
 
     task_names = list(dict.fromkeys(r.name for r in rows if r.kind == "task"))
-    metric_keys = scope_metric_keys(
-        task_names, body.metric, subjects, baseline, node, require_gap_anchor=False
-    )
-    suite_metric_keys = scope_metric_keys(task_names, body.metric, subjects, baseline, node)
+    row_metrics = matrix_metric_keys(rows, body.metric, subjects, baseline)
     loader = SideLoader(session)
-    for t in task_names:
-        for s in subjects:
-            loader.want(s.trs.get(t), metric_keys[t])
+    wanted: set[tuple[int, str]] = set()
+    for metric_keys in row_metrics:
+        for name, key in metric_keys.items():
+            for subject in subjects:
+                tr = subject.trs.get(name)
+                if tr is not None and key is not None and (tr["id"], key) not in wanted:
+                    wanted.add((tr["id"], key))
+                    loader.want(tr, key)
     await loader.load()
-    sides: dict[str, dict[str, Side | None]] = {
-        t: {s.key: loader.side(s.trs.get(t), metric_keys[t]) for s in subjects} for t in task_names
-    }
 
     out_rows: list[a.MatrixRow] = []
     ses: list[float | None] = []
     coverage = {"complete": 0, "missing": 0, "failed": 0, "hash_mismatch": 0}
 
     def build_rows() -> None:
-        for spec in rows:
+        for spec, metric_keys in zip(rows, row_metrics, strict=True):
+            sides = {
+                name: {subject.key: loader.side(subject.trs.get(name), key) for subject in subjects}
+                for name, key in metric_keys.items()
+            }
             if spec.kind == "task":
                 out_rows.append(
                     _matrix_task_row(
@@ -287,7 +318,7 @@ async def compare_matrix(
                 assert spec.node is not None
                 out_rows.append(
                     _matrix_suite_row(
-                        spec, subjects, baseline, sides, body, stats, metric_keys=suite_metric_keys
+                        spec, subjects, baseline, sides, body, stats, metric_keys=metric_keys
                     )
                 )
 

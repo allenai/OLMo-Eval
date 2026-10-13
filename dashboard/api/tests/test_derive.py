@@ -654,3 +654,83 @@ def test_suite_counts_include_derived_scores_even_without_corpus_metrics_or_with
         "c": {"score": None, "metrics": {"acc:x": 0.5}, "generation_counts": {"generations": 99}},
     }
     assert suite_generation_counts(node, tasks) == {"generations": 10}
+
+
+def test_gap_progression_points_use_one_population_metric() -> None:
+    from olmo_eval_api.routers.api.catalog import _panel_score
+    from olmo_eval_api.services.read_suites import primary_gap_metric_keys
+
+    node = build_tree(
+        "pair", {"pair": ("gap", [{"type": "task", "name": "in"}, {"type": "task", "name": "out"}])}
+    )
+    checkpoints: list[dict[str, dict[str, Any]]] = [
+        {
+            name: {
+                "score": score,
+                "stderr": 0.0,
+                "num_instances": 32,
+                "primary_metric": metric,
+                "display_format": "percent",
+                "higher_is_better": True,
+                "metrics": {metric: score},
+            }
+            for name in ["in", "out"]
+        }
+        for metric, score in [("strict", 0.4), ("flex", 0.9)]
+    ]
+    keys = primary_gap_metric_keys(node, checkpoints)
+    assert _panel_score(node, None, checkpoints[0], "primary", keys)[0] == 0.4
+    assert _panel_score(node, None, checkpoints[1], "primary", keys)[0] is None
+    checkpoints[1]["in"]["metrics"]["strict"] = 0.5
+    checkpoints[1]["out"]["metrics"]["strict"] = 0.6
+    assert _panel_score(node, None, checkpoints[1], "primary", keys)[0] == 0.6
+
+
+def test_shared_gap_task_anchors_are_selected_per_matrix_row() -> None:
+    from olmo_eval_api.routers.api.compare import _suite_rows, matrix_metric_keys
+    from olmo_eval_api.services.subjects import Subject
+
+    node = build_tree(
+        "both",
+        {
+            "both": ("none", [{"type": "suite", "name": "a"}, {"type": "suite", "name": "b"}]),
+            "a": ("gap", [{"type": "task", "name": "in"}, {"type": "task", "name": "out_a"}]),
+            "b": ("gap", [{"type": "task", "name": "in"}, {"type": "task", "name": "out_b"}]),
+        },
+    )
+    subjects = [
+        Subject(
+            "r:strict",
+            "run",
+            {},
+            None,
+            trs={
+                name: {"primary_metric": "strict", "score": score}
+                for name, score in [("in", 0.6), ("out_a", 0.4), ("out_b", None)]
+            },
+        ),
+        Subject(
+            "r:flex",
+            "run",
+            {},
+            None,
+            trs={
+                name: {"primary_metric": "flex", "score": score}
+                for name, score in [("in", 0.7), ("out_a", None), ("out_b", 0.5)]
+            },
+        ),
+    ]
+    rows = []
+    _suite_rows(node, 0, None, rows)
+    selected = matrix_metric_keys(rows, "primary", subjects, None)
+    by_suite = {
+        row.name: keys for row, keys in zip(rows, selected, strict=True) if row.kind == "suite"
+    }
+    assert by_suite["a"] == {"in": "strict", "out_a": "strict"}
+    assert by_suite["b"] == {"in": "flex", "out_b": "flex"}
+    in_tasks = [
+        (row.parent, keys["in"])
+        for row, keys in zip(rows, selected, strict=True)
+        if row.kind == "task" and row.name == "in"
+    ]
+    assert in_tasks == [("a", "strict"), ("b", "flex")]

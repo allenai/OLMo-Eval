@@ -1139,3 +1139,84 @@ async def test_baseline_generation_counts_cover_task_and_suite_cells_without_pre
         "cap_hit": 3,
         "empty": 2,
     }
+
+
+async def test_matrix_shared_gap_tasks_keep_independent_metric_anchors(
+    client: httpx.AsyncClient,
+) -> None:
+    root = suite("bothpairs", [], score=None, aggregation="none")
+    root["children"] = [{"type": "suite", "name": "pair_a"}, {"type": "suite", "name": "pair_b"}]
+    root["num_tasks"] = 3
+    for run_id, metric, scores in (
+        ("anchorstrict", "strict:default", {"in": 0.6, "out_a": 0.4, "out_b": None}),
+        ("anchorflex", "flex:default", {"in": 0.7, "out_a": None, "out_b": 0.5}),
+    ):
+        pair_a = suite("pair_a", ["in", "out_a"], score=scores["out_a"], aggregation="gap")
+        pair_b = suite("pair_b", ["in", "out_b"], score=scores["out_b"], aggregation="gap")
+        pair_a["parent"] = pair_b["parent"] = "bothpairs"
+        await seed_run(
+            client,
+            run_id=run_id,
+            tasks={name: [score] * 32 for name, score in scores.items()},
+            primary_metric=metric,
+            suites=[root, pair_a, pair_b],
+        )
+    response = await post(
+        client,
+        "/api/compare/matrix",
+        {
+            "subjects": ["r:anchorstrict", "r:anchorflex"],
+            "scope": "suite:bothpairs",
+            "metric": "primary",
+        },
+        "MatrixResponse",
+    )
+    suites = {row["name"]: row for row in response["rows"] if row["kind"] == "suite"}
+    assert suites["pair_a"]["cells"][0]["score"] == pytest.approx(0.4)
+    assert suites["pair_b"]["cells"][1]["score"] == pytest.approx(0.5)
+    task_rows = [row for row in response["rows"] if row["name"] == "in"]
+    assert [(row["parent"], row["metric_key"]) for row in task_rows] == [
+        ("pair_a", "strict:default"),
+        ("pair_b", "flex:default"),
+    ]
+
+
+@pytest.mark.parametrize("merge", ["latest", "all"])
+async def test_gap_progression_keeps_checkpoint_and_reference_metrics_consistent(
+    client: httpx.AsyncClient, merge: str
+) -> None:
+    for run_id, step, metric, score in [
+        ("progstrict01", 1000, "strict:default", 0.4),
+        ("progflex01", 2000, "flex:default", 0.9),
+    ]:
+        await seed_run(
+            client,
+            run_id=run_id,
+            model_name=f"test-org/prog-model-step{step}",
+            step=step,
+            primary_metric=metric,
+            tasks={"in": [score] * 32, "out": [score] * 32},
+            suites=[suite("progpair", ["in", "out"], score=score, aggregation="gap")],
+        )
+    await seed_run(
+        client,
+        run_id="progref01",
+        model_name="test-org/reference-model",
+        primary_metric="strict:default",
+        tasks={"in": [0.8] * 32, "out": [0.8] * 32},
+    )
+    result = await get(
+        client,
+        "/api/models/progression",
+        "ProgressionResponse",
+        series="test-org/prog-model",
+        scope="suite:progpair",
+        merge=merge,
+        references="r:progflex01,r:progref01",
+    )
+    panel = next(panel for panel in result["panels"] if panel["key"] == "suite:progpair")
+    assert [(point["step"], point["score"]) for point in panel["points"]] == [(1000, 0.4)]
+    reference_scores = {ref["subject"]: ref["score"] for ref in panel["references"]}
+    assert reference_scores["r:progflex01"] is None
+    assert reference_scores["r:progref01"] == 0.8
+    assert panel["meta"]["display_format"] == "percent"
