@@ -711,6 +711,14 @@ def restrict(side: Side, keys: np.ndarray) -> Side:
     )
 
 
+def pairwise_order_key(
+    row: a.PairwiseRowSummary, higher_is_better: bool | None
+) -> tuple[float, float]:
+    """Rank a summary by win rate and improvement."""
+    direction = -1 if higher_is_better is False else 1
+    return -row.mean_win_rate, -direction * (row.mean_delta or 0.0)
+
+
 @router.post("/compare/pairwise", response_model=a.PairwiseResponse)
 async def compare_pairwise(
     body: a.PairwiseRequest, session: SessionDep, user: UserDep
@@ -726,7 +734,7 @@ async def compare_pairwise(
         raise bad_request("margin must be >= 0")
     used = [tr for s in subjects for tr in s.trs.values()]
     rows, node, defs = await resolve_scope(session, body.scope, subjects)
-    ckey = cache_key("pairwise-v5", body.model_dump(mode="json"), used, scope_hashes(node, defs))
+    ckey = cache_key("pairwise-v6", body.model_dump(mode="json"), used, scope_hashes(node, defs))
     cached = await get_cached(session, ckey, a.PairwiseResponse)
     if cached is not None:
         by_key = {s.key: s for s in subjects}
@@ -852,7 +860,7 @@ async def compare_pairwise(
                 mean_delta=float(np.mean(ds)) if ds else None,
             )
         )
-    summaries.sort(key=lambda x: (-x.mean_win_rate, -(x.mean_delta or 0.0)))
+    summaries.sort(key=lambda row: pairwise_order_key(row, hib))
     order = {x.subject: i for i, x in enumerate(summaries)}
     warnings = []
     if skipped:

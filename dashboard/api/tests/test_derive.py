@@ -34,6 +34,29 @@ def test_incomplete_gap_headline_does_not_fall_back_to_task_mean() -> None:
     assert bare is not None and bare["score"] == 0.75
 
 
+@pytest.mark.parametrize(
+    "higher_is_better,first", [(True, "r:run00002"), (False, "r:run00001"), (None, "r:run00002")]
+)
+def test_pairwise_ties_rank_by_metric_improvement(higher_is_better, first) -> None:
+    from olmo_eval_api.routers.api.compare import pairwise_order_key
+    from olmo_eval_api.schemas.api import PairwiseRowSummary
+
+    rows = [
+        PairwiseRowSummary(
+            subject=key, mean_win_rate=0.5, mean_delta=delta, ci_low=None, ci_high=None
+        )
+        for key, delta in [("r:run00001", -1.0), ("r:run00002", 1.0)]
+    ]
+    assert (
+        sorted(rows, key=lambda row: pairwise_order_key(row, higher_is_better))[0].subject == first
+    )
+    rows[0].mean_win_rate = 1.0
+    assert (
+        sorted(rows, key=lambda row: pairwise_order_key(row, higher_is_better))[0].subject
+        == "r:run00001"
+    )
+
+
 def test_model_id_and_key_hash() -> None:
     assert (
         derive.model_id("meta-llama/Llama-3.1-8B-Instruct", "16614dd9d1ac227a")

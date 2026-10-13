@@ -993,15 +993,16 @@ async def test_gap_leaderboard_uses_one_metric_across_runs(
         assert "rankstrict01" not in scores
 
 
+@pytest.mark.parametrize("n_instances", [8, 32])
 async def test_gap_comparisons_and_ranking_use_companion_metadata(
-    client: httpx.AsyncClient, session: Any
+    client: httpx.AsyncClient, session: Any, n_instances: int
 ) -> None:
     subjects = ["r:metagap01", "r:metagap02"]
     for run_id, score in (("metagap01", 0.0), ("metagap02", 1.0)):
         await seed_run(
             client,
             run_id=run_id,
-            tasks={"in": [1.0] * 32, "out": [score] * 32},
+            tasks={"in": [1.0] * n_instances, "out": [score] * n_instances},
             suites=[suite("metapair", ["in", "out"], score=score, aggregation="gap")],
         )
     await session.execute(
