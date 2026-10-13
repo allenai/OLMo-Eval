@@ -68,13 +68,6 @@ def protected_indices(example: dict, spec_name: str, rerank_keep: int) -> set[in
     return out
 
 
-class _SpecOnly:
-    """Just enough of a CTCSuiteTask for ``get_sampling_params`` (which reads only ``spec``)."""
-
-    def __init__(self, spec) -> None:
-        self.spec = spec
-
-
 def _shave(text: str, frac: float) -> str:
     """Keep the leading ``1 - frac`` of ``text``, cut back to the last word boundary."""
     keep = int(len(text) * (1.0 - frac))
@@ -102,6 +95,7 @@ def main() -> None:
     from transformers import AutoTokenizer
 
     import olmo_eval.evals.tasks.ctc_suite as S
+    from olmo_eval.evals.tasks.common.registry import get_task
     from olmo_eval.evals.tasks.ctc_suite.doc_markers import add_doc_markers, doc_markers_enabled
 
     tok = AutoTokenizer.from_pretrained(args.tokenizer)
@@ -123,8 +117,10 @@ def main() -> None:
         spec = S._resolve_spec(row.spec)
         if spec.name in REFUSED:
             raise SystemExit(f"[fit] {cell}: {spec.name} has no distractor documents to shorten")
-        # the decode budget the eval will reserve (the task's own rule, incl. the rerank cap env)
-        max_tokens = S.CTCSuiteTask.get_sampling_params(_SpecOnly(spec), None).max_tokens
+        # the decode budget the eval will reserve: the task's own stored budget, which includes the
+        # row's override and the rerank cap env (a CTCSuiteTask has no get_sampling_params of its
+        # own any more -- the budget lives in its config)
+        max_tokens = get_task(cell).config.sampling_params.max_tokens
         room = args.max_model_len - max_tokens - MARGIN
         path = f"datasets/{S.HF_DATASET}/data/{row.subset}/{rung}.parquet"
         examples = pq.read_table(fs.open(path)).to_pylist()
