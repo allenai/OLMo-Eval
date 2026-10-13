@@ -104,8 +104,14 @@ describe("pages", () => {
         return HttpResponse.json({ ...result, items: result.items.map((row) => ({ ...row, baseline: row.baseline ? { ...row.baseline, generation_counts: counts } : null })) });
       }),
     );
-    renderAt(`/runs/${runId}?tab=${tab}&baseline=r:${baseline.summary.run_id}`);
-    expect((await screen.findAllByText("cap 47/123 · empty 9", {}, { timeout: 8000 })).length).toBeGreaterThan(0);
+    const params = new URLSearchParams({ baseline: `r:${baseline.summary.run_id}` });
+    const task = runTaskResults(runId, params).items.find((row) => row.baseline)!;
+    params.set("tab", tab);
+    if (tab === "tasks") params.set("tq", task.task_name);
+    renderAt(`/runs/${runId}?${params}`);
+    const diagnostics = await screen.findAllByText("cap 47/123 · empty 9", {}, { timeout: 8000 });
+    expect(diagnostics.length).toBeGreaterThan(0);
+    if (tab === "tasks") expect(diagnostics[0].closest('[role="row"]')).toHaveStyle({ height: "72px" });
   });
 
   it("Unknown runs show a not-found state", async () => {
