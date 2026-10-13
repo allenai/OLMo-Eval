@@ -354,7 +354,7 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class _CommandTimeoutError(Exception):
+class _CommandTimeoutError(TimeoutError):
     """Named like swe-rex's timeout so the executor recognizes it."""
 
 
@@ -370,6 +370,7 @@ class TestSessionTimeout(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_timed_out_command_is_interrupted_and_reported(self) -> None:
         executor = self._executor()
+        executor.config = replace(executor.config, mode=SandboxMode.LOCAL)
         interrupted = mock.Mock(output="^C", exit_code=0)
         executor._runtime.run_in_session = mock.AsyncMock(
             side_effect=[_CommandTimeoutError("timed out after 5s"), interrupted]
@@ -527,3 +528,31 @@ async def test_command_timeout_label_respects_exit_and_elapsed_time(
     result = await executor.execute_command("true", timeout=3)
     assert result.error == label
     assert (commands[1][0] == "bash") == (label == "timeout")
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("removal_times_out", [False, True])
+async def test_failed_http_shutdown_force_removes_local_container(monkeypatch, removal_times_out):
+    from types import SimpleNamespace
+
+    executor = SandboxExecutor(SandboxConfig(image="test", mode=SandboxMode.DOCKER))
+    executor._deployment = SimpleNamespace(
+        container_name="wedged", stop=mock.AsyncMock(side_effect=ConnectionResetError())
+    )
+    executor._runtime = SimpleNamespace()
+    process = SimpleNamespace(
+        returncode=None if removal_times_out else 0,
+        communicate=mock.AsyncMock(side_effect=TimeoutError())
+        if removal_times_out
+        else mock.AsyncMock(return_value=(b"", b"")),
+        kill=mock.Mock(),
+        wait=mock.AsyncMock(return_value=-9),
+    )
+    create = mock.AsyncMock(return_value=process)
+    monkeypatch.setattr("asyncio.create_subprocess_exec", create)
+    await executor.stop()
+    assert create.await_args.args == ("podman", "rm", "-f", "wedged")
+    assert executor._deployment is None
+    if removal_times_out:
+        process.kill.assert_called_once()
+        process.wait.assert_awaited_once()

@@ -75,6 +75,7 @@ def test_missing_sandbox_invalidates_livecodebench_samples(
         manager = make_manager(TrackingExecutor("healthy", capabilities=frozenset({"other"})))
         assert manager.is_running
     if environment == "depleted":
+        monkeypatch.setattr("olmo_eval.harness.sandbox.manager._MAX_SANDBOX_RESTARTS", 0)
         executor = TrackingExecutor("broken", max_concurrency=1, fail_and_quarantine=True)
         manager = make_manager(executor)
         monkeypatch.setattr(
