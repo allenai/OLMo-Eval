@@ -15,7 +15,8 @@ from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
 from olmo_eval.common.formatters import Formatter
 from olmo_eval.common.metrics import Metric
 from olmo_eval.common.repr import hide_unset
-from olmo_eval.common.scorers import Scorer, ScoringIncompleteError
+from olmo_eval.common.scorers import Scorer
+from olmo_eval.common.scorers.execution import format_scoring_error as _format_scoring_error
 from olmo_eval.common.types import (
     Instance,
     LMOutput,
@@ -32,28 +33,6 @@ if TYPE_CHECKING:
     from olmo_eval.data import DataSource
 
 logger = logging.getLogger(__name__)
-
-
-def _format_scoring_error(exc: Exception, *, phase: str) -> dict[str, str]:
-    """Build a JSON-serializable scoring error payload."""
-    error = {
-        "phase": phase,
-        "type": type(exc).__qualname__,
-    }
-    message = str(exc).strip()
-    if message:
-        error["message"] = message
-    if isinstance(exc, ScoringIncompleteError):
-        error["infrastructure"] = "true"
-    else:
-        try:
-            from olmo_eval.harness.sandbox import SandboxInfrastructureError
-
-            if isinstance(exc, SandboxInfrastructureError):
-                error["infrastructure"] = "true"
-        except ImportError:
-            pass
-    return error
 
 
 def _store_output_score(
@@ -737,7 +716,13 @@ class Task(ABC):
         sync_scorers: dict[str, Scorer] = {}
         for name, scorer in scorers_by_name.items():
             if isinstance(scorer, ExecutionScorer):
-                if task_executor is None:
+                if task_executor is None or not task_executor.is_running:
+                    if context.execution_env is not None:
+                        from olmo_eval.harness.sandbox.errors import SandboxInfrastructureError
+
+                        raise SandboxInfrastructureError(
+                            "No healthy sandbox remained for execution scoring"
+                        )
                     raise SandboxRequiredError(
                         f"{scorer.__class__.__name__} requires a sandbox. "
                         "Configure sandboxes in HarnessConfig."
