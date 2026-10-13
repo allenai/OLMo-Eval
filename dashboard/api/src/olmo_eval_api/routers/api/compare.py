@@ -239,7 +239,7 @@ async def compare_matrix(
     if is_runtime_metric(body.metric):
         # No bootstraps, so nothing worth caching.
         return await _runtime_matrix(session, body, subjects, baseline, rows, stats.alpha)
-    ckey = cache_key("matrix", request, used, scope_hashes(node, defs))
+    ckey = cache_key("matrix-v2", request, used, scope_hashes(node, defs))
     cached = await get_cached(session, ckey, a.MatrixResponse)
     if cached is not None:
         return cached.model_copy(update={"subjects": live_subjects(cached.subjects, by_key)})
@@ -710,7 +710,7 @@ async def compare_pairwise(
         raise bad_request("margin must be >= 0")
     used = [tr for s in subjects for tr in s.trs.values()]
     rows, node, defs = await resolve_scope(session, body.scope, subjects)
-    ckey = cache_key("pairwise", body.model_dump(mode="json"), used, scope_hashes(node, defs))
+    ckey = cache_key("pairwise-v2", body.model_dump(mode="json"), used, scope_hashes(node, defs))
     cached = await get_cached(session, ckey, a.PairwiseResponse)
     if cached is not None:
         by_key = {s.key: s for s in subjects}
@@ -770,6 +770,7 @@ async def compare_pairwise(
             margin=margin,
             max_work=MAX_PAIRWISE_WORK,
             max_pair_resamples=MAX_PAIR_RESAMPLES,
+            corpus_weight_fn=weight_fn,
         )
     )
     pair_out: list[a.PairStats] = []

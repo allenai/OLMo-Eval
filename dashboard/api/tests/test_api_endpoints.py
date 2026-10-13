@@ -228,6 +228,44 @@ async def test_tag_note_and_view_caps(
     assert (await client.post("/api/views", json=view)).status_code == 400
 
 
+@pytest.mark.parametrize("common_metric", [False, True])
+async def test_gap_run_baselines_use_the_runs_metric(
+    client: httpx.AsyncClient, session: Any, common_metric: bool
+) -> None:
+    await seed_run(
+        client,
+        run_id="strict001",
+        tasks={"in": [1.0], "out": [0.5]},
+        primary_metric="strict:default",
+        suites=[suite("pair", ["in", "out"], score=0.5, aggregation="gap")],
+    )
+    await seed_run(
+        client,
+        run_id="flexible001",
+        tasks={"in": [0.8], "out": [0.9]},
+        primary_metric="flex:default",
+        suites=[suite("pair", ["in", "out"], score=0.9, aggregation="gap")],
+    )
+    if common_metric:
+        await session.execute(
+            text(
+                "UPDATE task_results SET metrics = metrics || '{\"strict:default\":0.4}'::jsonb "
+                "WHERE run_id = 'flexible001'"
+            )
+        )
+        await session.commit()
+    body = await get(
+        client, "/api/runs/strict001/suites", "RunSuitesResponse", baseline="r:flexible001"
+    )
+    baseline = body["items"][0]["baseline"]
+    if common_metric:
+        assert baseline["score"] == 0.4
+        assert baseline["delta"]["delta"] == pytest.approx(0.1)
+    else:
+        assert baseline["score"] is None
+        assert baseline["delta"]["delta"] is None
+
+
 async def test_run_task_results_with_baseline(client: httpx.AsyncClient, seeded: dict) -> None:
     run_id = seeded["step3000"]
     body = await get(client, f"/api/runs/{run_id}/task-results", "RunTaskResultsResponse")

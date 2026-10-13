@@ -411,6 +411,7 @@ class PairAccumulator:
     corpus_a: dict[str, float | None] = field(default_factory=dict)
     corpus_b: dict[str, float | None] = field(default_factory=dict)
     hash_mismatch: bool = False
+    corpus_weights: dict[str, float] | None = None
 
     def __post_init__(self) -> None:
         self.boot = np.zeros(self.n_boot)
@@ -437,6 +438,7 @@ def stratified_pairs(
     max_work: int | None = None,
     max_pair_resamples: int | None = None,
     block_cells: int | None = None,
+    corpus_weight_fn: Any = None,
 ) -> dict[tuple[str, str], PairAccumulator]:
     """Combine per-task bootstrap means across tasks for each (row, col) subject pair.
 
@@ -469,6 +471,13 @@ def stratified_pairs(
                 qualifying[p].append(task_name)
     for p in pairs:
         acc[p].weights = weight_fn(qualifying[p]) if qualifying[p] else {}
+        if corpus_weight_fn is not None:
+            present = [
+                task
+                for task, score in acc[p].corpus_a.items()
+                if score is not None and acc[p].corpus_b.get(task) is not None
+            ]
+            acc[p].corpus_weights = corpus_weight_fn(present)
 
     work: list[tuple[str, Mapping[str, Side], list[tuple[str, str]], np.ndarray]] = []
     total = 0
@@ -574,12 +583,19 @@ def pair_stats(acc: PairAccumulator, alpha: float, higher_is_better: bool | None
             "significant": lo is not None and hi is not None and (lo > 0 or hi < 0),
             "method": "paired_bootstrap",
         }
-    diffs = [
-        a - b
+    diffs = {
+        t: a - b
         for t in acc.corpus_a
         if (a := acc.corpus_a[t]) is not None and (b := acc.corpus_b.get(t)) is not None
-    ]
-    delta = sum(diffs) / len(diffs) if diffs else None
+    }
+    if acc.corpus_weights is not None:
+        delta = (
+            sum(weight * diffs[task] for task, weight in acc.corpus_weights.items())
+            if acc.corpus_weights
+            else None
+        )
+    else:
+        delta = sum(diffs.values()) / len(diffs) if diffs else None
     return {
         "n_shared": 0,
         "n_contested": contested,
