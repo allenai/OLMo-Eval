@@ -43,6 +43,10 @@ echo "==> Running ty type checker..."
 $UV_RUN ty check src/
 
 echo ""
+echo "==> Checking file sizes..."
+./scripts/check_file_sizes.sh
+
+echo ""
 echo "==> Running tests with coverage..."
 
 # Build pytest arguments

@@ -171,7 +171,6 @@ dev = [
     "pytest-cov>=6.0.0",
     "ruff>=0.14.0",
     "ty==0.0.39",
-    "pre-commit>=4.0.0",
     # Unit tests import optional helpers directly, so dev installs need these extras too.
     "olmo-eval[s3,beaker,hf,vision,sandbox]",
     "jinja2>=3.1.6",
