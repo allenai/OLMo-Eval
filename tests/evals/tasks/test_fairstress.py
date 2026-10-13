@@ -79,6 +79,23 @@ class TestFairStressRegistration:
         assert isinstance(task.config.data_source, DataSource)
         assert task.config.data_source.path == "PardisSzah/fairstress"
 
+    @pytest.mark.parametrize(
+        ("variant", "path"),
+        [("answer", "PardisSzah/fairstress-core"), ("full", "PardisSzah/fairstress")],
+    )
+    def test_data_source_revision_is_pinned(self, variant, path):
+        # Regression test: an unpinned "main" ref is resolved against a
+        # client's local HF cache under an offline/no-egress run, so a cache
+        # populated before a repo name held the corrected data can silently
+        # keep serving stale content instead of erroring -- this is exactly
+        # what produced a real parity mismatch (smaller-magnitude AccGap/
+        # TieLean, same sign) against AI2's Beaker launch path, which
+        # hardcodes a shared HF_HOME. Pinning turns that into a loud
+        # cache-miss instead of a silent wrong answer.
+        data_source = get_task(f"fairstress:{variant}").config.data_source
+        assert data_source.path == path
+        assert data_source.revision, f"{path}'s data_source must pin a revision"
+
     def test_full_variant_gets_the_same_rich_metrics_as_answer_and_reasoning(self):
         # Regression test: an earlier version of this registration only
         # overrode data_source, so "full" silently got the smaller

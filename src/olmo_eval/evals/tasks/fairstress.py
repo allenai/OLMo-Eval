@@ -834,7 +834,19 @@ class FairStress(Task):
     # "original_"-prefixed names. Hosted temporarily under a personal
     # account pending official release, but are PUBLIC — no token or
     # `required_secrets` entry is needed to read them.
-    data_source = DataSource(path="PardisSzah/fairstress-core", split="train")
+    # Revision pinned to the corrected-data upload commit: an unpinned
+    # "main" ref is resolved against a client's local HF cache under an
+    # offline/no-egress run (e.g. some Beaker jobs), so a cache populated
+    # before this repo name held the corrected data silently keeps serving
+    # whatever it last saw instead of erroring — pinning turns that into a
+    # loud cache-miss instead of a silent wrong answer, and makes every run
+    # reproducible regardless of cache state. Re-pin here if the dataset is
+    # ever intentionally updated.
+    data_source = DataSource(
+        path="PardisSzah/fairstress-core",
+        split="train",
+        revision="d9f3a48965f3ae8a1f0b71281391818fb77a1145",
+    )
     split = Split.TRAIN
     formatter = MCQAChatFormatter()
     # Each metric below shares the FairStressScorer class, and
@@ -1067,7 +1079,13 @@ register_variant(
 register_variant(
     "fairstress",
     "full",
-    data_source=DataSource(path="PardisSzah/fairstress", split="train"),
+    # Pinned for the same cache-consistency reason as the Core data_source
+    # above — see that comment.
+    data_source=DataSource(
+        path="PardisSzah/fairstress",
+        split="train",
+        revision="c33b0deffd118ee5704c2705ccb6f040eff21829",
+    ),
     metrics=_fairstress_metrics(),
     primary_metric=FairStressTieShiftMetric(name="degree__3__tieshift", degree=3),
 )
