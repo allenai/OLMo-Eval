@@ -222,6 +222,11 @@ def test_gap_suite_ranks_by_companion_and_uses_its_uncertainty() -> None:
     assert aggregate(tree, {"in": 0.6}, {}) is None
     weights = leaf_weights(tree, {}, {"in", "out"})
     assert weights == {"out": 1.0}
+    assert leaf_weights(tree, {}, {"in", "out"}, metric_keys={"in": "strict", "out": "flex"}) == {}
+    assert (
+        leaf_weights(tree, {}, {"in", "out"}, metric_keys={"in": "strict", "out": "strict"})
+        == weights
+    )
     assert propagate_stderr(weights, {"in": 0.3, "out": 0.02}) == 0.02
     task_results = {
         name: {

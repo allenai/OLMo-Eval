@@ -403,7 +403,7 @@ def _matrix_suite_row(
         acc = stratified_pairs(
             tasks,
             [(k, baseline.key) for k in others],
-            lambda q: leaf_weights(node, n_inst, set(q)),
+            lambda q: leaf_weights(node, n_inst, set(q), metric_keys=metric_keys),
             alpha=stats.alpha,
             n_boot=stats.n_boot,
             seed=stats.seed,
@@ -714,7 +714,7 @@ async def compare_pairwise(
     if node is not None:
 
         def weight_fn(names: Sequence[str]) -> dict[str, float]:
-            return leaf_weights(node, n_inst, set(names))
+            return leaf_weights(node, n_inst, set(names), metric_keys=metric_keys)
     else:
 
         def weight_fn(names: Sequence[str]) -> dict[str, float]:

@@ -87,7 +87,11 @@ def _flat_weights(
 
 
 def leaf_weights(
-    node: SuiteNode, n_instances: Mapping[str, int], present: set[str]
+    node: SuiteNode,
+    n_instances: Mapping[str, int],
+    present: set[str],
+    *,
+    metric_keys: Mapping[str, str | None] | None = None,
 ) -> dict[str, float]:
     """Weights over present leaves summing to 1 (empty when no leaf is present).
 
@@ -106,6 +110,10 @@ def leaf_weights(
         names = leaves(node)
         if len(names) != 2 or not set(names).issubset(present):
             return {}
+        if metric_keys is not None:
+            metrics = {metric_keys.get(name) for name in names}
+            if len(metrics) != 1 or None in metrics:
+                return {}
         return {names[1]: 1.0}
     if node.aggregation != "average_of_averages":
         return _flat_weights(node, n_instances, present)
