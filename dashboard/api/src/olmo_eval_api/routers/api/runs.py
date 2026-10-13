@@ -193,6 +193,11 @@ async def list_runs(
             )
             baseline_cells = {key: side for (_, key), (_, side) in baseline_rows.items()}
             baseline_metadata = {key: cell for (_, key), (cell, _) in baseline_rows.items()}
+            missing_columns = [column for column in columns if column[0] not in baseline_cells]
+            if missing_columns:
+                baseline_cells.update(
+                    await baseline_column_sides(session, subject, missing_columns)
+                )
         else:
             defs = await load_defs(session)
             baseline_cells = await baseline_column_sides(session, subject, columns, suite_defs=defs)

@@ -926,3 +926,25 @@ async def test_runs_gap_baselines_use_stored_suite_versions(
         assert delta is None
     else:
         assert delta["delta"] == pytest.approx(0.1)
+
+
+@pytest.mark.parametrize("aggregation", ["average", "gap"])
+async def test_bare_task_baselines_retain_non_gap_suite_fallback(
+    client: httpx.AsyncClient, aggregation: str
+) -> None:
+    await seed_run(
+        client,
+        run_id="fallbacka01",
+        tasks={"a": [0.5], "b": [0.5]},
+        suites=[suite("fallback", ["a", "b"], score=0.5, aggregation=aggregation)],
+    )
+    await seed_run(client, run_id="fallbackb01", tasks={"a": [0.4], "b": [0.4]}, suites=[])
+    result = await get(
+        client, "/api/runs", "RunsListResponse", cols="suite:fallback", baseline="r:fallbackb01"
+    )
+    row = next(row for row in result["items"] if row["run_id"] == "fallbacka01")
+    delta = row["scores"]["suite:fallback"]["delta"]
+    if aggregation == "gap":
+        assert delta is None
+    else:
+        assert delta["delta"] == pytest.approx(0.1)
