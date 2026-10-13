@@ -1006,7 +1006,7 @@ async def test_gap_comparisons_and_ranking_use_companion_metadata(
         )
     await session.execute(
         text(
-            "UPDATE task_results SET metric_meta = NULL, "
+            "UPDATE task_results SET metric_meta = '{}'::jsonb, "
             "display_format = CASE WHEN task_name = 'out' THEN 'percent' ELSE 'raw' END, "
             "higher_is_better = CASE WHEN task_name = 'out' THEN FALSE ELSE NULL END "
             "WHERE run_id IN ('metagap01', 'metagap02')"
