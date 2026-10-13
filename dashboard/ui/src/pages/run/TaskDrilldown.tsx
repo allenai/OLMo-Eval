@@ -320,7 +320,7 @@ export function TaskDrilldown({
           </Panel>
         </div>
       </div>
-      {!row.error && <ScoreSummary row={row} />}
+      <ScoreSummary row={row} />
     </div>
   );
 }
@@ -332,9 +332,9 @@ function ScoreSummary({ row }: { row: TaskResultRow }) {
       {row.instances_failed ? ` · ${formatCount(row.instances_failed)} failed` : ""}
       {row.completion_tokens_total != null && ` · ${formatCount(row.completion_tokens_total)} completion tokens`}
       {row.mean_completion_tokens != null && ` · mean output ${Math.round(row.mean_completion_tokens)} tokens`}
-      {row.score_is_mean ? "" : " · corpus score is not a per-instance mean"}
+      {row.error || row.score_is_mean ? "" : " · corpus score is not a per-instance mean"}
       {" · "}
-      <ScoreValue score={row.score} stderr={row.stderr} format={scoreFormat(row)} generationCounts={row.generation_counts} />
+      <ScoreValue score={row.error ? null : row.score} stderr={row.error ? null : row.stderr} format={scoreFormat(row)} generationCounts={row.generation_counts} />
     </p>
   );
 }

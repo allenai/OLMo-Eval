@@ -651,7 +651,10 @@ async def _content_hash(session: AsyncSession, run_id: str, req: s.TaskResultIn)
             select(ac.path, ac.md5_b64).where(ac.run_id == run_id, ac.path.in_(paths))
         )
         checksums = {path: md5 for path, md5 in rows}
-    body = {"request": req.model_dump(mode="json"), "files": {p: checksums.get(p) for p in paths}}
+    request = req.model_dump(mode="json")
+    if req.generation_counts is None:
+        request.pop("generation_counts", None)
+    body = {"request": request, "files": {p: checksums.get(p) for p in paths}}
     return hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
 
 

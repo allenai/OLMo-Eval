@@ -330,3 +330,17 @@ def test_metrics_json_summary_carries_suite_counts() -> None:
 
 def test_sum_is_none_when_no_member_has_counts() -> None:
     assert sum_generation_counts({"a": {"metrics": CLEAN_METRICS}}, ["a", "missing"]) is None
+
+
+def test_overlapping_suite_members_count_each_task_once() -> None:
+    counts = sum_generation_counts(
+        {
+            "shared": _task_data(cap_hit=2, generations=10),
+            "other": _task_data(cap_hit=1, generations=5),
+        },
+        ["shared", "other", "shared"],
+    )
+
+    assert counts is not None
+    assert counts["generations"] == 15
+    assert counts["cap_hit"] == 3

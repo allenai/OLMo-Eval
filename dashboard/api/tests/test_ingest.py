@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import copy
 import hashlib
+import json
 import math
 from typing import Any
 
@@ -14,6 +15,7 @@ import pytest
 from jsonschema import Draft7Validator
 from sqlalchemy import text
 
+from olmo_eval_api.schemas import ingest as s
 from olmo_eval_api.services.derive import instance_key_hash
 from olmo_eval_api.settings import UPLOADER_SERVICE_ACCOUNT
 from tests.factories import (
@@ -326,8 +328,9 @@ async def test_reupload_keeps_a_complete_run_visible(client: httpx.AsyncClient) 
     assert body["status"] == "partial" and body["upload_state"] == "complete"
 
 
+@pytest.mark.parametrize("legacy_hash", [False, True])
 async def test_identical_task_result_reupload_keeps_instances(
-    client: httpx.AsyncClient, session: Any
+    client: httpx.AsyncClient, session: Any, legacy_hash: bool
 ) -> None:
     run_id = "same00000001"
     await seed_run(client, run_id=run_id, tasks={"gsm8k": [1.0, 0.0, 1.0]})
@@ -340,6 +343,19 @@ async def test_identical_task_result_reupload_keeps_instances(
         corpus_score=2 / 3,
         n=3,
     )
+    if legacy_hash:
+        request = s.TaskResultIn.model_validate(payload)
+        legacy_body = {
+            "request": request.model_dump(mode="json", exclude={"generation_counts"}),
+            "files": {},
+        }
+        digest = hashlib.sha256(json.dumps(legacy_body, sort_keys=True).encode()).hexdigest()
+        await session.execute(
+            text("UPDATE task_results SET content_hash = :h WHERE run_id = :r"),
+            {"h": digest, "r": run_id},
+        )
+        await session.commit()
+
     # An interrupted re-upload: the run and the task result are sent again, nothing else.
     body = run_payload(run_id=run_id, model_name="test-org/test-model", task_specs=["gsm8k"])
     assert (await client.put(f"/v1/runs/{run_id}", json=body)).json()["upload_state"] == "complete"

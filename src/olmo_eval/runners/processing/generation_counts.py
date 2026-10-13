@@ -57,7 +57,7 @@ def sum_generation_counts(
     """Sum the counts of the given tasks; None if none carries counts."""
     total = dict.fromkeys(GENERATION_COUNT_KEYS, 0)
     found = False
-    for spec in task_specs:
+    for spec in dict.fromkeys(task_specs):
         counts: Mapping[str, int] | None = (task_results.get(spec) or {}).get("generation_counts")
         if not counts:
             continue
