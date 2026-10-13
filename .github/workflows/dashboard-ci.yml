@@ -1,0 +1,96 @@
+name: Dashboard CI
+on:
+    pull_request:
+        branches: [main]
+        paths:
+            - dashboard/**
+            - .github/workflows/dashboard-ci.yml
+    push:
+        branches: [main]
+        paths:
+            - dashboard/**
+            - .github/workflows/dashboard-ci.yml
+
+permissions:
+    contents: read
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    api:
+        name: API
+        runs-on: ubuntu-latest
+        defaults:
+            run:
+                working-directory: dashboard/api
+        services:
+            postgres:
+                # Matches the Cloud SQL major version in infra/terraform/cloudsql.tf.
+                image: postgres:17
+                env:
+                    POSTGRES_USER: olmo
+                    # Throwaway CI database, so no password.
+                    POSTGRES_HOST_AUTH_METHOD: trust
+                    POSTGRES_DB: olmo_eval_test
+                ports: ["5432:5432"]
+                options: >-
+                    --health-cmd "pg_isready -U olmo" --health-interval 5s
+                    --health-timeout 5s --health-retries 20
+        env:
+            TEST_DATABASE_URL: postgresql+asyncpg://olmo@localhost:5432/olmo_eval_test
+        steps:
+            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+            - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+              with:
+                  python-version: "3.12"
+                  enable-cache: true
+                  cache-dependency-glob: dashboard/api/uv.lock
+            - run: uv sync --locked
+            - run: uv run ruff check .
+            - run: uv run ruff format --check .
+            - run: uv run ty check
+            - run: uv run pytest
+
+    ui:
+        name: UI
+        runs-on: ubuntu-latest
+        defaults:
+            run:
+                working-directory: dashboard/ui
+        steps:
+            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+            - name: Check that licensed font files are not committed
+              working-directory: .
+              run: |
+                  files="$(git ls-files 'dashboard/ui/public/fonts/*' '*.otf')"
+                  if [ -n "$files" ]; then
+                      echo "Licensed font files must not be committed:"
+                      echo "$files"
+                      exit 1
+                  fi
+            - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+              with:
+                  node-version: 24
+                  cache: npm
+                  cache-dependency-path: dashboard/ui/package-lock.json
+            - run: npm ci
+            - run: npm run lint
+            - run: npm run typecheck
+            - run: npm run test
+            - run: npm run contract:check
+            - run: npm run build
+
+    # Builds the same images the Skiff2 deploy builds (context dashboard/), so a broken
+    # Dockerfile fails here instead of in the deploy on main. Nothing is pushed.
+    images:
+        name: Docker images
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+            - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+            - name: Build ui image
+              run: docker buildx build -f dashboard/ui/Dockerfile dashboard
+            - name: Build api image
+              run: docker buildx build -f dashboard/api/Dockerfile --build-arg API_MODE=ingest dashboard

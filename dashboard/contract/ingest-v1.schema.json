@@ -1,0 +1,1864 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "ArtifactIn": {
+      "additionalProperties": false,
+      "properties": {
+        "content_type": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/definitions/ArtifactKind"
+        },
+        "md5_b64": {
+          "description": "Base64 MD5 of the file contents (what GCS reports as md5Hash).",
+          "pattern": "^[A-Za-z0-9+/]{22}==$",
+          "type": "string"
+        },
+        "path": {
+          "$ref": "#/definitions/RelativePath"
+        },
+        "size_bytes": {
+          "maximum": 5368709120,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "task_name": {
+          "description": "Task spec for predictions/requests files, else null.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "path",
+        "size_bytes",
+        "md5_b64",
+        "content_type",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "ArtifactKind": {
+      "enum": [
+        "metrics",
+        "manifest",
+        "predictions",
+        "requests",
+        "inference_metrics",
+        "logs",
+        "traces",
+        "other"
+      ],
+      "type": "string"
+    },
+    "BeakerInfo": {
+      "additionalProperties": false,
+      "description": "Beaker metadata captured from the job environment. All null outside Beaker.",
+      "properties": {
+        "budget": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cluster": {
+          "description": "Cluster, e.g. \"ai2/jupiter\". From OLMO_EVAL_BEAKER_CLUSTER or derived from node_hostname.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cpu_count": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "experiment_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "gpu_count": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/NonNegativeInteger"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "image": {
+          "description": "Beaker image or Docker image the job ran.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "job_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "node_hostname": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "priority": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "result_dataset_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "task_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workload_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workspace": {
+          "description": "Workspace full name, e.g. \"ai2/olmo-eval-debug\".",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workspace_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "experiment_id",
+        "workload_id",
+        "job_id",
+        "task_id",
+        "workspace",
+        "workspace_id",
+        "result_dataset_id",
+        "node_hostname",
+        "cluster",
+        "priority",
+        "image",
+        "budget",
+        "gpu_count",
+        "cpu_count"
+      ],
+      "type": "object"
+    },
+    "ClientInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "Always \"olmo-eval\" for the official client.",
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "type": "object"
+    },
+    "CompleteRequest": {
+      "additionalProperties": false,
+      "description": "Finish an upload. The server recomputes derived data (stderr, metric kinds, suite stderr, score vectors, run summary), verifies artifacts, and marks the upload complete. Idempotent.",
+      "properties": {
+        "duration_seconds": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "expected_artifacts": {
+          "$ref": "#/definitions/NonNegativeInteger"
+        },
+        "expected_task_results": {
+          "$ref": "#/definitions/NonNegativeInteger"
+        },
+        "finished_at": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DateTime"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "$ref": "#/definitions/FinalRunStatus"
+        },
+        "suites": {
+          "items": {
+            "$ref": "#/definitions/SuiteResultIn"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "status",
+        "finished_at",
+        "duration_seconds",
+        "suites",
+        "expected_task_results",
+        "expected_artifacts"
+      ],
+      "type": "object"
+    },
+    "CompleteResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "artifacts_missing": {
+          "description": "Artifact paths that were signed but are missing from GCS.",
+          "items": {
+            "$ref": "#/definitions/RelativePath"
+          },
+          "type": "array"
+        },
+        "dashboard_url": {
+          "type": "string"
+        },
+        "instances": {
+          "$ref": "#/definitions/NonNegativeInteger"
+        },
+        "run_id": {
+          "$ref": "#/definitions/RunId"
+        },
+        "status": {
+          "$ref": "#/definitions/FinalRunStatus"
+        },
+        "task_results": {
+          "$ref": "#/definitions/NonNegativeInteger"
+        },
+        "upload_state": {
+          "$ref": "#/definitions/UploadState"
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "run_id",
+        "status",
+        "upload_state",
+        "dashboard_url",
+        "task_results",
+        "instances",
+        "artifacts_missing",
+        "warnings"
+      ],
+      "type": "object"
+    },
+    "DateTime": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "EnvironmentInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "cuda_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "gpu_count": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/NonNegativeInteger"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "gpu_type": {
+          "description": "e.g. \"NVIDIA H100 80GB HBM3\".",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "hostname": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "packages": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Installed distribution versions: \"olmo-eval\", \"vllm\", \"torch\", \"transformers\", \"datasets\", \"litellm\" when present.",
+          "type": "object"
+        },
+        "platform": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "python_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "hostname",
+        "platform",
+        "python_version",
+        "packages",
+        "cuda_version",
+        "gpu_type",
+        "gpu_count"
+      ],
+      "type": "object"
+    },
+    "ErrorBody": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "description": "Machine-readable code: bad_request, unauthenticated, forbidden, not_found, conflict, payload_too_large, validation_error, internal.",
+          "type": "string"
+        },
+        "details": {},
+        "message": {
+          "type": "string"
+        },
+        "request_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "request_id"
+      ],
+      "type": "object"
+    },
+    "ErrorResponse": {
+      "additionalProperties": false,
+      "description": "Body of every non-2xx response.",
+      "properties": {
+        "error": {
+          "$ref": "#/definitions/ErrorBody"
+        }
+      },
+      "required": [
+        "error"
+      ],
+      "type": "object"
+    },
+    "FinalRunStatus": {
+      "enum": [
+        "complete",
+        "partial",
+        "failed"
+      ],
+      "type": "string"
+    },
+    "FlatMetrics": {
+      "additionalProperties": {
+        "type": [
+          "number",
+          "null"
+        ]
+      },
+      "description": "Flat metrics keyed by \"metric_name:scorer_name\".",
+      "type": "object"
+    },
+    "GitInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "branch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "commit": {
+          "description": "Full SHA when known (GIT_REF in Beaker), else a short SHA.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dirty": {
+          "description": "True when the local working tree had uncommitted changes.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "repo": {
+          "description": "\"owner/name\", e.g. \"allenai/olmo-eval\" (GITHUB_REPO in Beaker).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "repo",
+        "commit",
+        "branch",
+        "dirty"
+      ],
+      "type": "object"
+    },
+    "GpuDeviceIn": {
+      "additionalProperties": false,
+      "properties": {
+        "device_id": {
+          "$ref": "#/definitions/NonNegativeInteger"
+        },
+        "memory_total_mb": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "device_id",
+        "name",
+        "memory_total_mb"
+      ],
+      "type": "object"
+    },
+    "InferenceBatchIn": {
+      "additionalProperties": false,
+      "description": "One BatchMetrics line from metrics/*-inference.jsonl without gpu_devices or requests.",
+      "properties": {
+        "failed_requests": {
+          "$ref": "#/definitions/NonNegativeInt32"
+        },
+        "gpu_summary": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "BatchMetrics gpu_summary as written."
+        },
+        "mean_latency_s": {
+          "type": "number"
+        },
+        "output_tokens_per_second": {
+          "type": "number"
+        },
+        "seq": {
+          "$ref": "#/definitions/NonNegativeInt32",
+          "description": "Order within the run, starting at 0."
+        },
+        "successful_requests": {
+          "$ref": "#/definitions/NonNegativeInt32"
+        },
+        "task_name": {
+          "description": "BatchMetrics.task_name (null today: chunks mix tasks).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "timestamp": {
+          "$ref": "#/definitions/DateTime"
+        },
+        "total_completion_tokens": {
+          "$ref": "#/definitions/NonNegativeInteger"
+        },
+        "total_prompt_tokens": {
+          "$ref": "#/definitions/NonNegativeInteger"
+        },
+        "total_requests": {
+          "$ref": "#/definitions/NonNegativeInt32"
+        },
+        "wall_clock_time_s": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "seq",
+        "timestamp",
+        "task_name",
+        "total_requests",
+        "successful_requests",
+        "failed_requests",
+        "total_prompt_tokens",
+        "total_completion_tokens",
+        "wall_clock_time_s",
+        "output_tokens_per_second",
+        "mean_latency_s",
+        "gpu_summary"
+      ],
+      "type": "object"
+    },
+    "InferenceUploadRequest": {
+      "additionalProperties": false,
+      "description": "Replaces all inference data for the run.",
+      "properties": {
+        "batches": {
+          "items": {
+            "$ref": "#/definitions/InferenceBatchIn"
+          },
+          "maxItems": 20000,
+          "type": "array"
+        },
+        "gpu_devices": {
+          "items": {
+            "$ref": "#/definitions/GpuDeviceIn"
+          },
+          "type": "array"
+        },
+        "request_latency": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RequestLatencyIn"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Present only when per-request metrics were recorded."
+        },
+        "series": {
+          "items": {
+            "$ref": "#/definitions/SeriesIn"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "source_paths": {
+          "description": "Relative paths of the source JSONL files.",
+          "items": {
+            "$ref": "#/definitions/RelativePath"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "source_paths",
+        "batches",
+        "series",
+        "request_latency",
+        "gpu_devices"
+      ],
+      "type": "object"
+    },
+    "InferenceUploadResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "batches_stored": {
+          "$ref": "#/definitions/NonNegativeInteger"
+        },
+        "series_stored": {
+          "$ref": "#/definitions/NonNegativeInteger"
+        }
+      },
+      "required": [
+        "batches_stored",
+        "series_stored"
+      ],
+      "type": "object"
+    },
+    "InstanceBatchRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "batch_index": {
+          "$ref": "#/definitions/NonNegativeInteger"
+        },
+        "instances": {
+          "items": {
+            "$ref": "#/definitions/InstanceIn"
+          },
+          "maxItems": 2000,
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "batch_index",
+        "instances"
+      ],
+      "type": "object"
+    },
+    "InstanceBatchResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "received": {
+          "$ref": "#/definitions/NonNegativeInteger"
+        },
+        "task_result_id": {
+          "$ref": "#/definitions/Integer"
+        },
+        "total_stored": {
+          "$ref": "#/definitions/NonNegativeInteger",
+          "description": "Instances stored for this task result after this batch."
+        }
+      },
+      "required": [
+        "task_result_id",
+        "received",
+        "total_stored"
+      ],
+      "type": "object"
+    },
+    "InstanceIn": {
+      "additionalProperties": false,
+      "description": "Compact per-instance row extracted by olmo-eval from the predictions and requests JSONL files. Full records stay in GCS and are read by byte range.",
+      "properties": {
+        "completion_tokens": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/NonNegativeInt32"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Sum over all generated samples (multiple choice: model_output[0])."
+        },
+        "doc_id": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/NonNegativeInt32"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extracted_answer": {
+          "maxLength": 256,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "finish_reason": {
+          "description": "\"length\" if any sample was truncated, else model_output[0].finish_reason.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "has_execution_result": {
+          "type": "boolean"
+        },
+        "has_judge_result": {
+          "type": "boolean"
+        },
+        "has_scoring_error": {
+          "type": "boolean"
+        },
+        "has_trajectory": {
+          "type": "boolean"
+        },
+        "judge_verdict": {
+          "description": "judge_result when it is a string, else judge_result.verdict, truncated.",
+          "maxLength": 64,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "label": {
+          "description": "Gold label, JSON-encoded when not a string, truncated.",
+          "maxLength": 256,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "metrics": {
+          "$ref": "#/definitions/FlatMetrics",
+          "description": "All finite per-instance metric values, flattened to \"metric:scorer\".",
+          "maxProperties": 200
+        },
+        "native_id": {
+          "description": "str(native_id), truncated to 512 characters. Unique within a task result; duplicates get a \"#<n>\" suffix, added within the 512-character limit.",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "num_outputs": {
+          "$ref": "#/definitions/NonNegativeInteger",
+          "description": "len(model_output)."
+        },
+        "output_preview": {
+          "description": "First 300 characters of model_output[0].text (or final_output).",
+          "maxLength": 300,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pred_length": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/NonNegativeInt32"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pred_offset": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/NonNegativeInteger"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Byte offset and length (without the newline) of this instance's line in predictions_path."
+        },
+        "primary_score": {
+          "description": "Value of the task's primary metric for this instance, null when absent.",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "prompt_preview": {
+          "description": "First 300 characters of the question: request doc.query, else the last user message, else the end of the prompt string.",
+          "maxLength": 300,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "prompt_tokens": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/NonNegativeInt32"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Prompt tokens for this instance (log-likelihood requests: context plus continuation)."
+        },
+        "req_length": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/NonNegativeInt32"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "req_offset": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/NonNegativeInteger"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Byte offset and length of the matching line in requests_path, null when not found."
+        }
+      },
+      "required": [
+        "native_id",
+        "doc_id",
+        "primary_score",
+        "metrics",
+        "label",
+        "finish_reason",
+        "completion_tokens",
+        "prompt_tokens",
+        "num_outputs",
+        "extracted_answer",
+        "prompt_preview",
+        "output_preview",
+        "judge_verdict",
+        "has_scoring_error",
+        "has_execution_result",
+        "has_judge_result",
+        "has_trajectory",
+        "pred_offset",
+        "pred_length",
+        "req_offset",
+        "req_length"
+      ],
+      "type": "object"
+    },
+    "Integer": {
+      "type": "integer"
+    },
+    "JsonObject": {
+      "additionalProperties": {},
+      "description": "Arbitrary JSON object (configs, error summaries).",
+      "type": "object"
+    },
+    "LatencyQuantiles": {
+      "additionalProperties": false,
+      "properties": {
+        "mean": {
+          "description": "Arithmetic mean. Optional because older clients sent quantiles only.",
+          "type": "number"
+        },
+        "n": {
+          "$ref": "#/definitions/NonNegativeInteger"
+        },
+        "p25": {
+          "type": "number"
+        },
+        "p5": {
+          "type": "number"
+        },
+        "p50": {
+          "type": "number"
+        },
+        "p75": {
+          "type": "number"
+        },
+        "p95": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "p5",
+        "p25",
+        "p50",
+        "p75",
+        "p95",
+        "n"
+      ],
+      "type": "object"
+    },
+    "MetricMetaIn": {
+      "additionalProperties": false,
+      "description": "Per-metric metadata resolved by olmo-eval from live Metric objects. Keyed by metric name (no scorer).",
+      "properties": {
+        "display_format": {
+          "description": "Metric.display_format().",
+          "enum": [
+            "percent",
+            "raw",
+            null
+          ],
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "higher_is_better": {
+          "description": "Metric.higher_is_better(), null when unknown.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "unit": {
+          "description": "Metric.metric_unit().",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "higher_is_better",
+        "display_format",
+        "unit"
+      ],
+      "type": "object"
+    },
+    "ModelInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "family": {
+          "description": "Optional explicit values. The server derives them from name/path/revision when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model_hash": {
+          "description": "olmo-eval compute_model_hash (16 hex).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "Display name: provider alias if set, else provider model.",
+          "type": "string"
+        },
+        "path": {
+          "description": "provider.model: HF ID, local path, s3://, gs:// or /weka path.",
+          "type": "string"
+        },
+        "provider_config": {
+          "$ref": "#/definitions/JsonObject",
+          "description": "ProviderConfig.to_dict() plus attention_backend."
+        },
+        "provider_kind": {
+          "description": "vllm, vllm_server, hf, olmo_core, olmo_core_vlm, litellm, mock, external, ...",
+          "type": "string"
+        },
+        "revision": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "series": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "step": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/NonNegativeInteger"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tokens_seen": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/NonNegativeInteger"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "path",
+        "model_hash",
+        "revision",
+        "provider_kind",
+        "provider_config"
+      ],
+      "type": "object"
+    },
+    "NestedMetrics": {
+      "additionalProperties": {
+        "additionalProperties": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "type": "object"
+      },
+      "description": "Nested metrics exactly as metrics.json stores them: {metric_name: {scorer_name: value}}.",
+      "type": "object"
+    },
+    "NonNegativeInt32": {
+      "description": "A count or size stored in a 32-bit column.",
+      "maximum": 2147483647,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "NonNegativeInteger": {
+      "maximum": 9223372036854776000,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "RelativePath": {
+      "description": "Path of a file relative to the run's output directory, POSIX separators, no leading slash, no \".\" or \"..\" segments.",
+      "pattern": "^(?!/)(?!.*(^|/)\\.\\.?(/|$))[^\\x00]{1,1024}$",
+      "type": "string"
+    },
+    "RequestLatencyIn": {
+      "additionalProperties": false,
+      "properties": {
+        "end_to_end_s": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/LatencyQuantiles"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tpot_s": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/LatencyQuantiles"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ttft_s": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/LatencyQuantiles"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "end_to_end_s",
+        "ttft_s",
+        "tpot_s"
+      ],
+      "type": "object"
+    },
+    "RunError": {
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "type": "string"
+        },
+        "task": {
+          "description": "Task spec the error belongs to, or null for a run-level error.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "task",
+        "error"
+      ],
+      "type": "object"
+    },
+    "RunId": {
+      "description": "Run ID. olmo-eval uses its experiment_id (12 lowercase hex characters).",
+      "pattern": "^[a-z0-9]{6,32}$",
+      "type": "string"
+    },
+    "RunInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "argv": {
+          "description": "[\"olmo-eval\", ...sys.argv[1:]].",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "author": {
+          "description": "BEAKER_AUTHOR, else $USER. Display only; the server records the verified uploader separately.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "beaker": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/BeakerInfo"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "duration_seconds": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "environment": {
+          "$ref": "#/definitions/EnvironmentInfo"
+        },
+        "errors": {
+          "items": {
+            "$ref": "#/definitions/RunError"
+          },
+          "type": "array"
+        },
+        "experiment_group": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "experiment_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "finished_at": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DateTime"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "git": {
+          "$ref": "#/definitions/GitInfo"
+        },
+        "harness_config": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/JsonObject"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "HarnessConfig.to_dict() (metrics.json \"config\")."
+        },
+        "launch_id": {
+          "maxLength": 64,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "olmo_eval_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "output_dir": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "processing_seconds": {
+          "description": "Seconds from processing_started_at until the last task finished (inference and scoring).",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "processing_started_at": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DateTime"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When every inference worker was ready. Task spans are measured from here."
+        },
+        "provider_init_seconds": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "number"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "run_id": {
+          "$ref": "#/definitions/RunId"
+        },
+        "started_at": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DateTime"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "startup_seconds": {
+          "description": "Seconds from olmo-eval starting until every inference worker was ready (model download and load, server start). Excludes Beaker queueing and job setup before olmo-eval starts.",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/definitions/RunStatus"
+        },
+        "tags": {
+          "items": {
+            "$ref": "#/definitions/Tag"
+          },
+          "maxItems": 50,
+          "type": "array"
+        },
+        "task_specs": {
+          "description": "Original -t values as typed, including suite names.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "run_id",
+        "launch_id",
+        "experiment_name",
+        "experiment_group",
+        "status",
+        "started_at",
+        "finished_at",
+        "duration_seconds",
+        "author",
+        "tags",
+        "olmo_eval_version",
+        "git",
+        "beaker",
+        "environment",
+        "argv",
+        "task_specs",
+        "output_dir",
+        "harness_config",
+        "provider_init_seconds",
+        "errors"
+      ],
+      "type": "object"
+    },
+    "RunStatus": {
+      "enum": [
+        "running",
+        "complete",
+        "partial",
+        "failed"
+      ],
+      "type": "string"
+    },
+    "RunUpsertRequest": {
+      "additionalProperties": false,
+      "description": "Create or update a run. Sent once when the run starts (status \"running\") and again at the end with the final status. Re-sending is safe.",
+      "properties": {
+        "client": {
+          "$ref": "#/definitions/ClientInfo"
+        },
+        "model": {
+          "$ref": "#/definitions/ModelInfo"
+        },
+        "protocol_version": {
+          "const": 1,
+          "type": "number"
+        },
+        "run": {
+          "$ref": "#/definitions/RunInfo"
+        }
+      },
+      "required": [
+        "protocol_version",
+        "client",
+        "run",
+        "model"
+      ],
+      "type": "object"
+    },
+    "RunUpsertResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "created": {
+          "description": "True when this request created the run.",
+          "type": "boolean"
+        },
+        "dashboard_url": {
+          "type": "string"
+        },
+        "gcs_prefix": {
+          "description": "gs:// URI of the run's artifact prefix, ending in \"/\".",
+          "type": "string"
+        },
+        "run_id": {
+          "$ref": "#/definitions/RunId"
+        },
+        "status": {
+          "$ref": "#/definitions/RunStatus",
+          "description": "Status after the upsert (a final status is never downgraded to \"running\")."
+        },
+        "upload_state": {
+          "$ref": "#/definitions/UploadState"
+        },
+        "uploaded_by": {
+          "description": "Verified email of the principal that first uploaded the run.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "created",
+        "status",
+        "upload_state",
+        "gcs_prefix",
+        "dashboard_url",
+        "uploaded_by"
+      ],
+      "type": "object"
+    },
+    "SeriesIn": {
+      "additionalProperties": false,
+      "description": "A downsampled time series. x is seconds since the run's started_at.",
+      "properties": {
+        "device": {
+          "description": "GPU device id as a string for per-device series, else null.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "gpu_utilization_pct, gpu_memory_used_mb, vllm_num_requests_running, vllm_num_requests_waiting, vllm_kv_cache_usage_pct, ...",
+          "type": "string"
+        },
+        "points": {
+          "items": {
+            "$ref": "#/definitions/SeriesPoint"
+          },
+          "maxItems": 500,
+          "type": "array"
+        },
+        "unit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "unit",
+        "device",
+        "points"
+      ],
+      "type": "object"
+    },
+    "SeriesPoint": {
+      "items": {
+        "type": "number"
+      },
+      "maxItems": 2,
+      "minItems": 2,
+      "type": "array"
+    },
+    "SignArtifactsRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "artifacts": {
+          "items": {
+            "$ref": "#/definitions/ArtifactIn"
+          },
+          "maxItems": 500,
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "artifacts"
+      ],
+      "type": "object"
+    },
+    "SignArtifactsResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "uploads": {
+          "items": {
+            "$ref": "#/definitions/SignedUpload"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "uploads"
+      ],
+      "type": "object"
+    },
+    "SignedUpload": {
+      "additionalProperties": false,
+      "properties": {
+        "expires_at": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DateTime"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "gs_uri": {
+          "type": "string"
+        },
+        "headers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Headers the PUT must send exactly (Content-Type, Content-MD5, and x-goog-content-length-range, which makes GCS reject a body of another size).",
+          "type": "object"
+        },
+        "method": {
+          "const": "PUT",
+          "type": "string"
+        },
+        "path": {
+          "$ref": "#/definitions/RelativePath"
+        },
+        "skip": {
+          "description": "True when an object with the same size and MD5 already exists; do not upload.",
+          "type": "boolean"
+        },
+        "url": {
+          "description": "V4 signed URL, null when skip is true.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "path",
+        "gs_uri",
+        "skip",
+        "url",
+        "method",
+        "headers",
+        "expires_at"
+      ],
+      "type": "object"
+    },
+    "SuiteChildIn": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "task",
+            "suite"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ],
+      "type": "object"
+    },
+    "SuiteResultIn": {
+      "additionalProperties": false,
+      "description": "One suite aggregation from metrics/results \"suites\", plus its definition.",
+      "properties": {
+        "aggregation": {
+          "maxLength": 32,
+          "type": "string"
+        },
+        "children": {
+          "description": "Direct children from the registered Suite definition (or the contributing tasks when unregistered).",
+          "items": {
+            "$ref": "#/definitions/SuiteChildIn"
+          },
+          "type": "array"
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "metrics": {
+          "$ref": "#/definitions/NestedMetrics"
+        },
+        "name": {
+          "type": "string"
+        },
+        "num_tasks": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/NonNegativeInt32"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "parent": {
+          "description": "Parent suite name for nested suites, else null.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "primary_metric": {
+          "description": "\"primary_score:average\" for olmo-eval suites.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "score": {
+          "description": "Suite primary score, null for display_only/none.",
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "aggregation",
+        "parent",
+        "description",
+        "children",
+        "metrics",
+        "primary_metric",
+        "score",
+        "num_tasks"
+      ],
+      "type": "object"
+    },
+    "Tag": {
+      "description": "Free-form label attached to a run.",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,63}$",
+      "type": "string"
+    },
+    "TaskResultIn": {
+      "additionalProperties": false,
+      "description": "Create or replace one task result. Upsert key: (run_id, task_name, task_hash). Replacing deletes the task result's stored instances; the client then sends all instances again.",
+      "properties": {
+        "attributed_inference_seconds": {
+          "description": "Inference seconds attributed to this task from per-batch inference metrics (each batch's wall time split by the task's share of the batch's tokens). Null unless recorded.",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "base_task": {
+          "description": "Registered base task name, e.g. \"gsm8k\" for \"gsm8k:cot:olmo3\".",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "completion_tokens_total": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/NonNegativeInteger"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Completion tokens over every request of the task, including failed instances."
+        },
+        "config": {
+          "$ref": "#/definitions/JsonObject",
+          "description": "TaskConfig.to_dict() (metrics.json tasks[].config)."
+        },
+        "duration_seconds": {
+          "description": "Seconds from the run's processing_started_at until this task finished. Tasks share inference workers, so this is not the task's own cost; see first_request_at and the token totals for that.",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error_summary": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/JsonObject"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "first_request_at": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DateTime"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When the task's first request was sent to an inference worker."
+        },
+        "instance_count": {
+          "$ref": "#/definitions/NonNegativeInt32",
+          "description": "Number of instance rows the client will send for this task result (0 without predictions)."
+        },
+        "instances_failed": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/NonNegativeInt32"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "instances_processed": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/NonNegativeInt32"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_completed_at": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DateTime"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When the task's last instance finished."
+        },
+        "limit": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/NonNegativeInt32"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "metric_meta": {
+          "additionalProperties": {
+            "$ref": "#/definitions/MetricMetaIn"
+          },
+          "type": "object"
+        },
+        "metrics": {
+          "$ref": "#/definitions/NestedMetrics"
+        },
+        "num_fewshot": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/NonNegativeInt32"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "num_instances": {
+          "$ref": "#/definitions/NonNegativeInt32",
+          "description": "Scored and saved instances (tasks[].num_instances)."
+        },
+        "predictions_path": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RelativePath"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "primary_metric": {
+          "description": "\"metric_name:scorer_name\"; tasks[].primary_metric, else summary[task].metric.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "prompt_tokens_total": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/NonNegativeInteger"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Prompt tokens over every request of the task, including failed instances."
+        },
+        "requests_path": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RelativePath"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "split": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "suites": {
+          "description": "Registered suites that contain this task spec (static membership).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "task_hash": {
+          "description": "metrics.json tasks[].task_hash (16 hex).",
+          "type": "string"
+        },
+        "task_name": {
+          "description": "Task spec as run (metrics.json tasks[].task) with any \"@priority\" suffix removed.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_name",
+        "task_hash",
+        "base_task",
+        "primary_metric",
+        "metrics",
+        "metric_meta",
+        "config",
+        "num_fewshot",
+        "limit",
+        "split",
+        "num_instances",
+        "instances_processed",
+        "instances_failed",
+        "error",
+        "error_summary",
+        "duration_seconds",
+        "predictions_path",
+        "requests_path",
+        "suites",
+        "instance_count"
+      ],
+      "type": "object"
+    },
+    "TaskResultUpsertResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "created": {
+          "type": "boolean"
+        },
+        "instances_cleared": {
+          "description": "True when previously stored instances were deleted.",
+          "type": "boolean"
+        },
+        "task_result_id": {
+          "$ref": "#/definitions/Integer"
+        },
+        "unchanged": {
+          "description": "True when the stored task result already matches this request and its files, so its instances were kept and need not be sent again.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "task_result_id",
+        "created",
+        "instances_cleared",
+        "unchanged"
+      ],
+      "type": "object"
+    },
+    "UploadState": {
+      "enum": [
+        "uploading",
+        "complete"
+      ],
+      "type": "string"
+    },
+    "WhoAmIResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "email": {
+          "description": "Verified email from the Google access token.",
+          "type": "string"
+        },
+        "expires_in": {
+          "$ref": "#/definitions/NonNegativeInteger",
+          "description": "Seconds until the presented token expires."
+        },
+        "principal_type": {
+          "enum": [
+            "user",
+            "service_account"
+          ],
+          "type": "string"
+        },
+        "protocol_versions": {
+          "description": "Ingest protocol versions this server accepts.",
+          "items": {
+            "$ref": "#/definitions/Integer"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "email",
+        "principal_type",
+        "expires_in",
+        "protocol_versions"
+      ],
+      "type": "object"
+    }
+  }
+}

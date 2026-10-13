@@ -284,7 +284,7 @@ common_tail_args=(
     "-B" "${BUDGET}"
     "--cluster" "${CLUSTER}"
     "--group" "${GROUP}"
-    "--store"
+    "--upload"
     "--inspect"
     "--gcp-credentials"
     "--no-follow"

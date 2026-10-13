@@ -335,7 +335,7 @@ class TestScaffoldKwargsIsolation:
 
     def test_an_override_does_not_mutate_the_config_it_was_applied_to(self):
         """Applying -o overrides leaves the config they were applied to intact."""
-        from olmo_eval.cli.beaker.launch import _apply_harness_overrides
+        from olmo_eval.cli.run.config import _apply_harness_overrides
 
         config = self._config()
 
@@ -348,7 +348,7 @@ class TestScaffoldKwargsIsolation:
 
     def test_two_overrides_of_one_config_do_not_accumulate(self):
         """A second launch must not inherit the first launch's overrides."""
-        from olmo_eval.cli.beaker.launch import _apply_harness_overrides
+        from olmo_eval.cli.run.config import _apply_harness_overrides
 
         config = self._config()
 
