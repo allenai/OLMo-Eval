@@ -502,9 +502,13 @@ class Task(ABC):
         yield from self._instances_cache
 
     def get_fewshot(self) -> list[Instance]:
-        """Get few-shot examples (cached after first call)."""
+        """Get few-shot examples (cached after first call).
+
+        Returns no examples when ``num_fewshot`` is 0, whatever pool the task
+        would otherwise draw from.
+        """
         if self._fewshot_cache is None:
-            self._fewshot_cache = self._build_fewshot()
+            self._fewshot_cache = self._build_fewshot() if self.config.num_fewshot else []
         return self._fewshot_cache
 
     # Class attributes for fewshot configuration (can be overridden by subclasses)
