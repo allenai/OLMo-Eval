@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# Pre-commit hook: ruff, ty, file sizes.
+# Enable with: make setup (or git config core.hooksPath .githooks)
+
+VERBOSE=false
+for arg in "$@"; do
+    case "$arg" in
+        -v|--verbose) VERBOSE=true ;;
+    esac
+done
+
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+TMPDIR_HOOK=$(mktemp -d)
+
+GREEN="\033[0;32m"
+RED="\033[0;31m"
+YELLOW="\033[0;33m"
+DIM="\033[2m"
+RESET="\033[0m"
+
+USE_SPINNER=false
+if [ -t 1 ]; then
+    USE_SPINNER=true
+fi
+
+cleanup() {
+    if [ "$USE_SPINNER" = true ]; then
+        # Restore cursor in case we were interrupted mid-spinner
+        printf "\033[?25h"
+    fi
+    rm -rf "$TMPDIR_HOOK"
+}
+trap cleanup EXIT INT TERM
+
+SPIN=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+
+now_ms() {
+    perl -MTime::HiRes=time -e 'printf "%d", time() * 1000'
+}
+
+format_elapsed() {
+    local ms=$1
+    if [ "$ms" -lt 1000 ]; then
+        printf "%dms" "$ms"
+    else
+        printf "%ds" "$((ms / 1000))"
+    fi
+}
+
+# Run a command with output captured to $outfile. While it runs, render a
+# spinner next to $label on a TTY; on non-TTY stdout, just block until done.
+# Returns the command's exit status.
+run_with_spinner() {
+    local label="$1"
+    local outfile="$2"
+    shift 2
+
+    if [ "$USE_SPINNER" != true ]; then
+        "$@" >"$outfile" 2>&1
+        return $?
+    fi
+
+    "$@" >"$outfile" 2>&1 &
+    local pid=$!
+    local i=0
+    printf "\033[?25l"  # hide cursor
+    while kill -0 "$pid" 2>/dev/null; do
+        printf "\r${YELLOW}%s${RESET} %s" "${SPIN[$i]}" "$label"
+        i=$(( (i + 1) % ${#SPIN[@]} ))
+        sleep 0.08
+    done
+    wait "$pid"
+    local status=$?
+    printf "\033[?25h\r\033[K"  # show cursor, clear spinner line
+    return $status
+}
+
+run_check() {
+    local label="$1"; shift
+
+    local outfile="$TMPDIR_HOOK/output.$$.$RANDOM"
+    local start; start=$(now_ms)
+    run_with_spinner "$label" "$outfile" "$@"
+    local status=$?
+    local elapsed; elapsed=$(format_elapsed $(( $(now_ms) - start )))
+
+    if [ $status -ne 0 ]; then
+        printf "${RED}✗${RESET} %s ${DIM}(%s)${RESET}\n" "$label" "$elapsed"
+        cat "$outfile"
+        exit $status
+    fi
+    printf "${GREEN}✓${RESET} %s ${DIM}(%s)${RESET}\n" "$label" "$elapsed"
+    if [ "$VERBOSE" = true ]; then
+        cat "$outfile"
+    fi
+}
+
+run_check "ruff check" uv run --frozen ruff check src/ tests/
+run_check "ruff format" uv run --frozen ruff format --check src/ tests/
+run_check "ty" uv run --frozen ty check src/
+run_check "file sizes" scripts/check_file_sizes.sh

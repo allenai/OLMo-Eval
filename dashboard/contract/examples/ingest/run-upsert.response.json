@@ -1,0 +1,9 @@
+{
+  "run_id": "db385601e335",
+  "created": true,
+  "status": "running",
+  "upload_state": "uploading",
+  "gcs_prefix": "gs://ai2-skiff2-olmo-eval-results/runs/db385601e335/",
+  "dashboard_url": "https://olmo-eval.allen.ai/runs/db385601e335",
+  "uploaded_by": "maliam@allenai.org"
+}

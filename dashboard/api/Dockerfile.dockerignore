@@ -1,0 +1,7 @@
+# Paths are relative to the build context (dashboard/). Only the API package is sent.
+*
+!api/pyproject.toml
+!api/uv.lock
+!api/src/
+**/__pycache__
+**/*.pyc

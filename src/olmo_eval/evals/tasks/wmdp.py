@@ -147,7 +147,7 @@ class WMDPLogprobMCAccuracyMetric(Metric):
         logprob_sums = [scorer.score(response.instance, o) for o in response.outputs]
         return 0.0 if logprob_sums.index(max(logprob_sums)) == gold_idx else 1.0
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False
 
 

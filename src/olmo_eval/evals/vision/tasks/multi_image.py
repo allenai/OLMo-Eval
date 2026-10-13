@@ -118,7 +118,7 @@ class MultiImageCategoryMetric(Metric):
         value = response.scores.get(self.scorer().name)
         return float(value) if isinstance(value, (int, float)) else None
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False
 
 
@@ -154,7 +154,7 @@ class MultiImageCountBucketMetric(Metric):
         value = response.scores.get(self.scorer().name)
         return float(value) if isinstance(value, (int, float)) else None
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False
 
 
