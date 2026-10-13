@@ -136,19 +136,25 @@ def _compute_gap(
     suite_name: str,
     task_specs: list[str],
     task_results: dict[str, dict[str, Any]],
-) -> dict[str, Any] | None:
-    """Report a reference task, its companion, and the companion minus the reference.
-
-    None, with a warning, unless both have a primary score on the same metric.
-    """
+) -> dict[str, Any]:
+    """Report a GAP definition, scored when both tasks share a primary metric."""
     reference_spec, companion_spec = task_specs
+    definition: dict[str, Any] = {
+        "metrics": {},
+        "tasks": list(task_specs),
+        "num_tasks": 2,
+        "aggregation": "gap",
+        "reference_task": reference_spec,
+        "companion_task": companion_spec,
+        "primary_metric": None,
+    }
     scores: list[float] = []
     for spec in task_specs:
         task_data = task_results.get(spec) or {}
         score = _extract_primary_score(task_data) if task_data.get("metrics") else None
         if score is None:
             logger.warning(f"Suite {suite_name}: no primary score for {spec}; omitting the gap.")
-            return None
+            return definition
         scores.append(score)
 
     reference_metric = task_results[reference_spec].get("primary_metric")
@@ -158,7 +164,7 @@ def _compute_gap(
             f"Suite {suite_name}: {reference_spec} reports {reference_metric} but "
             f"{companion_spec} reports {companion_metric}; omitting the gap."
         )
-        return None
+        return definition
 
     reference, companion = scores
     from olmo_eval.upload.metadata import metric_meta_for_spec
@@ -338,8 +344,7 @@ def compute_suite_aggregations(
                 [f"{task_spec}{priority_suffix}" for task_spec in suite.expand()],
                 task_results,
             )
-            if gap_result is not None:
-                suite_aggregations[spec] = gap_result
+            suite_aggregations[spec] = gap_result
             continue
 
         _log_tasks_excluded_from_suite(

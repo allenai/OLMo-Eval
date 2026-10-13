@@ -834,8 +834,9 @@ async def test_ingest_mode_rejects_dashboard_routes(engine: Any, settings: Any) 
             assert (await c.get("/v1/whoami")).status_code == 401
 
 
+@pytest.mark.parametrize("reported_score", [0.4, 0.6, -0.2, None])
 async def test_gap_ingest_metadata_follows_companion(
-    client: httpx.AsyncClient, session: Any
+    client: httpx.AsyncClient, session: Any, reported_score: float | None
 ) -> None:
     run_id = "metastore01"
     response = await client.put(
@@ -862,7 +863,7 @@ async def test_gap_ingest_metadata_follows_companion(
             "status": "complete",
             "finished_at": None,
             "duration_seconds": 1.0,
-            "suites": [suite("metapair", ["in", "out"], score=0.4, aggregation="gap")],
+            "suites": [suite("metapair", ["in", "out"], score=reported_score, aggregation="gap")],
             "expected_task_results": 2,
             "expected_artifacts": 0,
         },
@@ -870,12 +871,19 @@ async def test_gap_ingest_metadata_follows_companion(
     assert response.status_code == 200, response.text
     row = (
         await session.execute(
-            text("SELECT display_format, higher_is_better FROM suite_results WHERE run_id = :run"),
+            text(
+                "SELECT display_format, higher_is_better, score, primary_metric, metrics "
+                "FROM suite_results WHERE run_id = :run"
+            ),
             {"run": run_id},
         )
     ).one()
     assert row.display_format == "percent"
     assert row.higher_is_better is False
+    assert row.score == 0.4 and row.primary_metric == "primary_score:companion"
+    assert row.metrics == pytest.approx(
+        {"primary_score:reference": 0.6, "primary_score:companion": 0.4, "primary_score:gap": -0.2}
+    )
 
 
 @pytest.mark.parametrize("invalid_pair", ["different_metrics", "unscored", "missing_task"])

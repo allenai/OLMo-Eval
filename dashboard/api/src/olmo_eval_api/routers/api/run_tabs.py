@@ -310,7 +310,7 @@ async def run_suites(
     }
     defs = {**(await load_defs(session)), **stored_defs}
     key = cache_key(
-        "run-suites-v5",
+        "run-suites-v6",
         {"run_id": run_id, "baseline": baseline, **stats.__dict__},
         trs_list + (list(subject.trs.values()) if subject else []),
         definition_hashes([tree(r["suite_name"], defs) for r in ordered], defs),

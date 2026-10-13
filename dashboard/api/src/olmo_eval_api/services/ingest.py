@@ -1118,6 +1118,20 @@ async def complete_run(
         )
         formats = {tr.display_format for tr in metadata_tasks}
         directions = {tr.higher_is_better for tr in metadata_tasks}
+        score = derive.finite_or_none(x.score) if valid_aggregate else None
+        metrics = derive.flatten_metrics(x.metrics) if valid_aggregate else {}
+        primary_metric = x.primary_metric if valid_aggregate else None
+        if x.aggregation == "gap" and valid_aggregate:
+            reference = present[leaf_names[0]].score
+            companion = present[leaf_names[1]].score
+            assert reference is not None and companion is not None
+            score = companion
+            metrics = {
+                "primary_score:reference": reference,
+                "primary_score:companion": companion,
+                "primary_score:gap": derive.finite_or_none(companion - reference),
+            }
+            primary_metric = "primary_score:companion"
         row = SuiteResult(
             run_id=run_id,
             suite_name=x.name,
@@ -1126,12 +1140,12 @@ async def complete_run(
             description=x.description,
             children=children,
             definition_hash=def_hash,
-            score=derive.finite_or_none(x.score) if valid_aggregate else None,
+            score=score,
             stderr=propagate_stderr(weights, {k: tr.stderr for k, tr in present.items()}),
             num_tasks=x.num_tasks,
             n_instances=sum(n_inst.values()),
-            metrics=derive.flatten_metrics(x.metrics) if valid_aggregate else {},
-            primary_metric=x.primary_metric if valid_aggregate else None,
+            metrics=metrics,
+            primary_metric=primary_metric,
             display_format="percent" if formats == {"percent"} else "raw",
             higher_is_better=directions.pop() if len(directions) == 1 else None,
             tasks_missing=[name for name in leaf_names if name not in by_task],

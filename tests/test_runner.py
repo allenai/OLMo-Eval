@@ -1325,7 +1325,13 @@ class TestGapSuiteAggregation:
         if out is not None:
             task_results["task_out"] = out
 
-        assert compute_suite_aggregations([self.SUITE], task_results) == {}
+        result = compute_suite_aggregations([self.SUITE], task_results)[self.SUITE]
+        assert result["metrics"] == {} and result["primary_metric"] is None
+        from olmo_eval.upload.metadata import suite_results
+
+        payload = suite_results({self.SUITE: result}, task_results)[0]
+        assert payload["score"] is None and payload["primary_metric"] is None
+        assert payload["aggregation"] == "gap" and len(payload["children"]) == 2
 
     def test_different_primary_metrics_report_no_gap(self):
         from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
@@ -1335,7 +1341,13 @@ class TestGapSuiteAggregation:
             "task_out": self._task(0.45, metric="exact_match_flex:exact_match_flex"),
         }
 
-        assert compute_suite_aggregations([self.SUITE], task_results) == {}
+        result = compute_suite_aggregations([self.SUITE], task_results)[self.SUITE]
+        assert result["metrics"] == {} and result["primary_metric"] is None
+        from olmo_eval.upload.metadata import suite_results
+
+        payload = suite_results({self.SUITE: result}, task_results)[0]
+        assert payload["score"] is None and payload["primary_metric"] is None
+        assert payload["aggregation"] == "gap" and len(payload["children"]) == 2
 
     def test_log_summary_shows_the_gap_row(self, capsys):
         from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
