@@ -480,6 +480,8 @@ export interface TaskResultRow {
     n: Count;
     instances_processed: Count | null;
     instances_failed: Count | null;
+    /** Per-generation diagnostics, available even when predictions were not uploaded. */
+    generation_counts?: { [count: string]: Count } | null;
     instances_stored: Count;
     metrics: FlatMetrics;
     error: string | null;

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -226,6 +227,24 @@ async def test_tag_note_and_view_caps(
     view = {"name": "v", "page": "runs", "query": "", "shared": False}
     assert (await client.post("/api/views", json=view)).status_code == 200
     assert (await client.post("/api/views", json=view)).status_code == 400
+
+
+async def test_generation_counts_are_readable_without_instance_rows(
+    client: httpx.AsyncClient, session: Any
+) -> None:
+    run_id = "countsonly01"
+    await seed_run(client, run_id=run_id, tasks={"api_task": []})
+    counts = {"generations": 4, "cap_hit": 2, "empty": 1, "unclosed_think": 1}
+    await session.execute(
+        text(
+            "UPDATE task_results SET generation_counts = CAST(:counts AS jsonb) WHERE run_id = :run"
+        ),
+        {"counts": json.dumps(counts), "run": run_id},
+    )
+    await session.commit()
+    body = await get(client, f"/api/runs/{run_id}/task-results", "RunTaskResultsResponse")
+    assert body["items"][0]["generation_counts"] == counts
+    assert body["items"][0]["instances_stored"] == 0
 
 
 async def test_run_task_results_with_baseline(client: httpx.AsyncClient, seeded: dict) -> None:

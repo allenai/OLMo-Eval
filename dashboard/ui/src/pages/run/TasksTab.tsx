@@ -98,10 +98,10 @@ export function TasksTab(ctx: RunCtx) {
         id: "score",
         header: "Score",
         title: "Score",
-        width: 110,
+        width: 190,
         align: "right",
         sortValue: (r) => r.score,
-        cell: (r) => <ScoreValue score={r.score} stderr={r.stderr} format={scoreFormat(r)} />,
+        cell: (r) => <ScoreValue score={r.score} stderr={r.stderr} format={scoreFormat(r)} generationCounts={r.generation_counts} />,
         csv: (r) => r.score,
       },
       {

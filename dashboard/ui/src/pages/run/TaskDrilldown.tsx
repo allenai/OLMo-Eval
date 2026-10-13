@@ -334,7 +334,7 @@ function ScoreSummary({ row }: { row: TaskResultRow }) {
       {row.mean_completion_tokens != null && ` · mean output ${Math.round(row.mean_completion_tokens)} tokens`}
       {row.score_is_mean ? "" : " · corpus score is not a per-instance mean"}
       {" · "}
-      <ScoreValue score={row.score} stderr={row.stderr} format={scoreFormat(row)} />
+      <ScoreValue score={row.score} stderr={row.stderr} format={scoreFormat(row)} generationCounts={row.generation_counts} />
     </p>
   );
 }

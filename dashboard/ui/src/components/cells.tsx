@@ -1,6 +1,6 @@
-import type { DeltaStats, DisplayFormat, ModelRef } from "@contract/api-types";
+import type { DeltaStats, DisplayFormat, ModelRef, TaskResultRow } from "@contract/api-types";
 import type { ReactNode } from "react";
-import { formatCI, formatCount, formatDelta, formatP, formatScore, formatStderr, formatStep, metricLabel } from "@/lib/format";
+import { formatCI, formatCount, formatDelta, formatGenerationCounts, formatP, formatScore, formatStderr, formatStep, metricLabel } from "@/lib/format";
 import { deltaEvidence, goodness } from "@/lib/scales";
 import { BaseTag, ModelDot, Tip } from "./primitives";
 import c from "./cells.module.css";
@@ -12,6 +12,7 @@ export function ScoreValue({
   showStderr = true,
   muted,
   strong,
+  generationCounts,
 }: {
   score: number | null | undefined;
   stderr?: number | null;
@@ -19,14 +20,24 @@ export function ScoreValue({
   showStderr?: boolean;
   muted?: boolean;
   strong?: boolean;
+  generationCounts?: TaskResultRow["generation_counts"];
 }) {
-  if (score == null) return <span className="faint mono">—</span>;
-  return (
+  const diagnostics = formatGenerationCounts(generationCounts);
+  if (score == null && !diagnostics) return <span className="faint mono">—</span>;
+  const value = (
     <span className={c.score} style={muted ? { color: "var(--muted)" } : undefined}>
       <span className={strong ? c.strong : undefined}>{formatScore(score, format)}</span>
       {showStderr && stderr != null && <span className={c.stderr}>{formatStderr(stderr, format)}</span>}
     </span>
   );
+  return diagnostics ? (
+    <span className={c.scoreWithCounts}>
+      {value}
+      <span className={c.generationCounts} title="Cap hits / generations; empty final answers; unclosed explicit thinking tags; unknown finish reasons.">
+        {diagnostics}
+      </span>
+    </span>
+  ) : value;
 }
 
 export const METHOD_LABEL: Record<string, string> = {

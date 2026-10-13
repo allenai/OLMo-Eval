@@ -5862,6 +5862,20 @@
           },
           "type": "object"
         },
+        "generation_counts": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/definitions/Count"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Per-generation diagnostics, available even when predictions were not uploaded."
+        },
         "instance_scale": {
           "type": "number"
         },

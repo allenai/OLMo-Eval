@@ -174,6 +174,7 @@ async def run_task_results_endpoint(
             n=int(tr["num_instances"] or 0),
             instances_processed=tr["instances_processed"],
             instances_failed=tr["instances_failed"],
+            generation_counts=tr["generation_counts"],
             instances_stored=int(tr["instances_stored"] or 0),
             metrics=tr["metrics"] or {},
             error=tr["error"],

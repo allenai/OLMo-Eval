@@ -1051,6 +1051,7 @@ class TaskResultRow(_Response):
     error: str | None
     error_summary: dict[str, Any] | None
     finish_reason_counts: dict[str, int]
+    generation_counts: dict[str, int] | None = Field(default=None)
     instance_scale: float
     instances_failed: int | None
     instances_processed: int | None

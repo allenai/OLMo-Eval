@@ -222,7 +222,7 @@ function TreeRows({
             </Tip>
           )}
         </span>
-        <span className={s.right}>{row.error ? <span className="faint">—</span> : <ScoreValue score={row.score} format={fmt} showStderr={false} />}</span>
+        <span className={s.right}><ScoreValue score={row.error ? null : row.score} format={fmt} showStderr={false} generationCounts={row.generation_counts} /></span>
         <span className={cx(s.right, "mono muted")} style={{ fontSize: 11.5 }}>
           {formatStderr(row.stderr, fmt)}
         </span>
