@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
+from typing import Any
 
 import pytest
 
@@ -296,3 +298,42 @@ def test_gap_matrix_overrides_validate_metrics_before_scores_and_deltas() -> Non
         spec, [subject], None, sides, body, None, metric_keys={"in": "strict", "out": "strict"}
     )
     assert row.cells[0].score == 0.45
+
+
+def test_primary_gap_metrics_come_from_one_complete_subject() -> None:
+    from olmo_eval_api.routers.api.compare import scope_metric_keys
+    from olmo_eval_api.services.read_suites import score_suite
+    from olmo_eval_api.services.subjects import Subject
+
+    node = build_tree(
+        "pair", {"pair": ("gap", [{"type": "task", "name": "in"}, {"type": "task", "name": "out"}])}
+    )
+    complete: dict[str, Mapping[Any, Any]] = {
+        name: {
+            "primary_metric": "strict",
+            "score": score,
+            "stderr": 0.02,
+            "num_instances": 500,
+            "display_format": "percent",
+            "higher_is_better": True,
+        }
+        for name, score in (("in", 0.6), ("out", 0.45))
+    }
+    subjects = [
+        Subject("r:model001", "run", {}, None, trs={"in": complete["in"]}),
+        Subject(
+            "r:model002",
+            "run",
+            {},
+            None,
+            trs={"out": {**complete["out"], "primary_metric": "flex"}},
+        ),
+        Subject("r:model003", "run", {}, None, trs=complete),
+    ]
+    keys = scope_metric_keys(["in", "out"], "primary", subjects, None, node)
+    assert keys == {"in": "strict", "out": "strict"}
+    assert score_suite(node, complete, metric_keys=keys).score == 0.45
+    assert scope_metric_keys(["in", "out"], "chosen", subjects, None, node) == {
+        "in": "chosen",
+        "out": "chosen",
+    }

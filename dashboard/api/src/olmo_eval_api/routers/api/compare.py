@@ -128,6 +128,42 @@ def row_metric(
     return None
 
 
+def scope_metric_keys(
+    tasks: Sequence[str],
+    metric: str,
+    subjects: Sequence[Subject],
+    baseline: Subject | None,
+    node: SuiteNode | None,
+) -> dict[str, str | None]:
+    """Select comparison metrics, choosing a gap pair from one complete subject."""
+    keys = {task: row_metric(task, metric, subjects, baseline) for task in tasks}
+    if metric != "primary" or node is None:
+        return keys
+    order = ([baseline] if baseline is not None else []) + list(subjects)
+
+    def walk(suite: SuiteNode) -> None:
+        if suite.aggregation == "gap":
+            names = leaves(suite)
+            for subject in order:
+                if not all(name in subject.trs for name in names):
+                    continue
+                rows = [subject.trs[name] for name in names]
+                metrics = {row["primary_metric"] for row in rows}
+                if (
+                    len(metrics) == 1
+                    and None not in metrics
+                    and all(row["score"] is not None for row in rows)
+                ):
+                    keys.update({name: rows[0]["primary_metric"] for name in names})
+                    break
+        for child in suite.children:
+            if child.type == "suite":
+                walk(child)
+
+    walk(node)
+    return keys
+
+
 def row_meta(
     task: str, key: str | None, subjects: Sequence[Subject], baseline: Subject | None
 ) -> dict:
@@ -209,7 +245,7 @@ async def compare_matrix(
         return cached.model_copy(update={"subjects": live_subjects(cached.subjects, by_key)})
 
     task_names = list(dict.fromkeys(r.name for r in rows if r.kind == "task"))
-    metric_keys = {t: row_metric(t, body.metric, subjects, baseline) for t in task_names}
+    metric_keys = scope_metric_keys(task_names, body.metric, subjects, baseline, node)
     loader = SideLoader(session)
     for t in task_names:
         for s in subjects:
@@ -681,7 +717,7 @@ async def compare_pairwise(
         return cached.model_copy(update={"subjects": live_subjects(cached.subjects, by_key)})
 
     task_names = list(dict.fromkeys(r.name for r in rows if r.kind == "task"))
-    metric_keys = {t: row_metric(t, body.metric, subjects, None) for t in task_names}
+    metric_keys = scope_metric_keys(task_names, body.metric, subjects, None, node)
     loader = SideLoader(session)
     for t in task_names:
         for s in subjects:
