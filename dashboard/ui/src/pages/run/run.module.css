@@ -1,0 +1,608 @@
+.head {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.titleRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.title {
+  font-size: 24px;
+  line-height: 30px;
+  font-weight: 400;
+  letter-spacing: -0.015em;
+  overflow-wrap: anywhere;
+}
+
+.stepChip {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--row);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+/*
+ * Items separated by a dot in the column gap. When a line wraps, the dot before the first item
+ * of the new line falls outside the container and is clipped, so no line starts with a dot.
+ */
+.metaLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 17px;
+  font-size: 12.5px;
+  color: var(--fg-2);
+  min-width: 0;
+  overflow: hidden;
+  /* Room for focus rings inside the clipped box. */
+  padding: 3px;
+  margin: -3px;
+}
+
+.metaLine > * {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.metaLine > * + *::before {
+  content: "·";
+  position: absolute;
+  left: -11px;
+  color: var(--faint);
+}
+
+.metaKey {
+  color: var(--muted);
+}
+
+.dirty {
+  color: var(--warn-fg);
+}
+
+.baselineBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-size: 12.5px;
+}
+
+.baselineBarLabel {
+  font-size: 10.5px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* On phones the suggestions give way once a baseline is set; Change still opens the picker. */
+@media (max-width: 639px) {
+  .suggestionsSecondary {
+    display: none;
+  }
+}
+
+.suggestion {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 9px;
+  border-radius: 999px;
+  border: 1px dashed var(--border-strong);
+  background: transparent;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--fg);
+  max-width: 320px;
+}
+
+.suggestion:hover {
+  border-style: solid;
+  border-color: var(--teal);
+  background: var(--teal-soft);
+}
+
+.suggestion span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.suggestionReason {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.tabsBar {
+  position: sticky;
+  top: var(--topbar-h);
+  z-index: 20;
+  background: var(--bg);
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  margin: 0 calc(-1 * var(--gutter));
+  padding: 0 var(--gutter);
+}
+
+.tabsBar > div:first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.stickyTitle {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  font-size: 13px;
+  font-weight: 800;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border);
+}
+
+.stuck .stickyTitle {
+  display: inline-flex;
+}
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  text-align: left;
+  min-width: 0;
+  transition: border-color 0.12s ease;
+}
+
+.tile:hover {
+  border-color: var(--teal);
+}
+
+.tileName {
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tileValue {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 26px;
+  line-height: 32px;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.tileStderr {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.tileRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  min-height: 18px;
+  flex-wrap: wrap;
+}
+
+/* ---------------------------------------------------------------- tree table */
+.tree {
+  overflow-x: auto;
+}
+
+.treeGrid {
+  min-width: 860px;
+}
+
+.treeHead,
+.treeRow {
+  display: grid;
+  grid-template-columns: minmax(240px, 2.4fr) 76px 58px 70px 76px 92px 128px 96px;
+  align-items: center;
+  gap: 0 10px;
+  padding: 0 12px;
+}
+
+.treeHead {
+  height: 32px;
+  background: var(--row);
+  border-bottom: 1px solid var(--border);
+  font-size: 10.5px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.treeRow {
+  min-height: 30px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.treeRow:hover {
+  background: var(--row-hover);
+}
+
+.treeSuite {
+  background: var(--surface-2);
+}
+
+.treeSuite .treeName {
+  font-weight: 800;
+}
+
+.treeName {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.treeName > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.treeToggle {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  flex: none;
+}
+
+.treeToggle svg {
+  width: 13px;
+  height: 13px;
+  transition: transform 0.1s ease;
+}
+
+.treeClosed svg {
+  transform: rotate(-90deg);
+}
+
+.right {
+  text-align: right;
+  justify-self: end;
+}
+
+.flash {
+  animation: flash 1.2s ease-out;
+}
+
+@keyframes flash {
+  0% {
+    background: var(--accent-soft);
+  }
+  100% {
+    background: transparent;
+  }
+}
+
+/* ---------------------------------------------------------------- health */
+.health {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.healthItem {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 4px;
+  border-radius: 4px;
+  font-size: 12.5px;
+  line-height: 18px;
+}
+
+a.healthItem:hover {
+  background: var(--row-hover);
+}
+
+.healthItem svg {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  margin-top: 1px;
+}
+
+.healthDetail {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.ok {
+  color: var(--status-complete);
+}
+
+.warn {
+  color: var(--warn-fg);
+}
+
+.bad {
+  color: var(--danger-fg);
+}
+
+/* ---------------------------------------------------------------- drawer */
+.drawerHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.drawerBody {
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ---------------------------------------------------------------- instances */
+.split {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  gap: 12px;
+  align-items: start;
+}
+
+@media (max-width: 1023px) {
+  .split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.instFilters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.detail {
+  position: sticky;
+  top: calc(var(--topbar-h) + 48px);
+  max-height: calc(100vh - var(--topbar-h) - 64px);
+  overflow: auto;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sectionLabel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10.5px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.text {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 19px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  max-width: 100%;
+  max-height: 420px;
+  overflow: auto;
+}
+
+.prose {
+  font-size: 13.5px;
+  line-height: 21px;
+  max-width: 80ch;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  overflow-wrap: anywhere;
+}
+
+.prose p {
+  margin: 0 0 8px;
+}
+
+.prose pre {
+  background: var(--code-bg);
+  padding: 8px;
+  border-radius: 4px;
+  overflow: auto;
+}
+
+.turn {
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr);
+  gap: 10px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+
+.role {
+  font-size: 10.5px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  padding-top: 2px;
+}
+
+.ins {
+  background: var(--diff-ins);
+  border-radius: 2px;
+}
+
+.del {
+  background: var(--diff-del);
+  text-decoration: line-through;
+  border-radius: 2px;
+}
+
+.choices {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.choice {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) 70px 70px 56px 80px;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+}
+
+.choice:last-child {
+  border-bottom: 0;
+}
+
+.choiceChosen {
+  box-shadow: inset 3px 0 0 var(--teal-line);
+  background: var(--teal-soft);
+}
+
+.choiceHead {
+  font-size: 10.5px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  background: var(--row);
+}
+
+.sideBySide {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+@media (max-width: 640px) {
+  .sideBySide {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-left: 2px solid var(--border);
+  padding-left: 12px;
+  margin-left: 4px;
+}
+
+.toolCard {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.toolCard summary {
+  cursor: pointer;
+  padding: 6px 10px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.toolCard pre {
+  margin: 0;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+  font-size: 11.5px;
+  overflow: auto;
+  max-height: 220px;
+}
+
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 10px;
+}
+
+.provGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px 24px;
+}

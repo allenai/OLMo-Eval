@@ -271,10 +271,10 @@ class BBQMCQMetric(Metric):
 
         return float(response.instance.metadata["bias"])
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False
 
-    def pairwise_higher_is_better(self) -> bool:
+    def higher_is_better(self) -> bool:
         return self.name.endswith("__accuracy")
 
 
@@ -329,10 +329,10 @@ class BBQLogprobMetric(Metric):
             return None
         return float(biased)
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False
 
-    def pairwise_higher_is_better(self) -> bool:
+    def higher_is_better(self) -> bool:
         return self.name.endswith("__accuracy")
 
 
@@ -413,8 +413,7 @@ class BBQ(SafetyBase):
             sample=self.fewshot_sample,
             fallback_splits=[],
         )
-        k = self.config.num_fewshot
-        return all_fewshot[:k] if k else all_fewshot
+        return all_fewshot[: self.config.num_fewshot]
 
 
 _BBQ_SUBSET = (

@@ -65,6 +65,8 @@ class BeakerStatusReporter:
             # Beaker's synchronous package-upgrade network check.
             self._client = Beaker.from_env(check_for_upgrades=False)
         except BeakerConfigurationError:
+            # The launcher injects BEAKER_TOKEN only when the user's secret exists.
+            logger.info("Beaker status reporting disabled: no BEAKER_TOKEN in the job")
             return
         except Exception as error:
             logger.warning("Beaker status reporting disabled during setup: %s", error)

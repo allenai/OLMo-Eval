@@ -1,0 +1,359 @@
+.tooltip {
+  position: fixed;
+  z-index: 85;
+  pointer-events: none;
+  min-width: 140px;
+  max-width: 340px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-pop);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--fg);
+}
+
+.tipTitle {
+  font-weight: 800;
+  margin-bottom: 4px;
+  overflow-wrap: anywhere;
+}
+
+.tipRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.tipSwatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.tipLabel {
+  color: var(--muted);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tipValue {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.tipHint {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.legendRow {
+  margin: -2px 0 10px;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 11.5px;
+  color: var(--fg-2);
+  align-items: center;
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.legendSwatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  flex: none;
+}
+
+.empty {
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 12.5px;
+  text-align: center;
+  padding: 0 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+}
+
+.axisText {
+  font-size: 10.5px;
+  fill: var(--muted);
+  font-family: var(--font-sans);
+}
+
+.axisMono {
+  font-size: 10px;
+  fill: var(--muted);
+  font-family: var(--font-mono);
+}
+
+.label {
+  font-size: 11px;
+  fill: var(--fg-2);
+}
+
+/* ---------------------------------------------------------------- heatmap (HTML grid) */
+.heat {
+  overflow: auto;
+  max-height: calc(100vh - 300px);
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.heat:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.heatHead {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: grid;
+  background: var(--row);
+}
+
+.heatRow {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: grid;
+}
+
+.heatCorner,
+.heatColHead {
+  background: var(--row);
+  border-bottom: 1px solid var(--border);
+  height: 46px;
+  display: flex;
+  align-items: flex-end;
+  padding: 0 6px 6px;
+  font-size: 11.5px;
+  min-width: 0;
+}
+
+.heatCorner {
+  position: sticky;
+  left: 0;
+  z-index: 4;
+  font-size: 10.5px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  border-right: 1px solid var(--border);
+}
+
+.heatColHead {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-end;
+  gap: 2px;
+}
+
+.heatColHeadClickable {
+  padding: 0;
+}
+
+.heatColHeadClickable:hover {
+  background: var(--row-hover);
+}
+
+.heatColButton {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 2px;
+  width: 100%;
+  height: 100%;
+  padding: 0 6px 6px;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.heatColButton:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.heatColHeadActive {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.heatColName {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.heatColName > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.heatColSub {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.heatRowHead {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  font-size: 12px;
+  height: 26px;
+  min-width: 0;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.heatRowHead > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.heatRowHead:hover {
+  background: var(--row-hover);
+}
+
+.heatRowHeadActive {
+  background: var(--row-hover);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.heatSuite {
+  background: var(--row);
+  font-weight: 800;
+}
+
+.heatSuite.heatRowHead {
+  background: var(--row);
+}
+
+.heatChevron {
+  width: 13px;
+  height: 13px;
+  color: var(--muted);
+  transition: transform 0.1s ease;
+  flex: none;
+}
+
+.heatChevronClosed {
+  transform: rotate(-90deg);
+}
+
+.heatCell {
+  position: relative;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11.5px;
+  border-right: 2px solid var(--surface);
+  border-bottom: 2px solid var(--surface);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.heatCell:hover,
+.heatFocused {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  z-index: 1;
+}
+
+.heatCellStatic {
+  cursor: default;
+}
+
+.heatCellSuite {
+  font-weight: 500;
+}
+
+.heatMissing {
+  background: repeating-linear-gradient(45deg, var(--border) 0 1px, transparent 1px 6px);
+  color: var(--faint);
+}
+
+.heatFailed {
+  background: var(--danger-soft);
+  color: var(--danger-fg);
+}
+
+.heatSig {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.heatHash {
+  position: absolute;
+  bottom: 2px;
+  right: 3px;
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-bottom: 5px solid var(--status-partial);
+}
+
+/* ---------------------------------------------------------------- mini heatmap */
+.mini {
+  display: grid;
+  gap: 2px;
+}
+
+.miniCell {
+  width: 100%;
+  height: 10px;
+  border-radius: 1px;
+}
+
+/* ---------------------------------------------------------------- brush */
+.brush {
+  fill: var(--accent);
+  fill-opacity: 0.08;
+  stroke: var(--accent);
+  stroke-opacity: 0.5;
+}

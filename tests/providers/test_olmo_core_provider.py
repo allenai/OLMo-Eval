@@ -610,6 +610,20 @@ class TestMmOlmoUnpickleShim:
             self._clear()
 
 
+def test_cached_backend_accepts_every_parent_forward_argument() -> None:
+    """OLMo-core's ``Attention`` passes every backend keyword (``sinks`` since #872), so a
+    parameter missing from the cached backend's ``forward`` fails every multimodal request."""
+    import inspect
+
+    pytest.importorskip("torch")
+    backend = pytest.importorskip("olmo_core.nn.attention.backend")
+    from olmo_eval.inference.providers.olmo_core_vlm.cache import _cached_torch_backend_class
+
+    parent = inspect.signature(backend.TorchAttentionBackend.forward).parameters
+    cached = inspect.signature(_cached_torch_backend_class().forward).parameters
+    assert set(parent) <= set(cached)
+
+
 class TestBuildDecodeAttentionMask:
     """Direct coverage for the cached-decode SDPA mask (the correctness-critical path)."""
 

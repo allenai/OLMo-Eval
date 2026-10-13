@@ -35,16 +35,6 @@ class InfrastructureConfig:
     inspect_cache_dir: str | None
     result_dir: str
 
-    # S3 settings (empty = disabled)
-    s3_bucket: str
-    s3_prefix: str
-
-    # Database settings
-    pg_host: str
-    pg_port: str
-    pg_database: str
-    pg_user: str
-
     @classmethod
     def from_environment(cls) -> InfrastructureConfig:
         """Create config from environment variables."""
@@ -59,12 +49,6 @@ class InfrastructureConfig:
             uv_cache_dir=os.environ.get("UV_CACHE_DIR"),
             inspect_cache_dir=os.environ.get("INSPECT_CACHE_DIR"),
             result_dir=os.environ.get("OLMO_RESULT_DIR", "/tmp/results"),
-            s3_bucket=os.environ.get("OLMO_S3_BUCKET", ""),
-            s3_prefix=os.environ.get("OLMO_S3_PREFIX", ""),
-            pg_host=os.environ.get("PGHOST", ""),
-            pg_port=os.environ.get("PGPORT", "5432"),
-            pg_database=os.environ.get("PGDATABASE", "olmo_eval"),
-            pg_user=os.environ.get("PGUSER", "postgres"),
         )
 
 

@@ -348,6 +348,87 @@ class TestBeakerJobConfigMinRuntime:
         assert expected_line in capsys.readouterr().out
 
 
+class TestGoogleCredentialInjection:
+    """Google credentials reach gantry as google_credentials_secret."""
+
+    def _launch(self, dry_run: bool):
+        from unittest.mock import MagicMock, patch
+
+        from olmo_eval.launch import BeakerLauncher
+
+        launcher = BeakerLauncher(workspace="ai2/oe-data")
+        launcher._beaker = MagicMock(user_name="test-user")
+        config = BeakerJobConfig(
+            name="test",
+            command=["echo"],
+            cluster="h100",
+            workspace="ai2/oe-data",
+            budget="ai2/oe-other",
+            weka_buckets=[],
+            inject_gcs_credentials=True,
+        )
+        with (
+            patch("gantry.api.launch_experiment") as mock_launch,
+            patch(
+                "olmo_eval.launch.beaker.gcs.ensure_gcs_secrets",
+                return_value="test-user_GOOGLE_CREDENTIALS",
+            ) as mock_ensure,
+        ):
+            launcher.launch(config, dry_run=dry_run)
+        return mock_launch.call_args.kwargs, mock_ensure
+
+    def test_launch_writes_and_injects_the_secret(self):
+        kwargs, mock_ensure = self._launch(dry_run=False)
+        mock_ensure.assert_called_once_with("ai2/oe-data")
+        assert kwargs["google_credentials_secret"] == "test-user_GOOGLE_CREDENTIALS"
+
+    def test_dry_run_injects_without_writing_the_secret(self):
+        kwargs, mock_ensure = self._launch(dry_run=True)
+        mock_ensure.assert_not_called()
+        assert kwargs["google_credentials_secret"] == "test-user_GOOGLE_CREDENTIALS"
+
+
+class TestUploaderKeyInjection:
+    """The uploader key reaches the job as OLMO_EVAL_UPLOAD_CREDENTIALS."""
+
+    def _launch(self, dry_run: bool):
+        from unittest.mock import MagicMock, patch
+
+        from olmo_eval.launch import BeakerLauncher
+
+        launcher = BeakerLauncher(workspace="ai2/oe-data")
+        launcher._beaker = MagicMock(user_name="test-user")
+        config = BeakerJobConfig(
+            name="test",
+            command=["echo"],
+            cluster="h100",
+            workspace="ai2/oe-data",
+            budget="ai2/oe-other",
+            weka_buckets=[],
+            inject_upload_credentials=True,
+        )
+        with (
+            patch("gantry.api.launch_experiment") as mock_launch,
+            patch(
+                "olmo_eval.launch.beaker.uploader.ensure_uploader_secret",
+                return_value="olmo_eval_uploader_key",
+            ) as mock_ensure,
+        ):
+            launcher.launch(config, dry_run=dry_run)
+        return mock_launch.call_args.kwargs, mock_ensure
+
+    def test_launch_writes_and_injects_the_key(self):
+        kwargs, mock_ensure = self._launch(dry_run=False)
+        mock_ensure.assert_called_once_with("ai2/oe-data")
+        assert ("OLMO_EVAL_UPLOAD_CREDENTIALS", "olmo_eval_uploader_key") in kwargs["env_secrets"]
+        assert kwargs["google_credentials_secret"] is None
+
+    def test_dry_run_injects_without_reading_the_key(self):
+        kwargs, mock_ensure = self._launch(dry_run=True)
+        mock_ensure.assert_not_called()
+        assert ("OLMO_EVAL_UPLOAD_CREDENTIALS", "olmo_eval_uploader_key") in kwargs["env_secrets"]
+
+
 class TestBeakerLauncherImport:
     """Tests for BeakerLauncher import behavior."""
 

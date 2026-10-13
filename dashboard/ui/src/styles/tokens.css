@@ -1,0 +1,288 @@
+/*
+ * Design tokens. Brand colors come from the Ai2 palette; data palettes are the validated sets
+ * from the dashboard UX spec (categorical, sequential teal, diverging teal/ochre, status).
+ * Dark mode is selected per token, not flipped automatically. A few mid-ramp steps are nudged
+ * from the spec values so that their text color reaches 4.5:1.
+ */
+:root {
+  color-scheme: light;
+
+  /* Brand */
+  --bg: #fcfaf6;
+  --surface: #ffffff;
+  --surface-2: #fdfcf9;
+  --row: #f7f4ee;
+  --row-hover: #f3efe7;
+  --border: #e5e1d9;
+  --border-strong: #d6d0c4;
+  --fg: #0a3235;
+  --fg-2: #2f4f51;
+  /* Ai2 gray is #757575; darkened slightly so small text passes WCAG AA (4.5:1) on --row. */
+  --muted: #6b6b6b;
+  --faint: #a19d95;
+  --accent: #f0529c;
+  --accent-soft: #fbe7f0;
+  --accent-fg: #ffffff;
+
+  /* Derived */
+  --teal: #0a3235;
+  --teal-fg: #ffffff;
+  --teal-soft: #e6f0ef;
+  --teal-line: #105d5a;
+  --grid: #efebe4;
+  --focus: #f0529c;
+  --overlay: rgb(10 50 53 / 0.28);
+  --shadow-pop: 0 8px 24px rgb(10 50 53 / 0.12), 0 1px 3px rgb(10 50 53 / 0.08);
+  --shimmer-a: #f2eee6;
+  --shimmer-b: #faf8f3;
+  --code-bg: #f7f4ee;
+  --diff-ins: #cfe9e5;
+  --diff-del: #f6e2c2;
+
+  /* Categorical (per-subject identity), fixed order */
+  --cat-1: #2a78d6;
+  --cat-2: #eb6834;
+  --cat-3: #1baf7a;
+  --cat-4: #008300;
+  --cat-5: #4a3aa7;
+  --cat-6: #eda100;
+  --cat-context: rgb(117 117 117 / 0.6);
+
+  /* Sequential teal (absolute scores) */
+  --seq-0: #eef5f4;
+  --seq-1: #cfe4e1;
+  --seq-2: #a3cbc6;
+  --seq-3: #72aea7;
+  --seq-4: #3a807a;
+  --seq-5: #25706b;
+  --seq-6: #0a4f4c;
+
+  /* Diverging (deltas vs baseline): ochre worse, gray zero, teal better */
+  --div-n3: #8c510a;
+  --div-n2: #c8892e;
+  --div-n1: #ebc98f;
+  --div-0: #f0efec;
+  --div-p1: #9fd3cc;
+  --div-p2: #4aa59d;
+  --div-p3: #0b5f59;
+  /* Text on each palette step: whichever of fg or white reaches 4.5:1. */
+  --seq-ink-0: var(--fg);
+  --seq-ink-1: var(--fg);
+  --seq-ink-2: var(--fg);
+  --seq-ink-3: var(--fg);
+  --seq-ink-4: #ffffff;
+  --seq-ink-5: #ffffff;
+  --seq-ink-6: #ffffff;
+  --div-ink-n3: #ffffff;
+  --div-ink-n2: var(--fg);
+  --div-ink-n1: var(--fg);
+  --div-ink-0: var(--fg);
+  --div-ink-p1: var(--fg);
+  --div-ink-p2: var(--fg);
+  --div-ink-p3: #ffffff;
+  --better: #0b6e67;
+  --worse: #9a5a0c;
+
+  /* Status */
+  --status-complete: #0ca30c;
+  --status-partial: #e09b00;
+  --status-failed: #d03b3b;
+  --status-running: var(--teal-line);
+  --status-uploading: var(--muted);
+  --danger-soft: #fbeaea;
+  --warn-soft: #fdf3dc;
+  /* Text versions of the status colors, AA on every light surface. */
+  --warn-fg: #8f5c00;
+  --danger-fg: #b3261e;
+  --json-number: #1d5fae;
+  --ok-soft: #e5f4e5;
+
+  /* Type */
+  --font-sans: "Telegraf", "Manrope", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --fs-display: 40px;
+  --fs-title: 24px;
+  --fs-hero: 28px;
+  --fs-section: 15px;
+  --fs-body: 14px;
+  --fs-table: 13px;
+  --fs-dense: 12px;
+  --fs-caption: 11px;
+
+  /* Spacing (4px grid) */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --gutter: 24px;
+
+  --radius: 6px;
+  --radius-sm: 4px;
+  --radius-lg: 10px;
+  --row-h: 28px;
+  --topbar-h: 48px;
+  --tray-h: 52px;
+}
+
+:root[data-density="comfortable"] {
+  --row-h: 36px;
+}
+
+@media (max-width: 640px) {
+  :root {
+    --gutter: 16px;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #1a1a1a;
+    --surface: #222222;
+    --surface-2: #1e1e1e;
+    --row: #262626;
+    --row-hover: #2b2b2b;
+    --border: #3a3a3a;
+    --border-strong: #4a4a4a;
+    --fg: #f7f7f7;
+    --fg-2: #d6d6d6;
+    --muted: #a3a3a3;
+    --faint: #6f6f6f;
+    --accent-soft: #3a2230;
+    --teal: #7fc4bf;
+    --teal-fg: #0f1f1e;
+    --teal-soft: #1e2e2d;
+    --teal-line: #7fc4bf;
+    --grid: #2e2e2e;
+    --overlay: rgb(0 0 0 / 0.5);
+    --shadow-pop: 0 8px 24px rgb(0 0 0 / 0.45), 0 1px 3px rgb(0 0 0 / 0.4);
+    --shimmer-a: #282828;
+    --shimmer-b: #313131;
+    --code-bg: #1c1c1c;
+    --diff-ins: #1f4744;
+    --diff-del: #4a3a1f;
+    --cat-1: #3987e5;
+    --cat-2: #d95926;
+    --cat-3: #199e70;
+    --cat-4: #2f9a2f;
+    --cat-5: #9085e9;
+    --cat-6: #c98500;
+    --cat-context: rgb(138 138 138 / 0.6);
+    --seq-0: #1f2b2a;
+    --seq-1: #21413e;
+    --seq-2: #255a55;
+    --seq-3: #2d756e;
+    --seq-4: #3c918a;
+    --seq-5: #5aaca4;
+    --seq-6: #8fcac3;
+    --div-n3: #d8a35a;
+    --div-n2: #b07b31;
+    --div-n1: #5e4a2a;
+    --div-0: #383835;
+    --div-p1: #245450;
+    --div-p2: #36948c;
+    --div-p3: #6cc3b9;
+    --seq-ink-0: var(--fg);
+    --seq-ink-1: var(--fg);
+    --seq-ink-2: var(--fg);
+    --seq-ink-3: var(--fg);
+    --seq-ink-4: #0f1f1e;
+    --seq-ink-5: #0f1f1e;
+    --seq-ink-6: #0f1f1e;
+    --div-ink-n3: #0f1f1e;
+    --div-ink-n2: #0f1f1e;
+    --div-ink-n1: var(--fg);
+    --div-ink-0: var(--fg);
+    --div-ink-p1: var(--fg);
+    --div-ink-p2: #0f1f1e;
+    --div-ink-p3: #0f1f1e;
+    --better: #6cc3b9;
+    --worse: #d8a35a;
+    --status-complete: #3fbf3f;
+    --status-partial: #e8a917;
+    --status-failed: #e86060;
+    --danger-soft: #3a2424;
+    --warn-soft: #3a3020;
+    --warn-fg: #e8a917;
+    --danger-fg: #f07070;
+    --json-number: #6aa8f0;
+    --ok-soft: #1f3320;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #1a1a1a;
+  --surface: #222222;
+  --surface-2: #1e1e1e;
+  --row: #262626;
+  --row-hover: #2b2b2b;
+  --border: #3a3a3a;
+  --border-strong: #4a4a4a;
+  --fg: #f7f7f7;
+  --fg-2: #d6d6d6;
+  --muted: #a3a3a3;
+  --faint: #6f6f6f;
+  --accent-soft: #3a2230;
+  --teal: #7fc4bf;
+  --teal-fg: #0f1f1e;
+  --teal-soft: #1e2e2d;
+  --teal-line: #7fc4bf;
+  --grid: #2e2e2e;
+  --overlay: rgb(0 0 0 / 0.5);
+  --shadow-pop: 0 8px 24px rgb(0 0 0 / 0.45), 0 1px 3px rgb(0 0 0 / 0.4);
+  --shimmer-a: #282828;
+  --shimmer-b: #313131;
+  --code-bg: #1c1c1c;
+  --diff-ins: #1f4744;
+  --diff-del: #4a3a1f;
+  --cat-1: #3987e5;
+  --cat-2: #d95926;
+  --cat-3: #199e70;
+  --cat-4: #2f9a2f;
+  --cat-5: #9085e9;
+  --cat-6: #c98500;
+  --cat-context: rgb(138 138 138 / 0.6);
+  --seq-0: #1f2b2a;
+  --seq-1: #21413e;
+  --seq-2: #255a55;
+  --seq-3: #2d756e;
+  --seq-4: #3c918a;
+  --seq-5: #5aaca4;
+  --seq-6: #8fcac3;
+  --div-n3: #d8a35a;
+  --div-n2: #b07b31;
+  --div-n1: #5e4a2a;
+  --div-0: #383835;
+  --div-p1: #245450;
+  --div-p2: #36948c;
+  --div-p3: #6cc3b9;
+  --seq-ink-0: var(--fg);
+  --seq-ink-1: var(--fg);
+  --seq-ink-2: var(--fg);
+  --seq-ink-3: var(--fg);
+  --seq-ink-4: #0f1f1e;
+  --seq-ink-5: #0f1f1e;
+  --seq-ink-6: #0f1f1e;
+  --div-ink-n3: #0f1f1e;
+  --div-ink-n2: #0f1f1e;
+  --div-ink-n1: var(--fg);
+  --div-ink-0: var(--fg);
+  --div-ink-p1: var(--fg);
+  --div-ink-p2: #0f1f1e;
+  --div-ink-p3: #0f1f1e;
+  --better: #6cc3b9;
+  --worse: #d8a35a;
+  --status-complete: #3fbf3f;
+  --status-partial: #e8a917;
+  --status-failed: #e86060;
+  --danger-soft: #3a2424;
+  --warn-soft: #3a3020;
+  --ok-soft: #1f3320;
+  --warn-fg: #e8a917;
+  --danger-fg: #f07070;
+  --json-number: #6aa8f0;
+}

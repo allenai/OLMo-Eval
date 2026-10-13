@@ -31,6 +31,18 @@ class TestSwerexImageTimeout(unittest.TestCase):
         self.assertLessEqual(build.kwargs["timeout"], 5)
         self.assertEqual(image._resolved_images, {})
 
+    def test_stuck_base_image_pull_raises_timeout_error(self) -> None:
+        def fake_run(cmd, **kwargs):
+            if cmd[1] == "pull":
+                raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+            return subprocess.CompletedProcess(cmd, returncode=1)
+
+        with (
+            mock.patch.object(image.subprocess, "run", side_effect=fake_run),
+            self.assertRaisesRegex(TimeoutError, "during: podman pull"),
+        ):
+            image.get_swerex_image("base:latest", "podman", timeout=5)
+
     def test_spent_budget_stops_before_the_next_step(self) -> None:
         clock = iter([0.0, 0.0, 10.0])
         done = subprocess.CompletedProcess([], returncode=1)
