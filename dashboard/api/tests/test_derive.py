@@ -403,3 +403,53 @@ def test_gap_selected_metric_controls_score_format_and_direction() -> None:
     result = score_suite(node, tasks, metric_keys={"in": "error:default", "out": "error:default"})
     assert result.score == 0.1 and result.stderr == 0.02
     assert result.display_format == "percent" and result.higher_is_better is False
+
+
+def test_missing_selected_metric_does_not_change_scored_suite_units() -> None:
+    from olmo_eval_api.services.read_suites import score_suite
+
+    node = build_tree(
+        "root",
+        {"root": ("average", [{"type": "task", "name": "a"}, {"type": "task", "name": "b"}])},
+    )
+    rows = {
+        name: {
+            "primary_metric": "primary",
+            "score": 0.5,
+            "stderr": 0.02,
+            "num_instances": 10,
+            "display_format": "percent",
+            "higher_is_better": True,
+            "metrics": {},
+            "metric_meta": {},
+        }
+        for name in ("a", "b")
+    }
+    rows["a"]["metrics"] = {"selected": 0.4}
+    rows["a"]["metric_meta"] = {
+        "selected": {"display_format": "percent", "higher_is_better": False}
+    }
+    result = score_suite(node, rows, metric_keys={"a": "selected", "b": "selected"})
+    assert result.score == 0.4
+    assert result.display_format == "percent" and result.higher_is_better is False
+
+
+def test_gap_metric_selection_requires_a_complete_primary_pair() -> None:
+    from olmo_eval_api.routers.api.compare import scope_metric_keys
+    from olmo_eval_api.services.subjects import Subject
+
+    node = build_tree(
+        "pair", {"pair": ("gap", [{"type": "task", "name": "in"}, {"type": "task", "name": "out"}])}
+    )
+    subjects = [
+        Subject(
+            "r:in000001", "run", {}, None, trs={"in": {"primary_metric": "strict", "score": 0.5}}
+        ),
+        Subject(
+            "r:out00001", "run", {}, None, trs={"out": {"primary_metric": "strict", "score": 0.4}}
+        ),
+    ]
+    assert scope_metric_keys(["in", "out"], "primary", subjects, None, node) == {
+        "in": None,
+        "out": None,
+    }

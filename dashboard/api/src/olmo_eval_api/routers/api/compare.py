@@ -144,6 +144,7 @@ def scope_metric_keys(
     def walk(suite: SuiteNode) -> None:
         if suite.aggregation == "gap":
             names = leaves(suite)
+            keys.update(dict.fromkeys(names))
             for subject in order:
                 if not all(name in subject.trs for name in names):
                     continue
@@ -429,7 +430,7 @@ def _matrix_suite_row(
                 scores[n] = sd.score if sd is not None else None
                 stderrs[n] = sd.stderr if sd is not None else None
         results[s.key] = score_suite(node, s.trs, scores, stderrs, metric_keys=metric_keys)
-    hib_set = {r.higher_is_better for r in results.values() if r.present}
+    hib_set = {r.higher_is_better for r in results.values() if r.score is not None}
     hib = hib_set.pop() if len(hib_set) == 1 else None
     deltas: dict[str, a.DeltaStats] = {}
     if baseline is not None and results[baseline.key].score is not None:
@@ -478,7 +479,7 @@ def _matrix_suite_row(
                 children_missing=r.missing,
             )
         )
-    any_result = next((r for r in results.values() if r.present), None)
+    any_result = next((r for r in results.values() if r.score is not None), None)
     meta = (
         a.MetricMeta(
             higher_is_better=hib,

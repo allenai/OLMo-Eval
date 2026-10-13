@@ -130,8 +130,9 @@ def score_suite(
     if score is not None and node.aggregation not in NO_SCORE_AGGREGATIONS:
         scored = {n for n, v in leaf_scores.items() if v is not None}
         stderr = propagate_stderr(leaf_weights(node, n_inst, scored), leaf_ses)
-    formats = {meta.get("display_format", "raw") for meta in metadata.values()}
-    directions = {meta.get("higher_is_better") for meta in metadata.values()}
+    scored_metadata = [metadata[name] for name, value in leaf_scores.items() if value is not None]
+    formats = {meta.get("display_format", "raw") for meta in scored_metadata}
+    directions = {meta.get("higher_is_better") for meta in scored_metadata}
     return SuiteScore(
         score=score,
         stderr=stderr,
