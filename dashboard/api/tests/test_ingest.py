@@ -699,19 +699,25 @@ async def test_complete_derivations(client: httpx.AsyncClient, session: Any) -> 
     assert run["num_tasks"] == 3 and run["num_instances"] == 120
 
 
-async def test_suite_with_missing_task_and_mean_headline(
-    client: httpx.AsyncClient, session: Any
+@pytest.mark.parametrize("unscored_suite", [False, True])
+async def test_headline_respects_unscored_suite_scopes(
+    client: httpx.AsyncClient, session: Any, unscored_suite: bool
 ) -> None:
     await seed_run(
         client,
         run_id="run000000002",
         tasks={"t1": [1.0, 0.0] * 10, "t2": [1.0] * 20},
-        suites=[suite("s", ["t1", "t3"], score=None, aggregation="display_only")],
+        suites=[suite("s", ["t1", "t3"], score=None, aggregation="display_only")]
+        if unscored_suite
+        else [],
     )
-    sr = (await session.execute(text("SELECT * FROM suite_results"))).mappings().one()
-    assert sr["tasks_missing"] == ["t3"]
     run = (await session.execute(text("SELECT headline FROM runs"))).scalar_one()
-    assert run["kind"] == "mean" and math.isclose(run["score"], 0.75)
+    if unscored_suite:
+        sr = (await session.execute(text("SELECT * FROM suite_results"))).mappings().one()
+        assert sr["tasks_missing"] == ["t3"]
+        assert run is None
+    else:
+        assert run["kind"] == "mean" and math.isclose(run["score"], 0.75)
 
 
 async def test_nested_average_suite_weighs_every_task_equally(

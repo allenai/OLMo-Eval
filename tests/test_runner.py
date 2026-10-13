@@ -1439,6 +1439,239 @@ class TestGapSuiteAggregation:
         assert "-15.00 pp)" in capsys.readouterr().out
 
 
+class TestUnaggregatedSuiteAggregation:
+    """Tests for NONE suites, which report their nested suites but no score of their own."""
+
+    SUITE = "_test_none_parent"
+
+    @pytest.fixture(autouse=True)
+    def none_suite(self) -> Iterator[None]:
+        from olmo_eval.evals.suites.registry import _REGISTRY, AggregationStrategy, Suite
+
+        gap = Suite(
+            name="_test_none_gap",
+            tasks=("task_in", "task_out"),
+            aggregation=AggregationStrategy.GAP,
+        )
+        average = Suite(name="_test_none_avg", tasks=("task_a", "task_b"))
+        _REGISTRY[self.SUITE] = Suite(
+            name=self.SUITE,
+            tasks=("task_solo", gap, average),
+            aggregation=AggregationStrategy.NONE,
+        )
+        yield
+        del _REGISTRY[self.SUITE]
+
+    @staticmethod
+    def _task(score: float) -> dict:
+        return {
+            "metrics": {"exact_match": {"exact_match": score}},
+            "primary_metric": "exact_match:exact_match",
+            "num_instances": 100,
+            "metric_meta": {"exact_match": {"display_format": "percent"}},
+        }
+
+    def _results(self, suffix: str = "") -> dict[str, dict]:
+        scores = {"task_solo": 0.9, "task_in": 0.6, "task_out": 0.45, "task_a": 0.2, "task_b": 0.4}
+        return {f"{name}{suffix}": self._task(score) for name, score in scores.items()}
+
+    def test_reports_each_nested_suite_but_no_parent_score(self):
+        from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
+
+        result = compute_suite_aggregations([self.SUITE], self._results())
+
+        assert set(result) == {"_test_none_gap", "_test_none_avg"}
+        gap = result["_test_none_gap"]
+        assert gap["metrics"]["primary_score"]["gap"] == pytest.approx(-0.15)
+        assert gap["container_suite"] == self.SUITE
+        average = result["_test_none_avg"]
+        assert average["metrics"]["primary_score"]["average"] == pytest.approx(0.3)
+        assert average["container_suite"] == self.SUITE
+
+    def test_priority_suffix_propagates_to_nested_suites(self):
+        from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
+
+        result = compute_suite_aggregations([f"{self.SUITE}@high"], self._results("@high"))
+
+        assert result["_test_none_gap@high"]["reference_task"] == "task_in@high"
+        assert result["_test_none_gap@high"]["container_suite"] == f"{self.SUITE}@high"
+
+    def test_container_is_the_innermost_unaggregated_suite(self):
+        from olmo_eval.evals.suites.registry import _REGISTRY, AggregationStrategy, Suite
+        from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
+
+        gap = Suite(
+            name="_test_deep_gap",
+            tasks=("task_in", "task_out"),
+            aggregation=AggregationStrategy.GAP,
+        )
+        inner = Suite(name="_test_inner", tasks=(gap,), aggregation=AggregationStrategy.NONE)
+        _REGISTRY["_test_outer"] = Suite(
+            name="_test_outer", tasks=(inner,), aggregation=AggregationStrategy.NONE
+        )
+        try:
+            result = compute_suite_aggregations(["_test_outer"], self._results())
+        finally:
+            del _REGISTRY["_test_outer"]
+
+        assert result["_test_deep_gap"]["container_suite"] == "_test_inner"
+
+    @pytest.mark.parametrize("suffix", ["", "@high"])
+    @pytest.mark.parametrize("strategy", ["average", "average_of_averages"])
+    def test_reports_descendants_below_aggregating_children(self, suffix, strategy, capsys):
+        from olmo_eval.evals.suites.registry import _REGISTRY, AggregationStrategy, Suite
+        from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
+        from olmo_eval.runners.processing.metrics import build_single_model_metrics, log_summary
+        from olmo_eval.upload.metadata import suite_results
+
+        child = Suite(name="_desc_child", tasks=("task_a", "task_b"))
+        parent = Suite(
+            name="_desc_parent",
+            tasks=(child, "task_solo"),
+            aggregation=AggregationStrategy(strategy),
+        )
+        root = Suite(name="_desc_root", tasks=(parent,), aggregation=AggregationStrategy.NONE)
+        registry = {suite.name: suite for suite in (child, parent, root)}
+        _REGISTRY.update(registry)
+        try:
+            tasks = self._results(suffix)
+            result = compute_suite_aggregations([f"{root.name}{suffix}"], tasks)
+            assert set(result) == {f"{parent.name}{suffix}", f"{child.name}{suffix}"}
+            assert result[f"{child.name}{suffix}"]["metrics"]["primary_score"][
+                "average"
+            ] == pytest.approx(0.3)
+            summary = build_single_model_metrics({"tasks": tasks, "suites": result}).to_dict()[
+                "summary"
+            ]
+            assert f"{child.name}{suffix}" in summary
+            log_summary({"tasks": tasks, "suites": result})
+            captured = capsys.readouterr().out
+            for name in ("task_a", "task_b", "task_solo"):
+                assert f"{name}{suffix}" in captured
+            uploaded = {
+                row["name"]: row for row in suite_results(result, tasks, task_specs=[root.name])
+            }
+            assert uploaded[child.name]["parent"] == parent.name
+            assert uploaded[parent.name]["parent"] == root.name
+        finally:
+            for name in registry:
+                del _REGISTRY[name]
+
+    def test_descendant_average_of_averages_retains_its_own_score(self, monkeypatch):
+        from olmo_eval.evals.suites.registry import _REGISTRY, AggregationStrategy, Suite
+        from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
+
+        leaf = Suite("_own_leaf", ("a", "b", "c"), AggregationStrategy.AVERAGE)
+        inner = Suite("_own_inner", (leaf, "d"), AggregationStrategy.AVERAGE_OF_AVERAGES)
+        outer = Suite("_own_outer", (inner, "e"), AggregationStrategy.AVERAGE_OF_AVERAGES)
+        root = Suite("_own_root", (outer,), AggregationStrategy.NONE)
+        for suite in (leaf, inner, outer, root):
+            monkeypatch.setitem(_REGISTRY, suite.name, suite)
+        tasks = {
+            name: self._task(value)
+            for name, value in zip("abcde", (0.1, 0.2, 0.3, 0.4, 0.5), strict=True)
+        }
+        alone = compute_suite_aggregations([inner.name], tasks)[inner.name]
+        nested = compute_suite_aggregations([root.name], tasks)[inner.name]
+        assert nested["metrics"] == alone["metrics"]
+        assert nested["metrics"]["primary_score"]["average"] == pytest.approx(0.3)
+
+    @pytest.mark.parametrize("container", [False, True])
+    def test_none_child_of_average_of_averages_has_no_score(self, monkeypatch, container):
+        from olmo_eval.evals.suites.registry import _REGISTRY, AggregationStrategy, Suite
+        from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
+        from olmo_eval.upload.metadata import suite_results
+
+        child = Suite("_none_child", ("a", "b"), AggregationStrategy.NONE)
+        parent = Suite("_none_parent", (child, "c"), AggregationStrategy.AVERAGE_OF_AVERAGES)
+        root = Suite("_none_container", (parent,), AggregationStrategy.NONE)
+        for suite in (child, parent, root):
+            monkeypatch.setitem(_REGISTRY, suite.name, suite)
+        tasks = {name: self._task(0.5) for name in "abc"}
+        requested = [root.name if container else parent.name]
+        results = compute_suite_aggregations(requested, tasks)
+        assert results[child.name]["metrics"] == {}
+        payload = {r["name"]: r for r in suite_results(results, tasks, task_specs=requested)}
+        assert payload[child.name]["score"] is None
+
+    @pytest.mark.parametrize("averaging_parent", [False, True])
+    def test_display_only_descendants_have_no_score(self, averaging_parent):
+        from olmo_eval.evals.suites.registry import _REGISTRY, AggregationStrategy, Suite
+        from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
+        from olmo_eval.runners.processing.metrics import build_single_model_metrics
+        from olmo_eval.upload.metadata import suite_results
+
+        display = Suite("_display_child", ("task_a", "task_b"), AggregationStrategy.DISPLAY_ONLY)
+        child = (
+            Suite(
+                "_display_parent", (display, "task_solo"), AggregationStrategy.AVERAGE_OF_AVERAGES
+            )
+            if averaging_parent
+            else display
+        )
+        root = Suite("_display_root", (child,), AggregationStrategy.NONE)
+        registered = {suite.name: suite for suite in (display, child, root)}
+        _REGISTRY.update(registered)
+        try:
+            tasks = self._results()
+            result = compute_suite_aggregations([root.name], tasks)
+            assert result[display.name]["metrics"] == {}
+            assert "primary_metric" not in result[display.name]
+            summary = build_single_model_metrics({"tasks": tasks, "suites": result}).to_dict()[
+                "summary"
+            ]
+            assert display.name not in summary
+            rows = {
+                row["name"]: row for row in suite_results(result, tasks, task_specs=[root.name])
+            }
+            assert rows[display.name]["score"] is None
+        finally:
+            for name in registered:
+                del _REGISTRY[name]
+
+    def test_nested_gap_definition_survives_missing_results(self):
+        from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
+
+        task_results = self._results()
+        del task_results["task_out"]
+
+        result = compute_suite_aggregations([self.SUITE], task_results)
+
+        assert set(result) == {"_test_none_avg", "_test_none_gap"}
+        assert result["_test_none_gap"]["metrics"] == {}
+        assert result["_test_none_gap"]["primary_metric"] is None
+
+    def test_flat_unaggregated_suite_reports_nothing(self):
+        from olmo_eval.evals.suites.registry import _REGISTRY, AggregationStrategy, Suite
+        from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
+
+        _REGISTRY["_test_none_flat"] = Suite(
+            name="_test_none_flat",
+            tasks=("task_a", "task_b"),
+            aggregation=AggregationStrategy.NONE,
+        )
+        try:
+            assert compute_suite_aggregations(["_test_none_flat"], self._results()) == {}
+        finally:
+            del _REGISTRY["_test_none_flat"]
+
+    def test_log_summary_keeps_every_task_row(self, capsys):
+        from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
+        from olmo_eval.runners.processing.metrics import log_summary
+
+        task_results = self._results()
+        suites = compute_suite_aggregations([self.SUITE], task_results)
+
+        log_summary({"tasks": task_results, "suites": suites})
+        captured = capsys.readouterr().out
+
+        for name in task_results:
+            assert name in captured
+        assert "companion" in captured
+        assert "-15.00" in captured
+        assert "pp)" in captured
+
+
 class TestGetPrimaryMetric:
     """Tests for get_primary_metric function.
 

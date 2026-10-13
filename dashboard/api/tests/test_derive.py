@@ -57,6 +57,34 @@ def test_pairwise_ties_rank_by_metric_improvement(higher_is_better, first) -> No
     )
 
 
+@pytest.mark.parametrize("aggregation", ["none", "display_only"])
+def test_unscored_suites_have_no_baseline_delta(aggregation) -> None:
+    from types import SimpleNamespace
+    from typing import cast
+    from unittest.mock import MagicMock
+
+    import numpy as np
+
+    from olmo_eval_api.routers.api.run_tabs import suite_delta
+    from olmo_eval_api.services.subjects import SideLoader
+    from olmo_eval_api.stats.paired import Side
+
+    node = build_tree("unscored", {"unscored": (aggregation, [{"type": "task", "name": "a"}])})
+    stats = SimpleNamespace(alpha=0.05, n_boot=200, seed=0)
+    mock_loader = MagicMock(spec=SideLoader)
+    mock_loader.side.side_effect = [
+        Side("a", "hash", score, 0.0, True, keys=np.arange(32), values=np.full(32, score))
+        for score in (1.0, 0.0)
+    ]
+    task = {"primary_metric": "accuracy", "num_instances": 32}
+    delta = suite_delta(
+        {"a": task}, {"a": task}, node, cast(SideLoader, mock_loader), stats, None, True
+    )
+    mock_loader.side.assert_not_called()
+    assert delta.delta is None and delta.ci_low is None and delta.ci_high is None
+    assert delta.method == "none" and delta.n_boot is None
+
+
 def test_model_id_and_key_hash() -> None:
     assert (
         derive.model_id("meta-llama/Llama-3.1-8B-Instruct", "16614dd9d1ac227a")
@@ -258,6 +286,23 @@ def test_suite_generation_counts_match_scored_members_and_omit_legacy_counts() -
     node = build_tree("root", DEFS)
     assert suite_generation_counts(node, tasks) == {"generations": 10, "cap_hit": 2, "empty": 1}
     assert suite_generation_counts(node, {"a": {"metrics": {"acc:x": 0.5}}}) is None
+
+
+@pytest.mark.parametrize("aggregation", ["none", "gap", "display_only"])
+def test_unscored_suite_prevents_a_mean_run_headline(aggregation: str) -> None:
+    from olmo_eval_api.db.models import Run, SuiteResult, TaskResult
+    from olmo_eval_api.services.ingest import _headline
+
+    run = Run(run_id="run", model_id="model", task_specs=["hillclimb:dev"])
+    suite = SuiteResult(run_id="run", parent_suite=None, score=None, aggregation=aggregation)
+    tasks = [
+        TaskResult(run_id="run", score=value, display_format="percent", higher_is_better=True)
+        for value in (0.5, 1.0)
+    ]
+    assert _headline(run, [suite], tasks) is None
+    headline = _headline(run, [], tasks)
+    assert headline is not None
+    assert headline["score"] == 0.75
 
 
 def test_quantile_box_uses_mean_when_sent() -> None:

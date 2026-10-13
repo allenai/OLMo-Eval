@@ -992,7 +992,13 @@ async def finalize_task_result(
 
 def _headline(run: Run, suites: list[SuiteResult], trs: list[TaskResult]) -> dict[str, Any] | None:
     order = {spec: i for i, spec in enumerate(run.task_specs or [])}
-    top = [x for x in suites if x.parent_suite is None and x.score is not None]
+    top = [
+        x
+        for x in suites
+        if x.parent_suite is None
+        and x.score is not None
+        and x.aggregation not in {"none", "display_only"}
+    ]
     top.sort(key=lambda x: order.get(x.suite_name, len(order)))
     if top:
         x = top[0]
@@ -1003,7 +1009,9 @@ def _headline(run: Run, suites: list[SuiteResult], trs: list[TaskResult]) -> dic
             "stderr": x.stderr,
             "display_format": x.display_format,
         }
-    if any(x.parent_suite is None and x.aggregation == "gap" for x in suites):
+    if any(
+        x.parent_suite is None and x.aggregation in {"none", "gap", "display_only"} for x in suites
+    ):
         return None
     if len(trs) == 1:
         tr = trs[0]

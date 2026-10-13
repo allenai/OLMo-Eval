@@ -37,7 +37,7 @@ make_suite(
     ),
 )
 
-make_suite(
+OMEGA_DEV = make_suite(
     "omega:dev",
     ("omega_500:hillclimb", "omega_500_out"),
     aggregation=AggregationStrategy.GAP,

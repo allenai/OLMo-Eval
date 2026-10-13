@@ -734,6 +734,8 @@ async def compare_pairwise(
         raise bad_request("margin must be >= 0")
     used = [tr for s in subjects for tr in s.trs.values()]
     rows, node, defs = await resolve_scope(session, body.scope, subjects)
+    if node is not None and node.aggregation in {"none", "display_only"}:
+        raise bad_request("This suite has no aggregate score. Choose a child suite or a task.")
     ckey = cache_key("pairwise-v6", body.model_dump(mode="json"), used, scope_hashes(node, defs))
     cached = await get_cached(session, ckey, a.PairwiseResponse)
     if cached is not None:

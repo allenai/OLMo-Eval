@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from olmo_eval.common.logging import get_logger
 from olmo_eval.runners.processing.generation_counts import sum_generation_counts
+
+if TYPE_CHECKING:
+    from olmo_eval.evals.suites.registry import Suite
 
 logger = get_logger(__name__)
 
@@ -318,6 +321,7 @@ def compute_suite_aggregations(
     - AVERAGE_OF_AVERAGES: Average over children, where nested suites are
       averaged first (each child gets equal weight)
     - GAP: Both tasks' primary scores and the companion minus the reference
+    - NONE: No aggregate for the suite itself; each nested suite reports its own
 
     Handles specs with priority suffixes (@priority).
     When a suite has these suffixes, they are propagated to expanded task lookups.
@@ -330,10 +334,8 @@ def compute_suite_aggregations(
         Dict mapping suite name -> {"metrics": {...}, "tasks": [...], "aggregation": ...}
     """
     from olmo_eval.evals.suites import get_suite, suite_exists
-    from olmo_eval.evals.suites.registry import AggregationStrategy
 
-    suite_aggregations: dict[str, dict[str, Any]] = {}
-
+    suites: list[tuple[str, Suite, str]] = []
     for spec in task_specs:
         # Parse out priority suffix (e.g., "suite@high" -> "suite", "@high")
         priority_suffix = ""
@@ -343,11 +345,55 @@ def compute_suite_aggregations(
             priority_suffix = f"@{priority}"
 
         # Check if the base spec (without priority) is a suite
-        if not suite_exists(base_spec):
+        if suite_exists(base_spec):
+            suites.append((spec, get_suite(base_spec), priority_suffix))
+
+    return _aggregate_suites(suites, task_results)
+
+
+def _aggregate_suites(
+    suites: list[tuple[str, Suite, str]],
+    task_results: dict[str, dict[str, Any]],
+    *,
+    report_descendants: bool = False,
+) -> dict[str, dict[str, Any]]:
+    """Aggregate each (result key, suite, priority suffix) entry by its strategy."""
+    from olmo_eval.evals.suites.registry import AggregationStrategy, Suite
+
+    suite_aggregations: dict[str, dict[str, Any]] = {}
+
+    for spec, suite, priority_suffix in suites:
+        if suite.aggregation == AggregationStrategy.NONE:
+            # No score of its own; nested suites report under their own names.
+            nested = [
+                (f"{child.name}{priority_suffix}", child, priority_suffix)
+                for child in suite.tasks
+                if isinstance(child, Suite)
+            ]
+            for key, result in _aggregate_suites(
+                nested, task_results, report_descendants=True
+            ).items():
+                suite_aggregations.setdefault(key, {"container_suite": spec, **result})
             continue
 
-        suite = get_suite(base_spec)
-        if suite.aggregation == AggregationStrategy.NONE:
+        if report_descendants:
+            nested = [
+                (f"{child.name}{priority_suffix}", child, priority_suffix)
+                for child in suite.tasks
+                if isinstance(child, Suite)
+            ]
+            for key, result in _aggregate_suites(
+                nested, task_results, report_descendants=True
+            ).items():
+                suite_aggregations.setdefault(key, result)
+
+        if report_descendants and suite.aggregation == AggregationStrategy.DISPLAY_ONLY:
+            suite_aggregations[spec] = {
+                "metrics": {},
+                "tasks": [f"{name}{priority_suffix}" for name in suite.expand()],
+                "num_tasks": len(suite.expand()),
+                "aggregation": suite.aggregation.value,
+            }
             continue
 
         if suite.aggregation == AggregationStrategy.GAP:
@@ -402,7 +448,19 @@ def compute_suite_aggregations(
                         "aggregation": result.nested_suite.aggregation.value,
                         "parent_suite": spec,
                     }
-                    if result.primary_score is not None:
+                    existing = suite_aggregations.get(result.nested_suite_key)
+                    if existing is not None:
+                        nested_result = {**existing, "parent_suite": spec}
+                    unscored_child = (
+                        result.nested_suite.aggregation == AggregationStrategy.NONE
+                        or (
+                            report_descendants
+                            and result.nested_suite.aggregation == AggregationStrategy.DISPLAY_ONLY
+                        )
+                    )
+                    if unscored_child:
+                        nested_result["metrics"] = {}
+                    elif existing is None and result.primary_score is not None:
                         nested_result["metrics"] = dict(result.metrics)
                         nested_result["metrics"]["primary_score"] = {
                             "average": result.primary_score
