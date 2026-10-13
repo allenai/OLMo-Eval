@@ -373,3 +373,33 @@ def test_gap_columns_require_the_same_stored_definition_and_metric(changes):
         "_gap_metric": "strict",
     }
     assert suite_columns_compatible(row, {**row, **changes}) is (not changes)
+
+
+def test_gap_selected_metric_controls_score_format_and_direction() -> None:
+    from olmo_eval_api.services.read_suites import score_suite
+
+    node = build_tree(
+        "pair", {"pair": ("gap", [{"type": "task", "name": "in"}, {"type": "task", "name": "out"}])}
+    )
+    tasks = {
+        name: {
+            "primary_metric": "loss:default",
+            "score": 2.0,
+            "stderr": 0.3,
+            "num_instances": 10,
+            "display_format": "raw",
+            "higher_is_better": True,
+            "metrics": {"error:default": value},
+            "metric_meta": {
+                "error:default": {
+                    "display_format": "percent",
+                    "higher_is_better": False,
+                    "stderr": 0.02,
+                }
+            },
+        }
+        for name, value in (("in", 0.2), ("out", 0.1))
+    }
+    result = score_suite(node, tasks, metric_keys={"in": "error:default", "out": "error:default"})
+    assert result.score == 0.1 and result.stderr == 0.02
+    assert result.display_format == "percent" and result.higher_is_better is False

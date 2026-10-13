@@ -956,3 +956,38 @@ async def test_bare_task_baselines_retain_non_gap_suite_fallback(
         assert delta is None
     else:
         assert delta["delta"] == pytest.approx(0.1)
+
+
+@pytest.mark.parametrize("shared_metric", [False, True])
+async def test_gap_leaderboard_uses_one_metric_across_runs(
+    client: httpx.AsyncClient, session: Any, shared_metric: bool
+) -> None:
+    for run_id, metric, score in (
+        ("rankstrict01", "strict:default", 0.5),
+        ("rankflex01", "flex:default", 0.9),
+    ):
+        await seed_run(
+            client,
+            run_id=run_id,
+            tasks={"in": [score], "out": [score]},
+            primary_metric=metric,
+            suites=[suite("rankpair", ["in", "out"], score=score, aggregation="gap")],
+        )
+    if shared_metric:
+        await session.execute(
+            text(
+                "UPDATE task_results SET metrics = metrics || CAST(:extra AS jsonb) "
+                "WHERE run_id = :run"
+            ),
+            {"extra": json.dumps({"flex:default": 0.4}), "run": "rankstrict01"},
+        )
+        await session.commit()
+    body = await get(
+        client, "/api/suites/leaderboard", "LeaderboardResponse", suite="rankpair", per_model="all"
+    )
+    scores = {row["run_id"]: row["score"] for row in body["items"]}
+    assert scores["rankflex01"] == pytest.approx(0.9)
+    if shared_metric:
+        assert scores["rankstrict01"] == pytest.approx(0.4)
+    else:
+        assert "rankstrict01" not in scores
