@@ -51,7 +51,7 @@ import json
 import os
 import random
 from collections.abc import Iterator
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from enum import StrEnum
 from typing import Any
 
@@ -83,6 +83,7 @@ __all__ = [
     "CTCSubMetricScorer",
     "CTCMeanMetric",
     "CTCSuiteTask",
+    "CTCTaskConfig",
 ]
 
 #: Public HF dataset holding every rung file. One config per ROSTER row, one split per rung.
@@ -146,11 +147,47 @@ PROMPT_FORMATS = ("alpaca", "chat")
 
 
 def prompt_format() -> str:
-    """:returns: The active prompt format, read at request time so a run can set it late."""
+    """:returns: The prompt format the environment asks for. Read once, when a task is built, and
+    stored on its :class:`CTCTaskConfig` -- so it is part of the task hash."""
     fmt = os.environ.get(PROMPT_FORMAT_ENV, "alpaca").strip().lower()
     if fmt not in PROMPT_FORMATS:
         raise ValueError(f"{PROMPT_FORMAT_ENV}={fmt!r}; expected one of {PROMPT_FORMATS}")
     return fmt
+
+
+@dataclass
+class CTCTaskConfig(TaskConfig):
+    """:class:`TaskConfig` plus the suite's rendering and instance-selection knobs.
+
+    ``CTC_SUITE_PROMPT_FORMAT``, ``CTC_SUITE_DOC_MARKERS`` and ``CTC_SUITE_SHARDS`` change the
+    prompt a model sees or the rows a run grades, so they must change the task hash -- otherwise a
+    chat-format, marker-wrapped or sharded run would be stored, cached and compared under the hash
+    of a plain run. :meth:`CTCSuiteTask.__init__` resolves them from the environment into these
+    fields (as it does the data root and the rerank cap), and :meth:`to_dict` emits them only when
+    they differ from the published setting, so every plain run keeps the hash it always had.
+    """
+
+    #: ``alpaca`` (raw completion, every published number) or ``chat``; see ``PROMPT_FORMAT_ENV``.
+    prompt_format: str = "alpaca"
+    #: Wrap each document in the SFT converter's markers (``chat`` only); see ``doc_markers``.
+    doc_markers: bool = False
+    #: ``"<index>/<count>"``: grade only that shard of the ``limit``-sampled rows.
+    shard: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        serialized = super().to_dict()
+        knobs: dict[str, Any] = {}
+        if self.prompt_format != "alpaca":
+            knobs["prompt_format"] = self.prompt_format
+        if self.doc_markers:
+            knobs["doc_markers"] = True
+        if self.shard is not None:
+            knobs["shard"] = self.shard
+        # Emitted only when set, so the hash of a run with every knob at its default is unchanged
+        # from before these fields existed and its cached results stay valid.
+        if knobs:
+            serialized["ctc"] = knobs
+        return serialized
 
 
 # Import the vendored spec registrations (side-effect: populates the ctc registry).
@@ -557,6 +594,19 @@ def _local_data_source(row: RosterRow, rung: str, root: str) -> DataSource:
     return DataSource(path=os.path.join(root, row.subset, f"rung_{tokens}.jsonl"), split="train")
 
 
+def _rung_of(row: RosterRow, source: Any) -> str | None:
+    """The rung label a data source reads. The published source's split IS the label; a
+    ``CTC_SUITE_DATA_ROOT`` source is a bare ``rung_<tokens>.jsonl`` with split ``train``, so the
+    label is recovered from the file name (honouring ``rung_alias``)."""
+    if not isinstance(source, DataSource):
+        return None
+    if source.path == HF_DATASET:
+        return source.split
+    by_tokens = {row.rung_alias.get(r, RUNG_TOKENS[r]): r for r in row.rungs}
+    tokens = os.path.basename(source.path).removesuffix(".jsonl").removeprefix("rung_")
+    return by_tokens.get(int(tokens)) if tokens.isdigit() else None
+
+
 def _decode_budget(row: RosterRow, spec) -> int:
     """The row's ``max_tokens``: its own override, else the larger of the stop preset's and the
     spec's budgets. Too small truncates a correct answer into a parse failure, which reads as a
@@ -818,6 +868,16 @@ class CTCSuiteTask(Task):
             config = replace(
                 config, sampling_params=replace(params, max_tokens=min(params.max_tokens, int(cap)))
             )
+        # The rendering and sharding knobs: into the config too (see CTCTaskConfig). A config that
+        # already carries them -- a task rebuilt from its own config -- is left as it is.
+        if not isinstance(config, CTCTaskConfig):
+            shard = _shard_for(self.row.subset, _rung_of(self.row, config.data_source))
+            config = CTCTaskConfig(
+                **{f.name: getattr(config, f.name) for f in fields(TaskConfig)},
+                prompt_format=prompt_format(),
+                doc_markers=doc_markers_enabled(),
+                shard=None if shard is None else f"{shard[0]}/{shard[1]}",
+            )
         super().__init__(config)
 
     @property
@@ -827,19 +887,14 @@ class CTCSuiteTask(Task):
         return ROSTER.get(self.row_name) or OOD_ROSTER[self.row_name]
 
     @property
-    def _rung(self) -> str | None:
-        """The rung label this task reads. The published source's split IS the label; a
-        ``CTC_SUITE_DATA_ROOT`` source is a bare ``rung_<tokens>.jsonl`` with split ``train``, so
-        the label is recovered from the file name (honouring ``rung_alias``)."""
-        source = self.config.data_source
-        if not isinstance(source, DataSource):
-            return None
-        if source.path == HF_DATASET:
-            return source.split
-        by_tokens = {self.row.rung_alias.get(r, RUNG_TOKENS[r]): r for r in self.row.rungs}
-        stem = os.path.basename(source.path).removesuffix(".jsonl")
-        tokens = stem.removeprefix("rung_")
-        return by_tokens.get(int(tokens)) if tokens.isdigit() else None
+    def ctc_config(self) -> CTCTaskConfig:
+        """The config with the suite's knobs. The runner replaces ``config`` with
+        :func:`dataclasses.replace`, which keeps the subclass; a caller that swapped in a plain
+        :class:`TaskConfig` gets the published defaults."""
+        config = self.config
+        if isinstance(config, CTCTaskConfig):
+            return config
+        return CTCTaskConfig(**{f.name: getattr(config, f.name) for f in fields(TaskConfig)})
 
     @property
     def spec(self):
@@ -848,11 +903,11 @@ class CTCSuiteTask(Task):
     @property
     def instances(self) -> Iterator[Instance]:
         items = list(self._load_instances_cached())
-        shard = _shard_for(self.row.subset, self._rung)
+        shard = self.ctc_config.shard
         if shard is None:
             yield from items
             return
-        index, count = shard
+        index, count = (int(x) for x in shard.split("/"))
         # Draw the `limit` sample exactly as the runner would (runners/asynq/preparation.py:
         # random.Random(seed).sample), THEN take every count-th row. The shards of one cell are
         # therefore a partition of the very rows an unsharded run grades, and each shard is at or
@@ -888,14 +943,15 @@ class CTCSuiteTask(Task):
 
     def format_request(self, instance: Instance) -> LMRequest:
         example = instance.metadata["example"]
-        if prompt_format() == "chat":
+        knobs = self.ctc_config
+        if knobs.prompt_format == "chat":
             body = self.spec.build_prompt(example, query_position=QUERY_POSITION, use_alpaca=False)
-            if doc_markers_enabled():
+            if knobs.doc_markers:
                 body = add_doc_markers(body, example, self.spec.name)
             return LMRequest(
                 request_type=RequestType.CHAT, messages=({"role": "user", "content": body},)
             )
-        if doc_markers_enabled():
+        if knobs.doc_markers:
             raise ValueError(
                 f"{DOC_MARKERS_ENV}=1 needs {PROMPT_FORMAT_ENV}=chat: the markers wrap the chat "
                 "body as the CTC SFT converter does; no training data wraps the Alpaca prompt"

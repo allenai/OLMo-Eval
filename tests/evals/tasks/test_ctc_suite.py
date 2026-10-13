@@ -764,7 +764,9 @@ def test_chat_prompt_format_is_the_sft_rendering(tmp_path, monkeypatch, task_nam
     assert default.request_type == RequestType.COMPLETION
     assert default.prompt.startswith("Below is an instruction")
 
+    # resolved when the task is built (it is part of the task hash), so build it under the knob
     monkeypatch.setenv(PROMPT_FORMAT_ENV, "chat")
+    task = get_task(f"{task_name}:{rung}")
     chat = task.format_request(instance)
     assert chat.request_type == RequestType.CHAT
     assert len(chat.messages) == 1 and chat.messages[0]["role"] == "user"
@@ -776,7 +778,7 @@ def test_chat_prompt_format_is_the_sft_rendering(tmp_path, monkeypatch, task_nam
 
     monkeypatch.setenv(PROMPT_FORMAT_ENV, "nonsense")
     with pytest.raises(ValueError):
-        task.format_request(instance)
+        get_task(f"{task_name}:{rung}")
 
 
 @pytest.mark.parametrize(
@@ -803,6 +805,7 @@ def test_doc_markers_wrap_every_document_chat_only(tmp_path, monkeypatch, task_n
 
     monkeypatch.setenv(PROMPT_FORMAT_ENV, "chat")
     monkeypatch.setenv(DOC_MARKERS_ENV, "1")
+    task = get_task(f"{task_name}:{rung}")
     body = task.format_request(instance).messages[0]["content"]
     n = sum(1 for d in example["documents"] if str(d.get("text", "")).strip())
     assert body.count(DOC_START_STR) == n and body.count(DOC_END_STR) == n
@@ -814,7 +817,7 @@ def test_doc_markers_wrap_every_document_chat_only(tmp_path, monkeypatch, task_n
 
     monkeypatch.setenv(PROMPT_FORMAT_ENV, "alpaca")  # no training data wraps the Alpaca prompt
     with pytest.raises(ValueError):
-        task.format_request(instance)
+        get_task(f"{task_name}:{rung}").format_request(instance)
 
 
 def test_doc_markers_wrap_oolong_item_lines() -> None:
@@ -898,3 +901,80 @@ def test_ood_rows_resolve_and_format(tmp_path, monkeypatch) -> None:
     assert task.row is row
     instance = list(task.instances)[0]
     assert "the sky is blue" in task.format_request(instance).prompt
+
+
+#: Each request-time knob, with a value that changes what a run sends or grades. The shard knob is
+#: keyed by ``<subset>:<rung>``, so it is filled in per cell below.
+_HASHED_KNOBS = {
+    "CTC_SUITE_PROMPT_FORMAT": "chat",
+    "CTC_SUITE_DOC_MARKERS": "1",
+    "CTC_SUITE_SHARDS": None,
+    "CTC_SUITE_RERANK_DECODE_TOKENS": "160",
+}
+
+
+def _clear_knobs(monkeypatch) -> None:
+    for name in (*_HASHED_KNOBS, "CTC_SUITE_DATA_ROOT"):
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.mark.parametrize("knob", sorted(_HASHED_KNOBS))
+def test_every_request_time_knob_changes_the_task_hash(monkeypatch, knob) -> None:
+    """A chat-format, marker-wrapped, sharded or rerank-capped run sends different prompts or
+    grades different rows, so it must never share a task hash (and a result cache) with a plain
+    run. ``ctc_rerank`` is used so the rerank cap applies too."""
+    from olmo_eval.common.types import compute_task_hash
+
+    _clear_knobs(monkeypatch)
+    spec = "ctc_rerank:r2k"
+    plain = compute_task_hash(get_task(spec).config.to_dict())
+    value = _HASHED_KNOBS[knob]
+    if knob == "CTC_SUITE_SHARDS":
+        value = json.dumps({f"{ROSTER['ctc_rerank'].subset}:r2k": "1/3"})
+    if knob == "CTC_SUITE_DOC_MARKERS":
+        monkeypatch.setenv("CTC_SUITE_PROMPT_FORMAT", "chat")
+        plain = compute_task_hash(get_task(spec).config.to_dict())  # markers vs chat-only
+    monkeypatch.setenv(knob, value)
+    assert compute_task_hash(get_task(spec).config.to_dict()) != plain
+
+
+def test_default_knobs_leave_the_task_hash_unchanged(monkeypatch) -> None:
+    """With every knob at its default the serialized config is exactly a plain
+    :class:`TaskConfig`'s -- no new key -- so hashes computed before the knobs were hashed, and the
+    results cached under them, stay valid. A shard map naming a different cell is a no-op too."""
+    from dataclasses import fields
+
+    from olmo_eval.common.types import compute_task_hash
+    from olmo_eval.evals.tasks.common import TaskConfig
+    from olmo_eval.evals.tasks.ctc_suite import CTCTaskConfig
+
+    _clear_knobs(monkeypatch)
+    for spec in ("ctc_nq:r2k", "ctc_rerank:r2k", "ctc_contradiction:r32k"):
+        config = get_task(spec).config
+        assert isinstance(config, CTCTaskConfig)
+        plain = TaskConfig(**{f.name: getattr(config, f.name) for f in fields(TaskConfig)})
+        assert config.to_dict() == plain.to_dict()
+        assert "ctc" not in config.to_dict()
+
+        monkeypatch.setenv("CTC_SUITE_PROMPT_FORMAT", "alpaca")  # explicit default
+        monkeypatch.setenv("CTC_SUITE_DOC_MARKERS", "0")
+        monkeypatch.setenv("CTC_SUITE_SHARDS", json.dumps({"some_other_subset:r2k": "0/2"}))
+        again = get_task(spec).config.to_dict()
+        assert compute_task_hash(again) == compute_task_hash(plain.to_dict())
+        _clear_knobs(monkeypatch)
+
+
+def test_the_knobs_survive_the_runners_config_replacement(tmp_path, monkeypatch) -> None:
+    """The runner rewrites ``task.config`` with ``dataclasses.replace`` (limit, sampling params);
+    the stored hash must still carry the knobs, and the prompt must still follow them."""
+    from olmo_eval.common.types import RequestType
+    from olmo_eval.runners.asynq.preparation import prepare_task_items
+
+    _clear_knobs(monkeypatch)
+    row = ROSTER["ctc_nq"]
+    _write_ladder(tmp_path, row.subset, RUNG_TOKENS["r2k"], RETRIEVAL_EXAMPLE)
+    monkeypatch.setenv("CTC_SUITE_DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("CTC_SUITE_PROMPT_FORMAT", "chat")
+    task, items = prepare_task_items("ctc_nq:r2k", "mock", {"limit": 5}, {"max_tokens": 32})
+    assert task.config.to_dict()["ctc"] == {"prompt_format": "chat"}
+    assert items[0].request.request_type == RequestType.CHAT
