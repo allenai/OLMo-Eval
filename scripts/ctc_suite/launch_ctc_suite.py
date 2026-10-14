@@ -54,6 +54,7 @@ import glob
 import json
 import math
 import os
+import shlex
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -353,6 +354,32 @@ def job_script(
     return cmd, env
 
 
+def pack_node_script(group: list[tuple[int, str, dict]]) -> tuple[str, dict]:
+    """
+    One multi-GPU job running each bin's script on its own GPU, in parallel.
+
+    Each bin keeps its own env (exported in its subshell) and its own /tmp scratch paths; the job
+    prints every bin's tail and exits non-zero if any bin failed.
+    """
+    parts = []
+    for gpu, (i, cmd, env) in enumerate(group):
+        cmd = cmd.replace("/tmp/ckpt_view", f"/tmp/ckpt_view_{i:02d}").replace(
+            "/tmp/ctc_fitted", f"/tmp/ctc_fitted_{i:02d}"
+        )
+        exports = " ".join(f"export {k}={shlex.quote(v)};" for k, v in env.items())
+        sub = f"export CUDA_VISIBLE_DEVICES={gpu}; {exports} {cmd}"
+        parts.append(
+            f"( bash -c {shlex.quote(sub)} > /tmp/job{i:02d}.log 2>&1; "
+            f"echo $? > /tmp/rc_{i:02d} ) &"
+        )
+    report = " ".join(
+        f'echo "=== job{i:02d} rc=$(cat /tmp/rc_{i:02d})"; tail -40 /tmp/job{i:02d}.log; '
+        f'[ "$(cat /tmp/rc_{i:02d})" = 0 ] || rc=1;'
+        for i, _, _ in group
+    )
+    return " ".join(parts) + f" wait; rc=0; {report} exit $rc", {}
+
+
 def submit(args, bins: list[list[Cell]], only: set[int] | None = None) -> None:
     """Submit one job per bin (``only``: just those bin indices, e.g. after a preemption)."""
     here = os.path.dirname(os.path.abspath(__file__))
@@ -384,6 +411,7 @@ def submit(args, bins: list[list[Cell]], only: set[int] | None = None) -> None:
     )
     root = os.path.join(args.out_root, args.run_name)
     failed: list[int] = []
+    scripts: list[tuple[int, str, dict]] = []
     for i, cells in enumerate(bins):
         if only is not None and i not in only:
             continue
@@ -403,17 +431,36 @@ def submit(args, bins: list[list[Cell]], only: set[int] | None = None) -> None:
             args.pad_token_id,
             args.yarn_old_len,
         )
+        scripts.append((i, cmd, env))
+    # --node-gpus N: pack up to N bins into one N-GPU job, one bin per GPU, each writing its own
+    # job dir exactly as alone (so --collect is unchanged). Single-GPU urgent jobs can sit for hours
+    # on a busy cluster while whole nodes are still granted in minutes.
+    groups = (
+        [scripts[k : k + args.node_gpus] for k in range(0, len(scripts), args.node_gpus)]
+        if args.node_gpus
+        else [[x] for x in scripts]
+    )
+    for group in groups:
+        i = group[0][0]
+        if len(group) == 1 and not args.node_gpus:
+            _, cmd, env = group[0]
+            name = f"ctc-{args.run_name}-{i:02d}"
+            gpus = 1
+        else:
+            cmd, env = pack_node_script(group)
+            name = f"ctc-{args.run_name}-n{'-'.join(f'{g[0]:02d}' for g in group)}"
+            gpus = len(group)
         argv = [
             "gantry",
             "run",
             "--name",
-            f"ctc-{args.run_name}-{i:02d}"[:120],
+            name[:120],
             "-w",
             args.workspace,
             "-b",
             args.budget,
             "--gpus",
-            "1",
+            str(gpus),
             "--priority",
             args.priority,
             "--weka",
@@ -428,7 +475,7 @@ def submit(args, bins: list[list[Cell]], only: set[int] | None = None) -> None:
             "--timeout",
             "0",
             "--shared-memory",
-            "32GiB",
+            f"{32 * gpus}GiB",
             "--yes",
         ]
         if branch:
@@ -450,12 +497,13 @@ def submit(args, bins: list[list[Cell]], only: set[int] | None = None) -> None:
         # silently lost 10 of 24 submissions on 2026-09-28.
         res = subprocess.run(argv, cwd=repo, capture_output=True, text=True)
         url = next((w for w in res.stdout.split() if "beaker.org/ex/" in w), "")
+        jobs = ",".join(f"job{g[0]:02d}" for g in group)
         if res.returncode != 0 or not url:
-            failed.append(i)
+            failed += [g[0] for g in group]
             tail = (res.stderr or res.stdout).strip().splitlines()[-3:]
-            print(f"  ⚠ job{i:02d} NOT submitted (rc={res.returncode}): {' | '.join(tail)}")
+            print(f"  ⚠ {jobs} NOT submitted (rc={res.returncode}): {' | '.join(tail)}")
         else:
-            print(f"  job{i:02d} {url}")
+            print(f"  {jobs} {url}")
     if failed:
         print(
             f"\n⚠ {len(failed)} job(s) failed to submit: {failed}. Retry exactly those with "
@@ -480,6 +528,7 @@ def submit(args, bins: list[list[Cell]], only: set[int] | None = None) -> None:
         "yarn_rungs",
         "olmo_core_ref",
         "olmo_core_no_deps",
+        "node_gpus",
         "eos_token_id",
         "pad_token_id",
         "yarn_old_len",
@@ -703,6 +752,12 @@ def main() -> None:
         "262,144 tokens crashes on Qwen3.5 (Triton illegal memory access); chunking is exact",
     )
     ap.add_argument("--olmo-core-ref", default="prasann/landmark")
+    ap.add_argument(
+        "--node-gpus",
+        type=int,
+        default=0,
+        help="pack up to N bins into one N-GPU job (one bin per GPU); 0 = one 1-GPU job per bin",
+    )
     ap.add_argument(
         "--eos-token-id",
         type=int,
