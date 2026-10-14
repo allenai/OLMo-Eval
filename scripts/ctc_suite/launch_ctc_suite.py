@@ -362,11 +362,21 @@ def submit(args, bins: list[list[Cell]], only: set[int] | None = None) -> None:
     # image's huggingface_hub is too old for transformers 5 (`cannot import name 'silent_tqdm'`);
     # the pins are the versions this repo's uv.lock resolves, so a job runs what CI tested (and
     # transformers satisfies the hf extra's >=5.8,<5.13 floor). Bump them together with uv.lock.
+    olmo_core_git = f"git+https://github.com/allenai/OLMo-core.git@{args.olmo_core_ref}"
+    if args.olmo_core_no_deps:
+        # A ref on upstream v3.0.0+ (e.g. prasann/lengen) pins torch>=2.10 (and fla 0.5.2 + torch
+        # 2.13 for its ``fla`` extra); resolving it would replace the image's torch 2.9.1 / fla
+        # 0.4.1. Install it without dependencies and pin the stack the setA checkpoints trained on.
+        olmo_core_install = (
+            f"pip install --no-deps 'ai2-olmo-core @ {olmo_core_git}' && pip install "
+            "'dataclass-extensions==0.5.0' 'flash-linear-attention==0.4.1' 'fla-core==0.4.1' "
+            "bettermap"
+        )
+    else:
+        olmo_core_install = f"pip install 'ai2-olmo-core[fla] @ {olmo_core_git}' dataclass-extensions"
     install = (
         "pip uninstall -y ai2-olmo-eval olmo-eval; pip install . 'transformers==5.8.1' "
-        "'huggingface_hub==1.12.2' && "
-        f"pip install 'ai2-olmo-core[fla] @ git+https://github.com/allenai/OLMo-core.git@"
-        f"{args.olmo_core_ref}' dataclass-extensions"
+        "'huggingface_hub==1.12.2' && " + olmo_core_install
     )
     root = os.path.join(args.out_root, args.run_name)
     failed: list[int] = []
@@ -462,6 +472,7 @@ def submit(args, bins: list[list[Cell]], only: set[int] | None = None) -> None:
         "prefill_chunk_size",
         "yarn_rungs",
         "olmo_core_ref",
+        "olmo_core_no_deps",
         "cluster",
         "workspace",
         "budget",
@@ -682,6 +693,12 @@ def main() -> None:
         "262,144 tokens crashes on Qwen3.5 (Triton illegal memory access); chunking is exact",
     )
     ap.add_argument("--olmo-core-ref", default="prasann/landmark")
+    ap.add_argument(
+        "--olmo-core-no-deps",
+        action="store_true",
+        help="install --olmo-core-ref without its dependencies, pinning the image's torch 2.9.1 / "
+        "fla 0.4.1 stack (needed for refs on upstream v3.0.0+, e.g. prasann/lengen)",
+    )
     ap.add_argument("--cluster", default="ai2/jupiter-cirrascale-2")
     ap.add_argument("--workspace", default="ai2/flex2")
     ap.add_argument("--budget", default="ai2/oe-other")
