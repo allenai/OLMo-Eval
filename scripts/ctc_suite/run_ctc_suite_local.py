@@ -349,7 +349,7 @@ def slot_loads(args) -> list[float]:
     return loads
 
 
-def bin_script(args, cells, i: int, cmd: str, env: dict, log_dir: str, tmp: str) -> str:
+def bin_script(args, cells, i: int, cmd: str, env: dict, log_dir: str, tmp: str, ckpt: str) -> str:
     exports = "\n".join(f"export {k}={shlex.quote(v)}" for k, v in env.items())
     return f"""{env_block(args)}
 export TMPDIR={tmp}/tmp
@@ -357,7 +357,29 @@ mkdir -p $TMPDIR {tmp}
 cd {args.oe_dir}
 echo "=== {args.run_name} job{i:02d} on $(hostname) GPU=$CUDA_VISIBLE_DEVICES slurm=$SLURM_JOB_ID $(date -u +%FT%TZ)"
 echo "=== cells: {' '.join(c.task + (f'[{c.shard[0]}/{c.shard[1]}]' if c.shard else '') + f'@{c.limit}' for c in cells)}"
-python -c "import torch, olmo_core, olmo_eval; print('torch', torch.__version__, torch.cuda.get_device_name(0))"
+python - {ckpt}/config.json <<'PY' || exit 1
+# the checkpoint's attention backends, and a FlashAttention-3 kernel call on this GPU: a flash_3
+# config cannot build without it (assert_supported), so a run that loads is a run on FA3
+import collections, json, sys, torch
+def walk(n, acc):
+    if isinstance(n, dict):
+        for k, v in n.items():
+            if k == "backend" and isinstance(v, str):
+                acc[v] += 1
+            walk(v, acc)
+    elif isinstance(n, list):
+        for v in n:
+            walk(v, acc)
+    return acc
+print("torch", torch.__version__, torch.cuda.get_device_name(0))
+print("config attention backends:", dict(walk(json.load(open(sys.argv[1]))["model"], collections.Counter())))
+import flash_attn_interface as fa3
+q = torch.randn(1, 512, 8, 128, device="cuda", dtype=torch.bfloat16)
+o = fa3.flash_attn_func(q, q, q, causal=True)
+o = o[0] if isinstance(o, tuple) else o
+ref = torch.nn.functional.scaled_dot_product_attention(*(t.transpose(1, 2) for t in (q, q, q)), is_causal=True).transpose(1, 2)
+print(f"FA3 kernel OK on GPU (max |fa3-sdpa| {{(o.float() - ref.float()).abs().max().item():.2e}})")
+PY
 {exports}
 # progress heartbeat: prediction files written so far, every 5 min
 ( while sleep 300; do echo "--- heartbeat $(date -u +%T): $(find {args.results_dir}/job{i:02d} -type f 2>/dev/null | wc -l) files, \\
@@ -483,7 +505,7 @@ def cmd_submit(args) -> None:
             f"#SBATCH --comment=est={est:.0f} run={args.run_name} job{i:02d}\n"
             f"#SBATCH --requeue\n#SBATCH --output",
         )
-        script += bin_script(args, cells_i, i, local_cmd, env, log_dir, tmp)
+        script += bin_script(args, cells_i, i, local_cmd, env, log_dir, tmp, ckpt)
         desc = ", ".join(
             c.task + (f"[{c.shard[0]}/{c.shard[1]}]" if c.shard else "") for c in cells_i
         )
