@@ -341,7 +341,7 @@ def slot_loads(args) -> list[float]:
             continue
         try:
             k = int(name[len(args.slot_prefix) :])
-            est = float(comment.split("est=")[1].split()[0]) if "est=" in comment else 3600.0
+            est = float(comment.split("est=")[1].split(",")[0]) if "est=" in comment else 3600.0
         except (ValueError, IndexError):
             continue
         if k < len(loads):
@@ -502,7 +502,7 @@ def cmd_submit(args) -> None:
         script = script.replace(
             "#SBATCH --output",
             f"#SBATCH --dependency={dep}\n#SBATCH --kill-on-invalid-dep=yes\n"
-            f"#SBATCH --comment=est={est:.0f} run={args.run_name} job{i:02d}\n"
+            f"#SBATCH --comment=est={est:.0f},run={args.run_name},job{i:02d}\n"
             f"#SBATCH --requeue\n#SBATCH --output",
         )
         script += bin_script(args, cells_i, i, local_cmd, env, log_dir, tmp, ckpt)
