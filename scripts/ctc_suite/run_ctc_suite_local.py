@@ -269,6 +269,9 @@ cfg = json.load(open(os.path.join(ck, "config.json")))
 import hashlib
 assert hashlib.sha256(open(os.path.join(ck, "config.json"), "rb").read()).hexdigest() == meta["config_sha256"]
 print("config.json sha256 matches the weka original; model.rope_reset =", cfg["model"].get("rope_reset", "<absent>"))
+for key in [k for k in os.environ.get("REQUIRE_MODEL_KEYS", "").split(",") if k]:
+    assert cfg["model"].get(key) is not None, f"config.json model.{key} is missing or null"
+    print(f"required model.{key} present: {cfg['model'][key]}")
 os.environ.update(MASTER_ADDR="127.0.0.1", MASTER_PORT=str(29500 + os.getpid() % 1000), RANK="0", WORLD_SIZE="1")
 dist.init_process_group("gloo", rank=0, world_size=1)
 model_cfg = json.loads(json.dumps(cfg["model"]))
@@ -296,7 +299,8 @@ print(f"VERIFIED {ck}: strict load of {len(sd)} tensors in {time.time()-t0:.0f}s
 
 
 def fetch_script(args, items: list[str], oe_dir: str) -> str:
-    parts = [env_block(args), f"export OE_SCRIPTS={oe_dir}/scripts/ctc_suite"]
+    parts = [env_block(args), f"export OE_SCRIPTS={oe_dir}/scripts/ctc_suite",
+             f"export REQUIRE_MODEL_KEYS={','.join(args.require_model_key)}"]
     for item in items:
         local = f"{args.root}/ckpts/{item}"
         s3 = f"{args.s3_root}/{item}/"
@@ -498,7 +502,9 @@ def cmd_submit(args) -> None:
             args.mem,
             hours,
         )
-        dep = "singleton" + (f",afterok:{fetch_job}" if fetch_job else "")
+        dep = "singleton" + (f",afterok:{fetch_job}" if fetch_job else "") + "".join(
+            f",afterok:{j}" for j in args.after
+        )
         script = script.replace(
             "#SBATCH --output",
             f"#SBATCH --dependency={dep}\n#SBATCH --kill-on-invalid-dep=yes\n"
@@ -603,6 +609,11 @@ def main() -> None:
     ap.add_argument("--fetch-wait-minutes", type=float, default=240,
                     help="how long the fetch job waits for the item's _TRANSFER_OK on S3")
     ap.add_argument("--run-name")
+    ap.add_argument("--after", action="append", default=[],
+                    help="slurm job id every bin must wait for (afterok), e.g. a validation job")
+    ap.add_argument("--require-model-key", action="append", default=[],
+                    help="fail the fetch (and so every bin) unless config.json's model has this "
+                    "key set non-null, e.g. rope_reset")
     ap.add_argument("--allow-existing", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--register", action="store_true", help="ops register every bin job")
