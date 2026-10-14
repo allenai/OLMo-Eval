@@ -764,6 +764,41 @@ system_prompt_style=style_and_length_v2`) gets the OCR style tag it was trained 
 The OCR datasets are downloaded from the Hugging Face Hub at pinned revisions rather
 than read from `$MOLMO_DATA_DIR`.
 
+Science and domain benchmarks each follow their benchmark's official prompt and scoring,
+and download their data from the Hub at a pinned revision:
+
+- `chartmuseum_visual` — the 510 visual-reasoning questions of the
+  [ChartMuseum](https://github.com/Liyan06/ChartMuseum) test split (the leaderboard's
+  Visual column); `chartmuseum` runs all 1,000. The answer is read from the official
+  `<answer>` tag and graded by the official `gpt-4.1-mini` equivalence judge.
+  `answer_tag_rate` reports how often the model used the tag.
+- `micro_bench_coarse` / `micro_bench_fine` — the perception splits of
+  [μ-Bench](https://github.com/yeung-lab/Micro-Bench) (79,716 coarse-grained and 16,130
+  fine-grained microscopy questions), with the prompt and letter matching of the paper's
+  `eVLLM` harness. `accuracy` is pooled over questions (the paper's "macro-average"); for
+  the fine split it leaves out the two Eulenberg et al. 2017 datasets the official total drops
+  (`accuracy_all_datasets` keeps them).
+- `spur` — the 4,264 questions of [SPUR](https://arxiv.org/abs/2604.27604) (scientific
+  experimental images). The official score is an exact letter match inside the first
+  `<ANSWER>` tag; `overall_lenient` and `no_answer_tag` are diagnostics for models that
+  ignore the tag.
+- `scimdr_eval` — the 907 expert-annotated questions of
+  [SciMDR-Eval](https://arxiv.org/abs/2603.12249) in the paper's standard setting: the
+  annotated evidence plus same-paper distractors, at most 8 images and 6 text passages.
+  `scimdr_eval_oracle` gives only the evidence. A `gpt-5-mini` judge grades text
+  citation, image citation and answer with the paper's rubric; `accuracy` counts full
+  points on all three, `answer_correct` on the answer alone. Table images missing from
+  the release are re-rendered from the arXiv PDFs and cached under `$SCIMDR_TABLE_DIR`.
+- `geobench_vlm` / `geobench_vlm_temporal` —
+  [GEOBench-VLM](https://github.com/The-AI-Alliance/GEO-Bench-VLM) geospatial multiple
+  choice (single-image and pre/post-image tasks), with the official instruction and
+  first-letter answer rule. Each question is asked with each of its five paraphrased
+  prompts. `average` is the unweighted mean of per-task accuracies, scoring each question
+  on its first prompt; `average_majority` and `average_prompt_mean` combine the prompts
+  the other two ways. The release leaves out the xBD imagery behind the disaster-type and
+  damaged-building tasks, so these tasks skip them. The `_full` variants add them back
+  from an xBD download named by `$GEOBENCH_XBD_DIR`.
+
 ### Setup
 
 The multimodal providers live behind the `hf` and `olmo_core_vlm` extras, and the
@@ -794,14 +829,16 @@ Images live under `$MOLMO_DATA_DIR/torch_datasets/`. Manifests that recorded
 absolute paths on another machine are re-anchored under the current root
 automatically.
 
-Four tasks call the OpenAI API and need `OPENAI_API_KEY`, so the
-`molmo2_imageqa` suite needs it as a whole:
+These tasks call the OpenAI API and need `OPENAI_API_KEY`. `math_vista`, both CharXiv
+tasks and `dense_caption` are in `molmo2_imageqa`, so that suite needs it as a whole:
 
 - `math_vista` defaults to the official `gpt-4-0613` answer extraction. Use the
   `math_vista:offline` variant for an API-free heuristic instead.
 - `charxiv_descriptive` and `charxiv_reasoning` run the official `gpt-4o` grader.
 - `dense_caption` runs a `gpt-4o` recall+consistency judge. Judge responses are
   cached, so the key is only needed on a cache miss.
+- `chartmuseum` and `chartmuseum_visual` run the official `gpt-4.1-mini` answer judge.
+- `scimdr_eval` and `scimdr_eval_oracle` run the paper's `gpt-5-mini` rubric judge.
 
 The launcher resolves the key as the user-scoped beaker secret
 `{beaker-username}_OPENAI_API_KEY`; if it is missing, the launch fails up front

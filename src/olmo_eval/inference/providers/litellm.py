@@ -20,6 +20,63 @@ _MAX_STOP_SEQUENCES = 4
 
 logger = get_logger(__name__)
 
+# OpenAI fits high-detail images into a 2048x2048 square before tiling, so larger
+# images can be downscaled client-side without changing what the model sees.
+_MAX_IMAGE_SIDE = 2048
+
+
+def _image_data_url(image: Any) -> str:
+    """Encode a PIL image as a base64 PNG data URL, downscaled to the API's input bound."""
+    import base64
+    import io
+
+    if image.mode not in ("RGB", "RGBA", "L", "LA"):
+        image = image.convert("RGBA" if "A" in image.getbands() else "RGB")
+    if max(image.size) > _MAX_IMAGE_SIDE:
+        image = image.copy()
+        image.thumbnail((_MAX_IMAGE_SIDE, _MAX_IMAGE_SIDE))
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
+def _attach_images(messages: list[dict[str, Any]], images: tuple[Any, ...]) -> None:
+    """Put a request's images in the last user turn.
+
+    A user turn whose content is a part list may mark image positions with
+    ``{"type": "image"}`` parts (the Hugging Face chat-template convention); the
+    images fill them in order. Otherwise the images precede the text, the order the
+    local multimodal providers use, so an API model sees the same prompt layout as a
+    local one.
+    """
+    from olmo_eval.common.images import resolve_images
+
+    resolved = resolve_images(images)
+    if not resolved:
+        return
+    user_turn = next((m for m in reversed(messages) if m.get("role") == "user"), None)
+    if user_turn is None:
+        raise ValueError("A request with images needs a user message to attach them to.")
+    content = user_turn.get("content")
+    parts = (
+        list(content) if isinstance(content, list) else [{"type": "text", "text": content or ""}]
+    )
+    image_parts = [
+        {"type": "image_url", "image_url": {"url": _image_data_url(image)}} for image in resolved
+    ]
+    slots = [i for i, part in enumerate(parts) if part.get("type") == "image"]
+    if not slots:
+        user_turn["content"] = image_parts + parts
+        return
+    if len(slots) != len(image_parts):
+        raise ValueError(
+            f"User turn marks {len(slots)} image position(s) but the request has "
+            f"{len(image_parts)} image(s)."
+        )
+    for slot, image_part in zip(slots, image_parts, strict=True):
+        parts[slot] = image_part
+    user_turn["content"] = parts
+
 
 class LiteLLMProvider(InferenceProvider):
     """Provider using LiteLLM for unified API access to various providers."""
@@ -118,6 +175,8 @@ class LiteLLMProvider(InferenceProvider):
             messages = [dict(m) for m in request.messages]
         else:
             messages = [{"role": "user", "content": request.prompt}]
+        if request.images:
+            _attach_images(messages, request.images)
 
         # Prepare API kwargs
         kwargs: dict[str, Any] = {

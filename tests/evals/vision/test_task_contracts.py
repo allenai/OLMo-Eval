@@ -193,7 +193,17 @@ class TestLimitLeftToRunner:
 class TestJudgeScorersOutsideTaskHash:
     """A per-process cache dir must not make every run of a task a different config."""
 
-    @pytest.mark.parametrize("name", ["charxiv_descriptive", "charxiv_reasoning", "math_vista"])
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "charxiv_descriptive",
+            "charxiv_reasoning",
+            "math_vista",
+            "chartmuseum",
+            "chartmuseum_visual",
+            "scimdr_eval",
+        ],
+    )
     def test_task_hash_is_stable_across_constructions(self, name):
         first = compute_task_hash(get_task(name).config.to_dict())
         second = compute_task_hash(get_task(name).config.to_dict())
@@ -203,10 +213,11 @@ class TestJudgeScorersOutsideTaskHash:
         assert "/tmp" not in repr(serialized)
 
     def test_scorer_to_dict_carries_only_output_affecting_settings(self):
+        from olmo_eval.evals.vision.scoring.chartmuseum import ChartMuseumJudgeScorer
         from olmo_eval.evals.vision.scoring.image_qa import MathVistaGptScorer
         from olmo_eval.evals.vision.scoring.judges import CharxivJudgeScorer
 
-        for cls in (CharxivJudgeScorer, MathVistaGptScorer):
+        for cls in (CharxivJudgeScorer, MathVistaGptScorer, ChartMuseumJudgeScorer):
             a = cls(cache_dir="/a", cache_only=True).to_dict()
             b = cls(cache_dir="/b", recompute=True).to_dict()
             assert a == b, cls.__name__

@@ -43,6 +43,8 @@ EXPECTED_COUNTS = [
     ("countbench_qa", 490),
     ("pixmo_count", 540),
     ("ai2d", 1980),
+    ("geobench_vlm", 14920),
+    ("geobench_vlm_temporal", 2180),
 ]
 
 # Unlabeled test-split variants (predictions for eval-server submission):

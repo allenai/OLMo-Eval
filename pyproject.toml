@@ -222,6 +222,8 @@ select = [
 # Verbatim prompt templates from asta-bench reference implementation
 "src/olmo_eval/evals/tasks/astabench_sqa.py" = ["E501"]
 "src/olmo_eval/common/scorers/citation.py" = ["E501"]
+# Verbatim judge rubric from the SciMDR paper (Figure 4)
+"src/olmo_eval/evals/vision/scoring/scimdr.py" = ["E501"]
 # Verbatim prompt templates and gold snippets from scicode-bench reference implementation
 "src/olmo_eval/evals/external/benchmarks/scicode/prompts.py" = ["E501"]
 # Embedded fewshot data with long string literals
@@ -240,6 +242,8 @@ select = [
 # Verbatim prompt templates vendored from the mm_olmo reference implementation
 "src/olmo_eval/evals/vision/scoring/prompt_templates.py" = ["E501"]
 "src/olmo_eval/evals/vision/scoring/vqa_normalization.py" = ["E501"]
+# Verbatim prompt templates from the ChartMuseum reference implementation
+"src/olmo_eval/evals/vision/scoring/chartmuseum.py" = ["E501"]
 "src/olmo_eval/evals/vision/scoring/multiple_choice.py" = ["E501"]
 "src/olmo_eval/evals/vision/scoring/math_vista_offline.py" = ["E501"]
 "src/olmo_eval/evals/vision/scoring/mmmu_pro.py" = ["E501"]
