@@ -259,6 +259,17 @@ os.environ.update(MASTER_ADDR="127.0.0.1", MASTER_PORT=str(29500 + os.getpid() %
 dist.init_process_group("gloo", rank=0, world_size=1)
 model_cfg = json.loads(json.dumps(cfg["model"]))
 print("dropped:", drop_unknown_null_fields(model_cfg))
+def cpu_backend(node):  # CPU job: FA3 needs a GPU to import; weights are backend-independent
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if k == "backend" and v in ("flash_3", "flash_2", "flash_4", "te"):
+                node[k] = "torch"
+            else:
+                cpu_backend(v)
+    elif isinstance(node, list):
+        for v in node:
+            cpu_backend(v)
+cpu_backend(model_cfg)
 t0 = time.time()
 m = TransformerConfig.from_dict(model_cfg).build(init_device="cpu").to(torch.bfloat16)
 load_model_and_optim_state(os.path.join(ck, "model_and_optim"), m, strict=True)
