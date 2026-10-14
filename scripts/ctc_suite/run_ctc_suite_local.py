@@ -194,7 +194,7 @@ tar -xzf {args.root}/tmp/fa3_site.tgz -C $SP || exit 1
 ls -d $SP/flash_attn_3-*.egg > $SP/flash_attn_3_egg.pth && cat $SP/flash_attn_3_egg.pth
 """
     return f"""{env_block(args)}
-export PATH=/data/prasann/bin:$PATH
+export PATH={args.root}/bin:$PATH
 echo "=== setup-env $(date -u +%T) on $(hostname)"
 mkdir -p {args.root}/tmp
 [ -x {v}/bin/python ] || uv venv --python 3.12 --seed {v}
@@ -231,7 +231,21 @@ def cmd_setup_env(args) -> None:
     oe_dir = stage(args, REPO, "HEAD", f"{args.root}/code", "olmo-eval")
     oc_dir = stage(args, args.olmo_core_repo, args.olmo_core_ref, f"{args.root}/code", "OLMo-core")
     log = f"{args.root}/logs/setup_env_{time.strftime('%m%d%H%M')}.log"
-    srun_stdin(args, f"mkdir -p {args.root}/logs")
+    srun_stdin(args, f"mkdir -p {args.root}/logs {args.root}/bin {args.root}/aws")
+    # uv (static binary) and the AWS credentials (profile S3) onto the node, never read over NFS
+    home = os.path.expanduser("~")
+    for src, dst, mode in (
+        (os.path.join(home, ".local/bin/uv"), "bin/uv", "755"),
+        (os.path.join(home, ".aws/credentials"), "aws/credentials", "600"),
+        (os.path.join(home, ".aws/config"), "aws/config", "600"),
+    ):
+        with open(src, "rb") as f:
+            srun_stdin(
+                args,
+                f"umask 077; cat > {args.root}/{dst}.part && chmod {mode} {args.root}/{dst}.part "
+                f"&& mv {args.root}/{dst}.part {args.root}/{dst}",
+                f.read(),
+            )
     job = sbatch(
         header(args, "ctclocal-setup-env", log, 0, 16, "64G", 1.0)
         + setup_env_script(args, oe_dir, oc_dir)
