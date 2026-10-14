@@ -302,6 +302,9 @@ def job_script(
     max_model_len: int = 262144,
     prefill_chunk_size: int = 0,
     doc_id_style: str = "seq",
+    eos_token_id: int = 248046,
+    pad_token_id: int = 248044,
+    yarn_old_len: int = 262144,
 ) -> tuple[str, dict]:
     shards = {f"{c.subset}:{c.rung}": f"{c.shard[0]}/{c.shard[1]}" for c in cells if c.shard}
     env = {
@@ -315,7 +318,7 @@ def job_script(
     if shards:
         env["CTC_SUITE_SHARDS"] = json.dumps(shards)
     tasks = " ".join(f"-t {c.task} -o limit={c.limit}" for c in cells)
-    yarn = f"--rope-yarn {rope_yarn} " if rope_yarn else ""
+    yarn = f"--rope-yarn {rope_yarn} --yarn-old-len {yarn_old_len} " if rope_yarn else ""
     chunk = (
         f"-o provider.kwargs.prefill_chunk_size={prefill_chunk_size} " if prefill_chunk_size else ""
     )
@@ -339,7 +342,8 @@ def job_script(
         f"-o provider.max_model_len={max_model_len} "
         f"-o provider.kwargs.batch_size={cells[0].batch_size} {chunk}"
         # our checkpoints' config.json has no dataset.tokenizer, so name everything explicitly
-        f"-o provider.kwargs.eos_token_id=248046 -o provider.kwargs.pad_token_id=248044 "
+        f"-o provider.kwargs.eos_token_id={eos_token_id} "
+        f"-o provider.kwargs.pad_token_id={pad_token_id} "
         f"-o provider.kwargs.validate_checkpoint=false "
         f"-o provider.kwargs.allow_tokenizer_fallback=true -O {out_dir} "
         # exit with olmo-eval's status, so Beaker shows a failed job as failed
@@ -395,6 +399,9 @@ def submit(args, bins: list[list[Cell]], only: set[int] | None = None) -> None:
             max_len,
             chunk,
             args.doc_id_style,
+            args.eos_token_id,
+            args.pad_token_id,
+            args.yarn_old_len,
         )
         argv = [
             "gantry",
@@ -473,6 +480,9 @@ def submit(args, bins: list[list[Cell]], only: set[int] | None = None) -> None:
         "yarn_rungs",
         "olmo_core_ref",
         "olmo_core_no_deps",
+        "eos_token_id",
+        "pad_token_id",
+        "yarn_old_len",
         "cluster",
         "workspace",
         "budget",
@@ -693,6 +703,25 @@ def main() -> None:
         "262,144 tokens crashes on Qwen3.5 (Triton illegal memory access); chunking is exact",
     )
     ap.add_argument("--olmo-core-ref", default="prasann/landmark")
+    ap.add_argument(
+        "--eos-token-id",
+        type=int,
+        default=248046,
+        help="generation stop id (default Qwen3.5 <|im_end|>; Qwen3: 151645)",
+    )
+    ap.add_argument(
+        "--pad-token-id",
+        type=int,
+        default=248044,
+        help="padding id (default Qwen3.5 <|endoftext|>; Qwen3: 151643)",
+    )
+    ap.add_argument(
+        "--yarn-old-len",
+        type=int,
+        default=262144,
+        help="the checkpoint's native position window that YaRN extends (default Qwen3.5's 262,144; "
+        "Qwen3-4B-Base: 32768)",
+    )
     ap.add_argument(
         "--olmo-core-no-deps",
         action="store_true",
