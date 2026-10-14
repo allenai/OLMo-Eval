@@ -20,8 +20,11 @@ _MAX_TOKENS_REJECTION = (
 )
 
 
-def _stub_openai(monkeypatch, create):
-    """Install a stub ``openai`` module whose completions call is ``create``."""
+def _stub_openai(monkeypatch, create, clients: list[dict] | None = None):
+    """Install a stub ``openai`` module whose completions call is ``create``.
+
+    Client constructor arguments are appended to ``clients`` when it is given.
+    """
     calls: list[dict] = []
 
     async def recording_create(**kwargs):
@@ -33,7 +36,9 @@ def _stub_openai(monkeypatch, create):
         return types.SimpleNamespace(choices=[types.SimpleNamespace(message=message)])
 
     class FakeAsyncOpenAI:
-        def __init__(self, api_key=None):
+        def __init__(self, **kwargs):
+            if clients is not None:
+                clients.append(kwargs)
             self.chat = types.SimpleNamespace(
                 completions=types.SimpleNamespace(create=recording_create)
             )
@@ -100,6 +105,38 @@ class TestBuildOpenAIJudgeFn:
         judge = build_openai_judge_fn(model="gpt-5", max_tokens=64)
 
         with pytest.raises(RuntimeError, match="rate limit exceeded"):
+            await judge("grade this")
+
+    @pytest.mark.anyio
+    async def test_falls_back_to_openrouter(self, monkeypatch):
+        reply = []
+
+        async def create(**kwargs):
+            return reply[0]
+
+        clients: list[dict] = []
+        calls, make_message = _stub_openai(monkeypatch, create, clients)
+        monkeypatch.delenv("OPENAI_API_KEY")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+        reply.append(make_message("VERDICT: CORRECT"))
+
+        judge = build_openai_judge_fn(model="gpt-4o-mini", max_tokens=64)
+
+        assert await judge("grade this") == "VERDICT: CORRECT"
+        assert clients == [{"api_key": "or-key", "base_url": "https://openrouter.ai/api/v1"}]
+        assert calls[0]["model"] == "openai/gpt-4o-mini"
+
+    @pytest.mark.anyio
+    async def test_missing_keys_name_both_options(self, monkeypatch):
+        async def create(**kwargs):
+            raise AssertionError("no request should be sent")
+
+        _stub_openai(monkeypatch, create)
+        monkeypatch.delenv("OPENAI_API_KEY")
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        judge = build_openai_judge_fn(model="gpt-4o-mini", scorer_name="MyScorer")
+
+        with pytest.raises(ValueError, match="OPENAI_API_KEY or OPENROUTER_API_KEY .*MyScorer"):
             await judge("grade this")
 
 

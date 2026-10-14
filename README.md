@@ -794,8 +794,9 @@ Images live under `$MOLMO_DATA_DIR/torch_datasets/`. Manifests that recorded
 absolute paths on another machine are re-anchored under the current root
 automatically.
 
-Four tasks call the OpenAI API and need `OPENAI_API_KEY`, so the
-`molmo2_imageqa` suite needs it as a whole:
+Four tasks call the OpenAI API and need `OPENAI_API_KEY` or `OPENROUTER_API_KEY`
+(see [OpenAI models through OpenRouter](#openai-models-through-openrouter)), so the
+`molmo2_imageqa` suite needs one of them as a whole:
 
 - `math_vista` defaults to the official `gpt-4-0613` answer extraction. Use the
   `math_vista:offline` variant for an API-free heuristic instead.
@@ -804,8 +805,9 @@ Four tasks call the OpenAI API and need `OPENAI_API_KEY`, so the
   cached, so the key is only needed on a cache miss.
 
 The launcher resolves the key as the user-scoped beaker secret
-`{beaker-username}_OPENAI_API_KEY`; if it is missing, the launch fails up front
-and prints the `beaker secret write` command to run.
+`{beaker-username}_OPENAI_API_KEY`, or `{beaker-username}_OPENROUTER_API_KEY` when
+that is missing. If neither exists, the launch fails up front and prints the
+`beaker secret write` command to run.
 
 ### Running
 
@@ -1680,6 +1682,40 @@ needs them.
   ```
 
 A dry run (`--dry-run`) checks the Hub but does not read or write Beaker secrets.
+
+### OpenAI models through OpenRouter
+
+Anything that needs `OPENAI_API_KEY` also accepts an
+[OpenRouter](https://openrouter.ai) key in `OPENROUTER_API_KEY`. This covers LLM
+judges, the OpenAI models in the model registry (`gpt-4o`, `gpt-4o-mini`, ...),
+and the OpenAI models that external evals such as tau2 and DeepScholar call.
+When both keys are set, the OpenAI key is used.
+
+With only an OpenRouter key, requests go to OpenRouter's OpenAI-compatible
+endpoint, and OpenAI model names are sent as OpenRouter slugs (`gpt-4o` becomes
+`openai/gpt-4o`). Judge response caches are still keyed by the OpenAI model name,
+so existing caches keep working.
+
+Locally, export the key:
+
+```bash
+export OPENROUTER_API_KEY=sk-or-...
+```
+
+On Beaker, store it as a user-scoped secret. A task that requires
+`OPENAI_API_KEY` uses `{beaker-username}_OPENROUTER_API_KEY` when
+`{beaker-username}_OPENAI_API_KEY` does not exist:
+
+```bash
+beaker secret write --workspace <workspace> {beaker-username}_OPENROUTER_API_KEY sk-or-...
+```
+
+External evals run third-party code in a sandbox. There, the OpenRouter key is
+exported as both `OPENROUTER_API_KEY` and `OPENAI_API_KEY`, and `OPENAI_BASE_URL`
+points the OpenAI SDK at OpenRouter. olmo-eval rewrites the model names it passes
+to tau2 and DeepScholar, but it cannot rewrite names hardcoded inside a benchmark,
+such as AstaBench's scorer models. Those may fail if OpenRouter does not recognize
+the bare name.
 
 ### Secret Environment Overrides
 

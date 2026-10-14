@@ -7,6 +7,12 @@ from typing import TYPE_CHECKING, Any
 
 from olmo_eval.common.debug import is_debug_provider
 from olmo_eval.common.logging import get_logger
+from olmo_eval.common.openai_credentials import (
+    OPENROUTER_API_KEY_ENV,
+    is_openai_model,
+    openrouter_model_slug,
+    resolve_openai_credentials,
+)
 from olmo_eval.common.types import LMOutput, LMRequest, LogProbEntry, RequestType, SamplingParams
 from olmo_eval.inference.base import InferenceProvider
 from olmo_eval.inference.retry import retry_with_backoff
@@ -34,6 +40,7 @@ class LiteLLMProvider(InferenceProvider):
         "AZURE_API_BASE": "azure_api_base",
         "AZURE_API_VERSION": "azure_api_version",
         "LITELLM_PROXY_API_KEY": "litellm_proxy_api_key",
+        OPENROUTER_API_KEY_ENV: "openrouter_key",
     }
 
     def __init__(
@@ -73,6 +80,7 @@ class LiteLLMProvider(InferenceProvider):
         self.retry_delay = retry_delay
         self.api_kwargs = api_kwargs
         self._client: AsyncOpenAI | None = None  # Cached client
+        self._request_model, self._request_api_base = self._route_request(model_name, api_base)
 
         if is_debug_provider():
             litellm._turn_on_debug()
@@ -80,6 +88,19 @@ class LiteLLMProvider(InferenceProvider):
             litellm.suppress_debug_info = True
 
         self._setup_api_keys()
+
+    @staticmethod
+    def _route_request(model_name: str, api_base: str | None) -> tuple[str, str | None]:
+        """Model name and API base to request, sending OpenAI models to OpenRouter
+        when only an OpenRouter key is available."""
+        credentials = resolve_openai_credentials()
+        if (
+            credentials is not None
+            and credentials.via_openrouter
+            and is_openai_model(model_name, api_base)
+        ):
+            return f"openrouter/{openrouter_model_slug(model_name)}", None
+        return model_name, api_base
 
     def _setup_api_keys(self) -> None:
         """Configure LiteLLM with API keys from environment."""
@@ -121,8 +142,8 @@ class LiteLLMProvider(InferenceProvider):
 
         # Prepare API kwargs
         kwargs: dict[str, Any] = {
-            "api_base": self.api_base,
-            "model": self.model_name,
+            "api_base": self._request_api_base,
+            "model": self._request_model,
             "messages": messages,
             "n": params.num_samples,
             **self.api_kwargs,
