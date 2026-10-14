@@ -96,6 +96,7 @@ def main() -> None:
 
     import olmo_eval.evals.tasks.ctc_suite as S
     from olmo_eval.evals.tasks.common.registry import get_task
+    from olmo_eval.evals.tasks.ctc_suite.doc_id_hash import relabel_prompt
     from olmo_eval.evals.tasks.ctc_suite.doc_markers import add_doc_markers, doc_markers_enabled
 
     tok = AutoTokenizer.from_pretrained(args.tokenizer)
@@ -104,6 +105,8 @@ def main() -> None:
     def n_tokens(example: dict, spec) -> int:
         # exactly the request CTCSuiteTask.format_request builds in chat format
         body = spec.build_prompt(example, query_position=S.QUERY_POSITION, use_alpaca=False)
+        if S.doc_id_style() == "hash":  # 5-digit ids are longer than 1..N
+            body = relabel_prompt(body, example, spec.name)
         if doc_markers_enabled():
             body = add_doc_markers(body, example, spec.name)
         text = tok.apply_chat_template(

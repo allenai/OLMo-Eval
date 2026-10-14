@@ -68,6 +68,7 @@ from ._vendor.ctc.format import registry as _ctc_registry
 from ._vendor.ctc.format.prompts import GROUPING_INSTRUCTION
 from ._vendor.ctc.tasks import load_all as _load_all_specs
 from ._vendor.ctc.tasks._grouping import make_grouping_spec
+from .doc_id_hash import DOC_ID_STYLES, relabel_prompt, unmap_ids
 from .doc_markers import DOC_MARKERS_ENV, add_doc_markers, doc_markers_enabled
 
 __all__ = [
@@ -155,16 +156,35 @@ def prompt_format() -> str:
     return fmt
 
 
+#: Env var choosing how document ids are shown. ``seq`` (default) = ``1..N``, every published
+#: number. ``hash`` (with ``chat`` only) = a distinct random 5-digit id per document, seeded from
+#: the example, exactly as OLMo-core's CTC SFT converter renders ``--doc-id-style hash`` shards
+#: (:mod:`.doc_id_hash`, a byte-identical copy of the converter's module). The prompt is rendered
+#: with sequential ids and relabelled; each generation's ids are mapped back to 1-based positions
+#: before the unchanged parsers and graders run (an id the example does not have becomes out of
+#: range).
+DOC_ID_STYLE_ENV = "CTC_SUITE_DOC_ID_STYLE"
+
+
+def doc_id_style() -> str:
+    """:returns: The doc-id style the environment asks for, read when a task is built."""
+    style = os.environ.get(DOC_ID_STYLE_ENV, "seq").strip().lower() or "seq"
+    if style not in DOC_ID_STYLES:
+        raise ValueError(f"{DOC_ID_STYLE_ENV}={style!r}; expected one of {DOC_ID_STYLES}")
+    return style
+
+
 @dataclass
 class CTCTaskConfig(TaskConfig):
     """:class:`TaskConfig` plus the suite's rendering and instance-selection knobs.
 
-    ``CTC_SUITE_PROMPT_FORMAT``, ``CTC_SUITE_DOC_MARKERS`` and ``CTC_SUITE_SHARDS`` change the
-    prompt a model sees or the rows a run grades, so they must change the task hash -- otherwise a
-    chat-format, marker-wrapped or sharded run would be stored, cached and compared under the hash
-    of a plain run. :meth:`CTCSuiteTask.__init__` resolves them from the environment into these
-    fields (as it does the data root and the rerank cap), and :meth:`to_dict` emits them only when
-    they differ from the published setting, so every plain run keeps the hash it always had.
+    ``CTC_SUITE_PROMPT_FORMAT``, ``CTC_SUITE_DOC_MARKERS``, ``CTC_SUITE_DOC_ID_STYLE`` and
+    ``CTC_SUITE_SHARDS`` change the prompt a model sees, how it is graded or the rows a run grades,
+    so they must change the task hash -- otherwise a chat-format, marker-wrapped, hashed-id or
+    sharded run would be stored, cached and compared under the hash of a plain run.
+    :meth:`CTCSuiteTask.__init__` resolves them from the environment into these fields (as it does
+    the data root and the rerank cap), and :meth:`to_dict` emits them only when they differ from
+    the published setting, so every plain run keeps the hash it always had.
     """
 
     #: ``alpaca`` (raw completion, every published number) or ``chat``; see ``PROMPT_FORMAT_ENV``.
@@ -173,6 +193,8 @@ class CTCTaskConfig(TaskConfig):
     doc_markers: bool = False
     #: ``"<index>/<count>"``: grade only that shard of the ``limit``-sampled rows.
     shard: str | None = None
+    #: ``seq`` (published) or ``hash`` (``chat`` only); see ``DOC_ID_STYLE_ENV``.
+    doc_id_style: str = "seq"
 
     def to_dict(self) -> dict[str, Any]:
         serialized = super().to_dict()
@@ -183,6 +205,8 @@ class CTCTaskConfig(TaskConfig):
             knobs["doc_markers"] = True
         if self.shard is not None:
             knobs["shard"] = self.shard
+        if self.doc_id_style != "seq":
+            knobs["doc_id_style"] = self.doc_id_style
         # Emitted only when set, so the hash of a run with every knob at its default is unchanged
         # from before these fields existed and its cached results stay valid.
         if knobs:
@@ -641,6 +665,9 @@ def _score_output(spec, instance: Instance, output: LMOutput) -> tuple[Any, dict
     # An unfinished trace holds only the ids the model was still weighing. Scoring them credits
     # thinking out loud; recording a parse failure says what actually happened.
     truncated_trace = _in_unclosed_think(cleaned)
+    if instance.metadata.get("doc_id_style") == "hash":
+        # back to 1-based positions, so the parser's range checks and the grader are unchanged
+        cleaned = unmap_ids(cleaned, example, spec.name)
     parsed = None if truncated_trace else spec.parse(cleaned, len(example["documents"]))
 
     # Gold resolution mirrors the reference runner: the whole example when the spec asks for it
@@ -877,6 +904,7 @@ class CTCSuiteTask(Task):
                 prompt_format=prompt_format(),
                 doc_markers=doc_markers_enabled(),
                 shard=None if shard is None else f"{shard[0]}/{shard[1]}",
+                doc_id_style=doc_id_style(),
             )
         super().__init__(config)
 
@@ -935,10 +963,14 @@ class CTCSuiteTask(Task):
     def process_doc(self, doc: dict[str, Any], index: int = 0) -> Instance | None:
         # The raw unified example travels whole: the prompt builder, parser and scorer all read
         # different parts of it, and slicing it here is how field conventions historically drifted.
+        metadata: dict[str, Any] = {"id": index, "example": doc}
+        if self.ctc_config.doc_id_style != "seq":
+            # read by _score_output, which maps the generation's ids back before parsing
+            metadata["doc_id_style"] = self.ctc_config.doc_id_style
         return Instance(
             question=doc["queries"][0] if doc.get("queries") else "",
             gold_answer=None,
-            metadata={"id": index, "example": doc},
+            metadata=metadata,
         )
 
     def format_request(self, instance: Instance) -> LMRequest:
@@ -946,6 +978,8 @@ class CTCSuiteTask(Task):
         knobs = self.ctc_config
         if knobs.prompt_format == "chat":
             body = self.spec.build_prompt(example, query_position=QUERY_POSITION, use_alpaca=False)
+            if knobs.doc_id_style == "hash":  # before the markers, as the converter does
+                body = relabel_prompt(body, example, self.spec.name)
             if knobs.doc_markers:
                 body = add_doc_markers(body, example, self.spec.name)
             return LMRequest(
@@ -955,6 +989,11 @@ class CTCSuiteTask(Task):
             raise ValueError(
                 f"{DOC_MARKERS_ENV}=1 needs {PROMPT_FORMAT_ENV}=chat: the markers wrap the chat "
                 "body as the CTC SFT converter does; no training data wraps the Alpaca prompt"
+            )
+        if knobs.doc_id_style != "seq":
+            raise ValueError(
+                f"{DOC_ID_STYLE_ENV}={knobs.doc_id_style} needs {PROMPT_FORMAT_ENV}=chat: only "
+                "chat-format CTC SFT data is built with hashed ids"
             )
         prompt = self.spec.build_prompt(example, query_position=QUERY_POSITION)
         return LMRequest(request_type=RequestType.COMPLETION, prompt=prompt)

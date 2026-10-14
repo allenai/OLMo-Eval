@@ -301,6 +301,7 @@ def job_script(
     rope_yarn: float = 0.0,
     max_model_len: int = 262144,
     prefill_chunk_size: int = 0,
+    doc_id_style: str = "seq",
 ) -> tuple[str, dict]:
     shards = {f"{c.subset}:{c.rung}": f"{c.shard[0]}/{c.shard[1]}" for c in cells if c.shard}
     env = {
@@ -309,6 +310,8 @@ def job_script(
     }
     if doc_markers:
         env["CTC_SUITE_DOC_MARKERS"] = "1"
+    if doc_id_style != "seq":
+        env["CTC_SUITE_DOC_ID_STYLE"] = doc_id_style
     if shards:
         env["CTC_SUITE_SHARDS"] = json.dumps(shards)
     tasks = " ".join(f"-t {c.task} -o limit={c.limit}" for c in cells)
@@ -381,6 +384,7 @@ def submit(args, bins: list[list[Cell]], only: set[int] | None = None) -> None:
             rope,
             max_len,
             chunk,
+            args.doc_id_style,
         )
         argv = [
             "gantry",
@@ -451,6 +455,7 @@ def submit(args, bins: list[list[Cell]], only: set[int] | None = None) -> None:
         "row_limit",
         "tokenizer",
         "doc_markers",
+        "doc_id_style",
         "fit_window",
         "rope_yarn",
         "max_model_len",
@@ -629,6 +634,15 @@ def main() -> None:
         help="wrap each document in <|box_start|>/<|box_end|> (CTC_SUITE_DOC_MARKERS=1), as the "
         "CTC SFT converter's default shards do. Use for checkpoints trained on marker-wrapped "
         "shards (e.g. setA shards_qwen35_256k); leave off for marker-free training data.",
+    )
+    ap.add_argument(
+        "--doc-id-style",
+        choices=["seq", "hash"],
+        default="seq",
+        help="'hash' (CTC_SUITE_DOC_ID_STYLE=hash): show each document as a distinct random "
+        "5-digit id seeded from the example, and map the generation's ids back before grading -- "
+        "for checkpoints trained on OLMo-core '--doc-id-style hash' shards (e.g. "
+        "setA_max20_evaliid_hashid). Default 'seq' = 1..N, every other checkpoint.",
     )
     ap.add_argument(
         "--yarn-rungs",

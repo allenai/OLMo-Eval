@@ -820,6 +820,81 @@ def test_doc_markers_wrap_every_document_chat_only(tmp_path, monkeypatch, task_n
         get_task(f"{task_name}:{rung}").format_request(instance)
 
 
+def test_doc_id_hash_pinned_vector() -> None:
+    """The id draw is pinned to the same vector in OLMo-core's copy of this module
+    (``src/test/data/doc_id_hash_test.py``); the two files must stay byte-identical."""
+    from olmo_eval.evals.tasks.ctc_suite.doc_id_hash import (
+        ID_MAX,
+        ID_MIN,
+        PINNED_EXAMPLE,
+        PINNED_IDS,
+        hash_doc_ids,
+    )
+
+    assert hash_doc_ids(PINNED_EXAMPLE) == PINNED_IDS
+    ids = hash_doc_ids({"documents": [{"text": f"d{i}"} for i in range(3000)]})
+    assert len(set(ids)) == 3000 and all(ID_MIN <= i <= ID_MAX for i in ids)
+
+
+@pytest.mark.parametrize(
+    ("task_name", "example", "gold_seq", "wrong_seq"),
+    [
+        ("ctc_nq", RETRIEVAL_EXAMPLE, "[5]", "[2]"),
+        ("ctc_contradiction", PAIR_EXAMPLE, "[[1, 3]]", "[[1, 2]]"),
+        ("ctc_qdmatch_nq", QDMATCH_EXAMPLE, "[[1, 3]]", "[[2, 3]]"),
+        ("ctc_grouping", GROUPING_EXAMPLE, '{"groups": [{"doc_ids": [1, 2]}, {"doc_ids": [3, 4]}]}',
+         '{"groups": [{"doc_ids": [1, 3]}, {"doc_ids": [2, 4]}]}'),
+    ],
+)
+def test_doc_id_hash_prompt_and_grading(
+    tmp_path, monkeypatch, task_name, example, gold_seq, wrong_seq
+) -> None:
+    """``CTC_SUITE_DOC_ID_STYLE=hash``: labels carry the hashed ids, the hashed gold answer scores
+    exactly what the sequential gold scores, and the sequential answer is now wrong."""
+    import re
+
+    from olmo_eval.evals.tasks.ctc_suite import DOC_ID_STYLE_ENV, PROMPT_FORMAT_ENV
+    from olmo_eval.evals.tasks.ctc_suite.doc_id_hash import hash_doc_ids, relabel_answer
+
+    row = ROSTER[task_name]
+    rung = row.rungs[0]
+    _write_ladder(tmp_path, row.subset, row.rung_alias.get(rung, RUNG_TOKENS[rung]), example)
+    monkeypatch.setenv("CTC_SUITE_DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv(PROMPT_FORMAT_ENV, "chat")
+    seq_task = get_task(f"{task_name}:{rung}")
+    seq_inst = list(seq_task.instances)[0]
+    seq_body = seq_task.format_request(seq_inst).messages[0]["content"]
+    seq_scorer = seq_task.config.metrics[0].scorer()
+
+    monkeypatch.setenv(DOC_ID_STYLE_ENV, "hash")
+    task = get_task(f"{task_name}:{rung}")
+    inst = list(task.instances)[0]
+    body = task.format_request(inst).messages[0]["content"]
+    ids = hash_doc_ids(example)
+    back = body
+    for i, h in enumerate(ids):
+        assert len(re.findall(rf"(?<![0-9]){h}(?![0-9])", body)) == 1
+        back = re.sub(rf"(?<![0-9]){h}(?![0-9])", str(i + 1), back)
+    assert back == seq_body  # only the labels changed
+
+    scorer = task.config.metrics[0].scorer()
+    gold_hash = relabel_answer(gold_seq, example, task.spec.name, ids)
+    assert gold_hash != gold_seq
+    want = seq_scorer.score(seq_inst, LMOutput(text=gold_seq))
+    assert want == 1.0
+    assert scorer.score(inst, LMOutput(text=gold_hash)) == want
+    wrong_hash = relabel_answer(wrong_seq, example, task.spec.name, ids)
+    assert scorer.score(inst, LMOutput(text=wrong_hash)) == seq_scorer.score(
+        seq_inst, LMOutput(text=wrong_seq)
+    )
+    # sequential ids mean nothing under hashing: unknown ids are out of range, never a crash
+    assert scorer.score(inst, LMOutput(text=gold_seq)) < 1.0
+
+    monkeypatch.setenv(PROMPT_FORMAT_ENV, "alpaca")  # no hashed-id training data is Alpaca
+    with pytest.raises(ValueError):
+        get_task(f"{task_name}:{rung}").format_request(inst)
+
+
 def test_doc_markers_wrap_oolong_item_lines() -> None:
     from olmo_eval.evals.tasks.ctc_suite.doc_markers import add_doc_markers
 
@@ -908,6 +983,7 @@ def test_ood_rows_resolve_and_format(tmp_path, monkeypatch) -> None:
 _HASHED_KNOBS = {
     "CTC_SUITE_PROMPT_FORMAT": "chat",
     "CTC_SUITE_DOC_MARKERS": "1",
+    "CTC_SUITE_DOC_ID_STYLE": "hash",
     "CTC_SUITE_SHARDS": None,
     "CTC_SUITE_RERANK_DECODE_TOKENS": "160",
 }
@@ -958,6 +1034,7 @@ def test_default_knobs_leave_the_task_hash_unchanged(monkeypatch) -> None:
 
         monkeypatch.setenv("CTC_SUITE_PROMPT_FORMAT", "alpaca")  # explicit default
         monkeypatch.setenv("CTC_SUITE_DOC_MARKERS", "0")
+        monkeypatch.setenv("CTC_SUITE_DOC_ID_STYLE", "seq")
         monkeypatch.setenv("CTC_SUITE_SHARDS", json.dumps({"some_other_subset:r2k": "0/2"}))
         again = get_task(spec).config.to_dict()
         assert compute_task_hash(again) == compute_task_hash(plain.to_dict())
