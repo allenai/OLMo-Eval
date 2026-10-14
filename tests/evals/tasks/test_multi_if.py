@@ -125,8 +125,8 @@ def test_format_request_sends_the_first_turn_and_scripts_the_rest() -> None:
     }
 
 
-def test_extract_answer_strips_each_turns_reasoning() -> None:
-    output = LMOutput(text="", metadata={REPLIES_KEY: ["<think>plan</think>a", "b"]})
+def test_extract_answer_strips_each_turns_reasoning_and_whitespace() -> None:
+    output = LMOutput(text="", metadata={REPLIES_KEY: ["<think>plan</think>\n\na", " b\n"]})
     assert get_task("multi_if").extract_answer(output) == ["a", "b"]
 
 

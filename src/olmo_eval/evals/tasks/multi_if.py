@@ -135,13 +135,16 @@ class MultiIF(Task):
         )
 
     def extract_answer(self, output: LMOutput) -> list[str] | None:
-        """The reply to each turn, without its reasoning trace when ``strip_thinking`` is set."""
+        """The reply to each turn, trimmed as the reference implementation does.
+
+        Each reply's reasoning trace is dropped first when ``strip_thinking`` is set.
+        """
         replies = (output.metadata or {}).get(REPLIES_KEY)
         if replies is None:
             return None
-        if not self.config.strip_thinking:
-            return list(replies)
-        return [extract_think_answer(reply) or "" for reply in replies]
+        if self.config.strip_thinking:
+            replies = [extract_think_answer(reply) or "" for reply in replies]
+        return [reply.strip() for reply in replies]
 
 
 # The paper's generation settings (Table 3).
