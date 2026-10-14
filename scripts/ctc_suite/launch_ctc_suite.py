@@ -306,6 +306,7 @@ def job_script(
     eos_token_id: int = 248046,
     pad_token_id: int = 248044,
     yarn_old_len: int = 262144,
+    attention_backend: str = "",
 ) -> tuple[str, dict]:
     shards = {f"{c.subset}:{c.rung}": f"{c.shard[0]}/{c.shard[1]}" for c in cells if c.shard}
     env = {
@@ -343,7 +344,8 @@ def job_script(
         f"-o provider.max_model_len={max_model_len} "
         f"-o provider.kwargs.batch_size={cells[0].batch_size} {chunk}"
         # our checkpoints' config.json has no dataset.tokenizer, so name everything explicitly
-        f"-o provider.kwargs.eos_token_id={eos_token_id} "
+        + (f"-o provider.kwargs.attention_backend={attention_backend} " if attention_backend else "")
+        + f"-o provider.kwargs.eos_token_id={eos_token_id} "
         f"-o provider.kwargs.pad_token_id={pad_token_id} "
         f"-o provider.kwargs.validate_checkpoint=false "
         f"-o provider.kwargs.allow_tokenizer_fallback=true -O {out_dir} "
@@ -430,6 +432,7 @@ def submit(args, bins: list[list[Cell]], only: set[int] | None = None) -> None:
             args.eos_token_id,
             args.pad_token_id,
             args.yarn_old_len,
+            args.attention_backend,
         )
         scripts.append((i, cmd, env))
     # --node-gpus N: pack up to N bins into one N-GPU job, one bin per GPU, each writing its own
@@ -534,6 +537,7 @@ def submit(args, bins: list[list[Cell]], only: set[int] | None = None) -> None:
         "eos_token_id",
         "pad_token_id",
         "yarn_old_len",
+        "attention_backend",
         "cluster",
         "workspace",
         "budget",
@@ -759,6 +763,12 @@ def main() -> None:
         type=int,
         default=0,
         help="pack up to N bins into one N-GPU job (one bin per GPU); 0 = one 1-GPU job per bin",
+    )
+    ap.add_argument(
+        "--attention-backend",
+        default="",
+        help="override the checkpoint's attention backend (e.g. flash_2 on non-Hopper GPUs, where "
+        "flash_3 cannot run); default: the checkpoint's own",
     )
     ap.add_argument(
         "--eos-token-id",
