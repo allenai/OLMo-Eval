@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from olmo_eval.common.scorers import ScoringIncompleteError
+from olmo_eval.common.scorers.llm_judge import parse_judge_spec
 from olmo_eval.common.types import Instance, LMOutput, LMRequest, RequestType, Response
 from olmo_eval.evals.tasks.common import OutputScoreAggregation, TaskConfig
 from olmo_eval.evals.tasks.common import judge as judge_module
@@ -17,9 +18,9 @@ from olmo_eval.evals.tasks.common.judge import (
     JudgedTask,
     TruncationRateMetric,
     is_truncated,
-    parse_judge_spec,
     visible_response,
 )
+from olmo_eval.evals.tasks.hle import HLEAccuracyMetric, HLETruncationRateMetric
 
 DEFAULT_JUDGE = "judge-default"
 
@@ -48,6 +49,28 @@ class _PassFailTask(JudgedTask):
         return self._record_judgement(
             output, judge_result, {"accuracy": 1.0 if verdict == "PASS" else 0.0}
         )
+
+
+class _RatingTask(_PassFailTask):
+    """Rates each output 1-10 under its own score key, judging it twice with a system prompt."""
+
+    judge_score_key = "rating"
+
+    async def _score_output(self, response: Response, output: LMOutput, judge_fn) -> float:
+        judge_result: dict[str, Any] = {}
+        ratings = [
+            await self._judge_output(
+                output,
+                judge_fn,
+                f"{self._judged_answer(output)} ({order})",
+                lambda raw: float(raw) if raw.isdigit() else None,
+                judge_result,
+                system_prompt="Rate 1-10.",
+                raw_key=f"raw_judge_response_{order}",
+            )
+            for order in ("forward", "reversed")
+        ]
+        return self._record_judgement(output, judge_result, {"rating": sum(ratings) / 2})
 
 
 def _config(**overrides) -> TaskConfig:
@@ -82,8 +105,8 @@ def _scripted_judge(replies: dict[str, list[str]]):
     """A judge that answers each prompt from its own queue of replies."""
     calls: list[str] = []
 
-    async def judge(prompt: str, **_kwargs) -> str:
-        calls.append(prompt)
+    async def judge(prompt: str, *, system_prompt: str | None = None) -> str:
+        calls.append(prompt if system_prompt is None else f"[{system_prompt}] {prompt}")
         reply = replies[prompt].pop(0)
         if reply == "raise":
             raise ValueError("judge unavailable")
@@ -239,6 +262,23 @@ class TestScoreResponses:
         assert "accuracy" not in response.scores
 
     @pytest.mark.anyio
+    async def test_a_custom_score_key_with_a_system_prompt_and_two_judge_calls(self, monkeypatch):
+        judge, calls = _scripted_judge({"answer (forward)": ["8"], "answer (reversed)": ["6"]})
+        _use_judge(monkeypatch, judge)
+        response = _response("answer")
+
+        await _RatingTask(_config()).score_responses([response])
+
+        assert calls == ["[Rate 1-10.] answer (forward)", "[Rate 1-10.] answer (reversed)"]
+        assert response.scores == {"rating": 7.0, "truncation_rate": 0.0}
+        output = response.outputs[0]
+        assert output.metadata["score:judge"] == 7.0
+        assert output.metadata["judge_result"] == {
+            "raw_judge_response_forward": "8",
+            "raw_judge_response_reversed": "6",
+        }
+
+    @pytest.mark.anyio
     async def test_an_instance_without_outputs_scores_as_fully_truncated(self, monkeypatch):
         judge, calls = _scripted_judge({})
         _use_judge(monkeypatch, judge)
@@ -271,6 +311,36 @@ class TestMetrics:
 
         assert metric.compute(responses) == 0.5
         assert metric.higher_is_better() is False
+
+    def test_score_metric_can_display_raw_units(self):
+        metric = JudgedScoreMetric(name="rating", score_key="rating", display="raw")
+        response = _response("x")
+        response.scores["rating"] = 7.5
+
+        assert metric.compute([response]) == 7.5
+        assert metric.display_format() == "raw"
+        assert metric.metric_unit() == "rating"
+        assert JudgedScoreMetric().display_format() == "percentage"
+        assert JudgedScoreMetric().metric_unit() == "proportion"
+
+    def test_serialization_ignores_the_new_fields(self):
+        # Task hashes include each metric's serialized form, so HLE's must not change.
+        assert HLEAccuracyMetric().to_dict() == {
+            "type": "HLEAccuracyMetric",
+            "name": "accuracy",
+            "scorer": "HLEScorer",
+        }
+        assert HLETruncationRateMetric().to_dict() == {
+            "type": "HLETruncationRateMetric",
+            "name": "truncation_rate",
+            "scorer": "HLEScorer",
+        }
+
+    def test_macro_metric_requires_a_key_and_groups(self):
+        with pytest.raises(ValueError, match="metadata_key and at least one group"):
+            JudgedMacroScoreMetric()
+        with pytest.raises(ValueError, match="metadata_key and at least one group"):
+            JudgedMacroScoreMetric(metadata_key="g")
 
     def test_macro_metric_weights_groups_equally(self):
         metric = JudgedMacroScoreMetric(metadata_key="g", groups=("a", "b", "c"))

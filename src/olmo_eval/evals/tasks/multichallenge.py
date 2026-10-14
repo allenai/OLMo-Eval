@@ -46,7 +46,7 @@ A closed reasoning block is removed before judging. A reasoning block that never
 closes, or a response that hit the generation token limit, scores as a fail without
 calling the judge. A judge call that fails, or gives no parseable verdict after
 three attempts, is recorded as an incomplete score and left out of the metrics; the
-run's result is flagged incomplete.
+run's result is flagged incomplete. Upstream instead counts a judge error as a fail.
 
 Metrics:
 
@@ -61,9 +61,10 @@ With several samples per conversation, each conversation scores the mean over it
 samples. The paper's ``--attempts`` setting instead passes a conversation when any
 attempt passes; ``-o output_score_aggregation=max`` reproduces that.
 
-Generation samples at temperature 0.6 and top_p 0.95 up to the context limit. The
-longest conversation is about 8.3k tokens with the Qwen3 tokenizer; the median is
-about 1.3k.
+Generation samples at temperature 0.6 and top_p 0.95 up to the context limit, the
+regime this repo's other post-training tasks use; the upstream example generates at
+temperature 0. The longest conversation is about 8.3k tokens with the Qwen3
+tokenizer; the median is about 1.3k.
 """
 
 from __future__ import annotations
@@ -129,8 +130,13 @@ MULTICHALLENGE_JUDGE_PROMPT = (
     'Print your reasoning followed by your verdict, either "YES" or "NO".'
 )
 
-# Judges label the verdict and wrap it in markdown emphasis or quotes.
-_LABELED_VERDICT = re.compile(r"verdict\W*(YES|NO)\b", re.IGNORECASE)
+# A verdict label counts only at the start of a line, so prose that mentions a
+# verdict ("merits a YES verdict. No issues remain.") is not read as one. Judges wrap
+# the label in markdown emphasis or headings and sometimes quote the value.
+_LABELED_VERDICT = re.compile(
+    r"^[\s>*_#-]*(?:final\s+)?verdict[\s*_]*:?[\s*_]*['\"`]?(YES|NO)\b",
+    re.IGNORECASE | re.MULTILINE,
+)
 # Without a label, only an uppercase YES/NO counts, so the reasoning's prose does not.
 _BARE_VERDICT = re.compile(r"\b(YES|NO)\b")
 

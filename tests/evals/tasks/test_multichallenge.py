@@ -170,6 +170,15 @@ class TestParseVerdict:
     def test_takes_the_last_bare_verdict(self):
         assert parse_verdict("The answer to whether it is NO longer valid...\n\nYES") == "YES"
 
+    def test_a_label_counts_only_at_the_start_of_a_line(self):
+        assert parse_verdict("This clearly merits a YES verdict. No issues remain.") == "YES"
+        assert parse_verdict("Final verdict: yes") == "YES"
+        assert parse_verdict('> **Verdict**: "NO"') == "NO"
+        assert parse_verdict("### Verdict\n\nNO") == "NO"
+
+    def test_prose_about_a_verdict_is_unparseable(self):
+        assert parse_verdict("I cannot give a verdict; no information.") is None
+
     def test_ignores_lowercase_words_in_unlabeled_reasoning(self):
         assert parse_verdict("yes, the response is fine, no issues\nNO") == "NO"
         assert parse_verdict("yes, the response is fine") is None
@@ -203,6 +212,17 @@ class TestScoring:
             "passed": True,
             "parse_error": False,
         }
+
+    @pytest.mark.anyio
+    async def test_an_unparseable_reply_is_retried_not_scored(self, task, monkeypatch):
+        response = _response(task)
+        judge, calls = _scripted_judge("I cannot give a verdict; no information.", _reply("YES"))
+        _use_judge(monkeypatch, judge)
+
+        await task.score_responses([response])
+
+        assert len(calls) == 2
+        assert response.scores["accuracy"] == 1.0
 
     @pytest.mark.anyio
     async def test_a_verdict_that_misses_the_criteria_fails(self, task, monkeypatch):
