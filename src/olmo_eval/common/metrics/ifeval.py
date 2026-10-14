@@ -1,8 +1,10 @@
-"""IFBench / IFEval metrics.
+"""IFBench / IFEval / Multi-IF metrics.
 
-All four metrics share :class:`IFEvalScorer`, which writes per-instruction
-strict and loose pass lists to ``output.metadata["ifeval"]``. Each metric
-aggregates that side-band data along the prompt or instruction axis.
+The four IFEval metrics share :class:`IFEvalScorer`, which writes
+per-instruction strict and loose pass lists to ``output.metadata["ifeval"]``.
+Each metric aggregates that side-band data along the prompt or instruction
+axis. :class:`MultiIFAccuracy` combines the same four aggregations per
+conversation turn, from the lists :class:`MultiIFScorer` records per turn.
 """
 
 from __future__ import annotations
@@ -11,7 +13,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from olmo_eval.common.metrics.base import Metric
-from olmo_eval.common.scorers import IFEvalScorer, Scorer
+from olmo_eval.common.scorers import IFEvalScorer, MultiIFScorer, Scorer
+from olmo_eval.common.scorers.base import get_scorer_result
 from olmo_eval.common.types import Response
 
 
@@ -84,3 +87,66 @@ class IFEvalInstLooseAccuracy(Metric):
 
     def compute(self, responses: Sequence[Response]) -> float:
         return _instruction_level(_iter_results(responses, "loose"))
+
+
+def _multi_if_turns(response: Response) -> list[dict[str, list[bool]]]:
+    """Per-turn pass lists for one conversation; every instruction fails when unscored."""
+    result = (
+        get_scorer_result(response.outputs[0], MultiIFScorer.name) if response.outputs else None
+    )
+    if result is not None:
+        return result["turns"]
+    return [
+        {"strict": [False] * len(ids), "loose": [False] * len(ids)}
+        for ids in (turn["instruction_id_list"] for turn in response.instance.metadata["turns"])
+    ]
+
+
+def _multi_if_turn_score(turns: list[dict[str, list[bool]]]) -> float:
+    """Multi-IF's score for a set of turns: the mean of the four IFEval accuracies."""
+    strict = [turn["strict"] for turn in turns]
+    loose = [turn["loose"] for turn in turns]
+    return (
+        _prompt_level(strict)
+        + _instruction_level(strict)
+        + _prompt_level(loose)
+        + _instruction_level(loose)
+    ) / 4
+
+
+@dataclass(frozen=True, slots=True)
+class MultiIFAccuracy(Metric):
+    """Multi-IF accuracy for one turn, or averaged over every turn.
+
+    A turn's score is the mean of the prompt- and instruction-level accuracies
+    under strict and loose scoring, over the conversations that reach that
+    turn. Without a ``turn``, the per-turn scores are averaged with equal
+    weight. A ``language`` restricts the conversations to that language.
+    """
+
+    name: str = "accuracy"
+    scorer: type[Scorer] = MultiIFScorer
+    turn: int | None = None
+    language: str | None = None
+
+    def compute(self, responses: Sequence[Response]) -> float:
+        by_turn: dict[int, list[dict[str, list[bool]]]] = {}
+        for response in responses:
+            if (
+                self.language is not None
+                and response.instance.metadata.get("language") != self.language
+            ):
+                continue
+            for index, turn in enumerate(_multi_if_turns(response), start=1):
+                by_turn.setdefault(index, []).append(turn)
+
+        turns = [self.turn] if self.turn is not None else sorted(by_turn)
+        scores = [_multi_if_turn_score(by_turn[turn]) for turn in turns if turn in by_turn]
+        return sum(scores) / len(scores) if scores else 0.0
+
+    def compute_instance(self, response: Response) -> float | None:
+        """Instruction-level accuracies pool across conversations, so no instance value exists."""
+        return None
+
+    def supports_scorer_fallback(self) -> bool:
+        return False
