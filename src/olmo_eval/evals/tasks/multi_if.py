@@ -12,8 +12,9 @@ scaffold:
 Each reply is checked against its turn's instructions with the multilingual
 verifiers from :mod:`olmo_eval.common.scorers.multilingual_instructions`. A
 turn scores the mean of the prompt- and instruction-level accuracies under
-strict and loose scoring, as in the paper (He et al., 2024,
-https://arxiv.org/abs/2410.15553). The primary metric averages the three turns.
+strict and loose scoring, averaged over languages with equal weight, as in the
+paper's tables (He et al., 2024, https://arxiv.org/abs/2410.15553). The
+primary metric averages the three turns.
 
 Defaults follow the post-training reasoning regime shared by this repo's other
 instruction-following tasks, and reasoning inside ``<think>`` tags is removed

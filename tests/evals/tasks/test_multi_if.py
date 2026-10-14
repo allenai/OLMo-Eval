@@ -198,6 +198,17 @@ def test_language_accuracy_keeps_only_that_language() -> None:
     assert MultiIFAccuracy(name="french_accuracy", language="French").compute(responses) < 0.5
 
 
+def test_languages_are_weighted_equally() -> None:
+    # English passes one of two conversations on turn 1 and French passes its
+    # only one, so the languages score 0.5 and 1.0. Pooling would give 2/3.
+    responses = [
+        _response(_instance(language="English"), FOLLOWS_ALL),
+        _response(_instance(language="English"), ["Rain, on the roof", "x", "y"]),
+        _response(_instance(language="French", key="1:1:fr"), FOLLOWS_ALL),
+    ]
+    assert MultiIFAccuracy(name="turn_1_accuracy", turn=1).compute(responses) == 0.75
+
+
 def test_unscored_conversations_count_as_failures() -> None:
     instance = _instance()
     unscored = Response(

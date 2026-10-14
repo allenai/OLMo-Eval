@@ -118,10 +118,12 @@ def _multi_if_turn_score(turns: list[dict[str, list[bool]]]) -> float:
 class MultiIFAccuracy(Metric):
     """Multi-IF accuracy for one turn, or averaged over every turn.
 
-    A turn's score is the mean of the prompt- and instruction-level accuracies
-    under strict and loose scoring, over the conversations that reach that
-    turn. Without a ``turn``, the per-turn scores are averaged with equal
-    weight. A ``language`` restricts the conversations to that language.
+    A turn's score in one language is the mean of the prompt- and
+    instruction-level accuracies under strict and loose scoring, over that
+    language's conversations that reach the turn. Languages are then averaged
+    with equal weight, as in the paper's tables. Without a ``turn``, the
+    per-turn scores are averaged with equal weight. A ``language`` restricts
+    the score to that language.
     """
 
     name: str = "accuracy"
@@ -130,19 +132,29 @@ class MultiIFAccuracy(Metric):
     language: str | None = None
 
     def compute(self, responses: Sequence[Response]) -> float:
-        by_turn: dict[int, list[dict[str, list[bool]]]] = {}
+        # language -> turn number -> that turn's pass lists, one per conversation
+        by_language: dict[str, dict[int, list[dict[str, list[bool]]]]] = {}
         for response in responses:
-            if (
-                self.language is not None
-                and response.instance.metadata.get("language") != self.language
-            ):
+            language = response.instance.metadata.get("language", "")
+            if self.language is not None and language != self.language:
                 continue
+            by_turn = by_language.setdefault(language, {})
             for index, turn in enumerate(_multi_if_turns(response), start=1):
                 by_turn.setdefault(index, []).append(turn)
 
-        turns = [self.turn] if self.turn is not None else sorted(by_turn)
-        scores = [_multi_if_turn_score(by_turn[turn]) for turn in turns if turn in by_turn]
-        return sum(scores) / len(scores) if scores else 0.0
+        turns = (
+            {self.turn} if self.turn is not None else {t for b in by_language.values() for t in b}
+        )
+        turn_scores = []
+        for turn in sorted(turns):
+            language_scores = [
+                _multi_if_turn_score(by_turn[turn])
+                for by_turn in by_language.values()
+                if turn in by_turn
+            ]
+            if language_scores:
+                turn_scores.append(sum(language_scores) / len(language_scores))
+        return sum(turn_scores) / len(turn_scores) if turn_scores else 0.0
 
     def compute_instance(self, response: Response) -> float | None:
         """Instruction-level accuracies pool across conversations, so no instance value exists."""
