@@ -211,15 +211,15 @@ class TestProcessDoc:
 
 
 class TestPrompts:
-    def test_system_prompt_names_the_topic_and_subtopic(self, task):
+    def test_system_prompt_names_the_domain_and_subtopic(self, task):
         instance = task.process_doc(_doc())
         assert instance is not None
         request = task.format_request(instance)
 
-        expected = SYSTEM_PROMPT.format(topic="Accounting", category="Revenue Recognition")
+        expected = SYSTEM_PROMPT.format(topic="Finance", category="Revenue Recognition")
         assert request.system_prompt == expected
         assert expected.startswith(
-            "You are answering questions about Accounting, and in particular Revenue Recognition."
+            "You are answering questions about Finance, and in particular Revenue Recognition."
         )
         assert request.messages[0] == {"role": "system", "content": expected}
 
@@ -232,13 +232,13 @@ class TestPrompts:
         assert user_messages == [{"role": "user", "content": instance.question}]
 
     def test_system_prompt_is_rebuilt_per_instance(self, task):
-        first = task.process_doc(_doc(topic="Accounting", subtopic="Revenue Recognition"))
-        second = task.process_doc(_doc(topic="Contract Law", subtopic="US Contract Law"))
+        first = task.process_doc(_doc(domain="Finance", subtopic="Revenue Recognition"))
+        second = task.process_doc(_doc(domain="Law", subtopic="US Contract Law"))
         assert first is not None and second is not None
 
-        assert "Accounting" in task.format_request(first).system_prompt
-        assert "Contract Law" in task.format_request(second).system_prompt
-        assert "Accounting" not in task.format_request(second).system_prompt
+        assert "Finance" in task.format_request(first).system_prompt
+        assert "US Contract Law" in task.format_request(second).system_prompt
+        assert "Finance" not in task.format_request(second).system_prompt
 
     def test_judge_prompt_includes_question_gold_and_answer(self):
         instance = Instance(question="Who proposed fake barns?", gold_answer="Carl Ginet")
