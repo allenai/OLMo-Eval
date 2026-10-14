@@ -12,6 +12,8 @@ from olmo_eval.common.types import LMRequest, RequestType, SamplingParams
 from olmo_eval.inference.providers.config import ProviderConfig
 from olmo_eval.inference.providers.litellm import LiteLLMProvider
 
+_ALL_PARAMS = {"logprobs", "top_logprobs", "max_completion_tokens", "n", "stop", "temperature"}
+
 
 @pytest.fixture
 def fake_litellm(monkeypatch) -> list[dict]:
@@ -23,8 +25,15 @@ def fake_litellm(monkeypatch) -> list[dict]:
         message = SimpleNamespace(content="ok")
         return SimpleNamespace(choices=[SimpleNamespace(message=message, logprobs=None)])
 
+    def get_supported_openai_params(model, custom_llm_provider):
+        # Mirrors LiteLLM's model data: reasoning models reject logprobs and top_p.
+        if model.startswith("o3"):
+            return ["max_completion_tokens", "n", "stop", "temperature", "reasoning_effort"]
+        return sorted(_ALL_PARAMS)
+
     module = types.ModuleType("litellm")
     module.acompletion = acompletion  # type: ignore[ty:unresolved-attribute]
+    module.get_supported_openai_params = get_supported_openai_params  # type: ignore[ty:unresolved-attribute]
     monkeypatch.setitem(sys.modules, "litellm", module)
     return calls
 
@@ -59,7 +68,19 @@ async def test_openai_models_route_to_openrouter(
 
     assert fake_litellm[0]["model"] == expected
     assert fake_litellm[0]["api_base"] is None
+    assert fake_litellm[0]["api_key"] == "or-key"
     assert provider.model_name == model
+
+
+@pytest.mark.anyio
+async def test_open_router_key_alias_is_passed_explicitly(fake_litellm, monkeypatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setenv("OPEN_ROUTER_KEY", "alias-key")
+    await _generate(LiteLLMProvider("gpt-4o", api_base="https://api.openai.com/v1"))
+
+    assert fake_litellm[0]["model"] == "openrouter/openai/gpt-4o"
+    assert fake_litellm[0]["api_key"] == "alias-key"
 
 
 @pytest.mark.anyio
@@ -77,6 +98,7 @@ async def test_other_models_are_unchanged(fake_litellm, model: str, api_base: st
 
     assert fake_litellm[0]["model"] == model
     assert fake_litellm[0]["api_base"] == api_base
+    assert "api_key" not in fake_litellm[0]
 
 
 @pytest.mark.anyio
@@ -87,6 +109,46 @@ async def test_openai_key_keeps_openai_endpoint(fake_litellm, monkeypatch) -> No
 
     assert fake_litellm[0]["model"] == "gpt-4o"
     assert fake_litellm[0]["api_base"] == "https://api.openai.com/v1"
+
+
+@pytest.mark.anyio
+@pytest.mark.usefixtures("openrouter_only")
+async def test_logprobs_are_dropped_for_models_openai_rejects_them_on(fake_litellm) -> None:
+    await _generate(LiteLLMProvider("openai/o3-mini-2025-01-31"))
+    await _generate(LiteLLMProvider("gpt-4o"))
+
+    o3_request, gpt4o_request = fake_litellm
+    assert "logprobs" not in o3_request
+    assert "top_logprobs" not in o3_request
+    assert o3_request["temperature"] == SamplingParams().temperature
+    assert gpt4o_request["logprobs"] is True
+
+
+@pytest.mark.anyio
+@pytest.mark.usefixtures("openrouter_only")
+async def test_drop_params_drops_other_unsupported_params(fake_litellm) -> None:
+    await _generate(LiteLLMProvider("openai/o3-mini-2025-01-31", drop_params=True, top_p=0.9))
+
+    assert "top_p" not in fake_litellm[0]
+    assert "logprobs" not in fake_litellm[0]
+
+
+@pytest.mark.anyio
+@pytest.mark.usefixtures("openrouter_only")
+async def test_unsupported_params_are_kept_without_drop_params(fake_litellm) -> None:
+    await _generate(LiteLLMProvider("openai/o3-mini-2025-01-31", top_p=0.9))
+
+    assert fake_litellm[0]["top_p"] == 0.9
+
+
+@pytest.mark.anyio
+async def test_logprobs_are_kept_without_openrouter_routing(fake_litellm, monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
+    await _generate(
+        LiteLLMProvider("openai/o3-mini-2025-01-31", api_base="https://api.openai.com/v1")
+    )
+
+    assert fake_litellm[0]["logprobs"] is True
 
 
 class TestProviderConfigSecrets:

@@ -1686,7 +1686,8 @@ A dry run (`--dry-run`) checks the Hub but does not read or write Beaker secrets
 ### OpenAI models through OpenRouter
 
 Anything that needs `OPENAI_API_KEY` also accepts an
-[OpenRouter](https://openrouter.ai) key in `OPENROUTER_API_KEY`. This covers LLM
+[OpenRouter](https://openrouter.ai) key in `OPENROUTER_API_KEY` (or
+`OPEN_ROUTER_KEY`). This covers LLM
 judges, the OpenAI models in the model registry (`gpt-4o`, `gpt-4o-mini`, ...),
 and the OpenAI models that external evals such as tau2 and DeepScholar call.
 When both keys are set, the OpenAI key is used.
@@ -1714,8 +1715,9 @@ External evals run third-party code in a sandbox. There, the OpenRouter key is
 exported as both `OPENROUTER_API_KEY` and `OPENAI_API_KEY`, and `OPENAI_BASE_URL`
 points the OpenAI SDK at OpenRouter. olmo-eval rewrites the model names it passes
 to tau2 and DeepScholar, but it cannot rewrite names hardcoded inside a benchmark,
-such as AstaBench's scorer models. Those may fail if OpenRouter does not recognize
-the bare name.
+such as AstaBench's scorer models. OpenRouter resolves most bare OpenAI names
+(`gpt-4o-mini`, `o3-mini-2025-01-31`), but rejects dated snapshots it does not list,
+such as `gpt-4-0613`.
 
 ### Secret Environment Overrides
 

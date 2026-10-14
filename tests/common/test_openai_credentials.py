@@ -44,6 +44,17 @@ class TestResolveOpenAICredentials:
     def test_no_key(self) -> None:
         assert resolve_openai_credentials({}) is None
 
+    def test_open_router_key_alias(self) -> None:
+        assert resolve_openai_credentials({"OPEN_ROUTER_KEY": "sk-alias"}) == OpenAICredentials(
+            api_key="sk-alias", base_url=OPENROUTER_BASE_URL
+        )
+
+    def test_canonical_openrouter_name_wins_over_alias(self) -> None:
+        environ = {**OPENROUTER_ONLY, "OPEN_ROUTER_KEY": "sk-alias"}
+        credentials = resolve_openai_credentials(environ)
+        assert credentials is not None
+        assert credentials.api_key == "sk-or"
+
     def test_empty_values_are_ignored(self) -> None:
         assert resolve_openai_credentials({"OPENAI_API_KEY": "", **OPENROUTER_ONLY}) == (
             OpenAICredentials(api_key="sk-or", base_url=OPENROUTER_BASE_URL)
@@ -137,6 +148,9 @@ class TestSecretAvailable:
     @pytest.mark.parametrize("environ", [OPENAI_ONLY, OPENROUTER_ONLY])
     def test_openai_requirement(self, environ) -> None:
         assert secret_available("OPENAI_API_KEY", environ)
+
+    def test_openai_requirement_with_alias(self) -> None:
+        assert secret_available("OPENAI_API_KEY", {"OPEN_ROUTER_KEY": "k"})
 
     def test_openai_requirement_missing(self) -> None:
         assert not secret_available("OPENAI_API_KEY", {})

@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 __all__ = [
     "OPENAI_API_KEY_ENV",
     "OPENAI_BASE_URL",
+    "OPENROUTER_API_KEY_ALIASES",
     "OPENROUTER_API_KEY_ENV",
     "OPENROUTER_BASE_URL",
     "SECRET_ALTERNATIVES",
@@ -36,12 +37,14 @@ __all__ = [
 
 OPENAI_API_KEY_ENV = "OPENAI_API_KEY"
 OPENROUTER_API_KEY_ENV = "OPENROUTER_API_KEY"
+# Other names an OpenRouter key may be stored under, checked after OPENROUTER_API_KEY.
+OPENROUTER_API_KEY_ALIASES: tuple[str, ...] = ("OPEN_ROUTER_KEY",)
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 OPENAI_BASE_URL = "https://api.openai.com/v1"
 
 # Secrets that may stand in for a required secret, in order of preference.
 SECRET_ALTERNATIVES: Mapping[str, tuple[str, ...]] = {
-    OPENAI_API_KEY_ENV: (OPENROUTER_API_KEY_ENV,),
+    OPENAI_API_KEY_ENV: (OPENROUTER_API_KEY_ENV, *OPENROUTER_API_KEY_ALIASES),
 }
 
 
@@ -98,13 +101,15 @@ def resolve_openai_credentials(
 ) -> OpenAICredentials | None:
     """Find credentials for OpenAI models in the environment.
 
-    Returns None when neither ``OPENAI_API_KEY`` nor ``OPENROUTER_API_KEY`` is set.
+    Returns None when neither ``OPENAI_API_KEY`` nor an OpenRouter key
+    (``OPENROUTER_API_KEY`` or one of its aliases) is set.
     """
     env = os.environ if environ is None else environ
     if api_key := env.get(OPENAI_API_KEY_ENV):
         return OpenAICredentials(api_key=api_key)
-    if api_key := env.get(OPENROUTER_API_KEY_ENV):
-        return OpenAICredentials(api_key=api_key, base_url=OPENROUTER_BASE_URL)
+    for name in (OPENROUTER_API_KEY_ENV, *OPENROUTER_API_KEY_ALIASES):
+        if api_key := env.get(name):
+            return OpenAICredentials(api_key=api_key, base_url=OPENROUTER_BASE_URL)
     return None
 
 

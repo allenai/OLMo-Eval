@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any
 from olmo_eval.common.debug import is_debug_provider
 from olmo_eval.common.logging import get_logger
 from olmo_eval.common.openai_credentials import (
-    OPENROUTER_API_KEY_ENV,
     is_openai_model,
     openrouter_model_slug,
     resolve_openai_credentials,
@@ -23,6 +22,24 @@ if TYPE_CHECKING:
 
 # Maximum stop sequences supported by OpenAI-compatible APIs
 _MAX_STOP_SEQUENCES = 4
+
+# Request parameters that OpenAI accepts or rejects depending on the model.
+_OPENAI_SAMPLING_PARAMS = frozenset(
+    {
+        "logprobs",
+        "top_logprobs",
+        "temperature",
+        "top_p",
+        "stop",
+        "n",
+        "max_completion_tokens",
+        "max_tokens",
+        "presence_penalty",
+        "frequency_penalty",
+        "reasoning_effort",
+        "seed",
+    }
+)
 
 logger = get_logger(__name__)
 
@@ -40,7 +57,6 @@ class LiteLLMProvider(InferenceProvider):
         "AZURE_API_BASE": "azure_api_base",
         "AZURE_API_VERSION": "azure_api_version",
         "LITELLM_PROXY_API_KEY": "litellm_proxy_api_key",
-        OPENROUTER_API_KEY_ENV: "openrouter_key",
     }
 
     def __init__(
@@ -80,7 +96,8 @@ class LiteLLMProvider(InferenceProvider):
         self.retry_delay = retry_delay
         self.api_kwargs = api_kwargs
         self._client: AsyncOpenAI | None = None  # Cached client
-        self._request_model, self._request_api_base = self._route_request(model_name, api_base)
+        self._request_overrides = self._openrouter_overrides(model_name, api_base)
+        self._openai_params = self._openai_supported_params() if self._request_overrides else None
 
         if is_debug_provider():
             litellm._turn_on_debug()
@@ -90,17 +107,52 @@ class LiteLLMProvider(InferenceProvider):
         self._setup_api_keys()
 
     @staticmethod
-    def _route_request(model_name: str, api_base: str | None) -> tuple[str, str | None]:
-        """Model name and API base to request, sending OpenAI models to OpenRouter
-        when only an OpenRouter key is available."""
+    def _openrouter_overrides(model_name: str, api_base: str | None) -> dict[str, Any]:
+        """Request fields that send an OpenAI model to OpenRouter.
+
+        Empty unless the model targets OpenAI and only an OpenRouter key is available.
+        """
         credentials = resolve_openai_credentials()
         if (
-            credentials is not None
-            and credentials.via_openrouter
-            and is_openai_model(model_name, api_base)
+            credentials is None
+            or not credentials.via_openrouter
+            or not is_openai_model(model_name, api_base)
         ):
-            return f"openrouter/{openrouter_model_slug(model_name)}", None
-        return model_name, api_base
+            return {}
+        return {
+            "model": f"openrouter/{openrouter_model_slug(model_name)}",
+            "api_base": None,
+            "api_key": credentials.api_key,
+        }
+
+    def _openai_supported_params(self) -> frozenset[str] | None:
+        """Request parameters OpenAI accepts for this model, per LiteLLM's model data.
+
+        LiteLLM only knows these limits for OpenAI's own endpoint, so requests routed
+        through OpenRouter are filtered against them (see ``_drop_unsupported_params``).
+        """
+        name = self.model_name.removeprefix("openai/")
+        try:
+            params = self._litellm.get_supported_openai_params(
+                model=name, custom_llm_provider="openai"
+            )
+        except Exception:
+            return None
+        return frozenset(params) if params else None
+
+    def _drop_unsupported_params(self, kwargs: dict[str, Any]) -> None:
+        """Remove parameters OpenAI rejects for this model from an OpenRouter request.
+
+        Logprobs are always requested by this provider, so they are dropped whenever
+        unsupported. Other parameters are dropped only when ``drop_params`` is set,
+        matching LiteLLM's behavior against OpenAI's own endpoint.
+        """
+        if self._openai_params is None:
+            return
+        always = {"logprobs", "top_logprobs"}
+        candidates = set(kwargs) if kwargs.get("drop_params") else always
+        for key in (candidates & _OPENAI_SAMPLING_PARAMS) - self._openai_params:
+            kwargs.pop(key, None)
 
     def _setup_api_keys(self) -> None:
         """Configure LiteLLM with API keys from environment."""
@@ -142,11 +194,12 @@ class LiteLLMProvider(InferenceProvider):
 
         # Prepare API kwargs
         kwargs: dict[str, Any] = {
-            "api_base": self._request_api_base,
-            "model": self._request_model,
+            "api_base": self.api_base,
+            "model": self.model_name,
             "messages": messages,
             "n": params.num_samples,
             **self.api_kwargs,
+            **self._request_overrides,
         }
         # max_tokens=None means "uncapped"; omit the field so the API uses its
         # own context-bounded default rather than receiving a literal null.
@@ -162,6 +215,7 @@ class LiteLLMProvider(InferenceProvider):
         kwargs["top_logprobs"] = (
             1  # NOTE: workaround for litellm proxy issue https://github.com/BerriAI/litellm/issues/21932
         )
+        self._drop_unsupported_params(kwargs)
 
         response = await self._litellm.acompletion(**kwargs)
 
