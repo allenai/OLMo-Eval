@@ -527,8 +527,8 @@ class Omniscience(Task):
         formatter = replace(
             base,
             system_prompt=SYSTEM_PROMPT.format(
-                topic=instance.metadata["topic"],
-                category=instance.metadata["subtopic"],
+                topic=instance.metadata["domain"],
+                category=instance.metadata["topic"],
             ),
         )
         return formatter.format(instance, self.get_fewshot())
