@@ -485,7 +485,9 @@ def submit(args, bins: list[list[Cell]], only: set[int] | None = None) -> None:
             for host in args.hostname:
                 argv += ["--hostname", host]
         else:
-            argv += ["--cluster", args.cluster]
+            # comma-separated: gantry takes the first cluster with room
+            for c in args.cluster.split(","):
+                argv += ["--cluster", c]
         for k, v in env.items():
             argv += ["--env", f"{k}={v}"]
         argv += ["--", "bash", "-c", cmd]
@@ -783,7 +785,12 @@ def main() -> None:
         help="install --olmo-core-ref without its dependencies, pinning the image's torch 2.9.1 / "
         "fla 0.4.1 stack (needed for refs on upstream v3.0.0+, e.g. prasann/lengen)",
     )
-    ap.add_argument("--cluster", default="ai2/jupiter-cirrascale-2")
+    ap.add_argument(
+        "--cluster",
+        default="ai2/jupiter-cirrascale-2",
+        help="Beaker cluster, or a comma-separated list (H100 only for flash_3 checkpoints, e.g. "
+        "ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale)",
+    )
     ap.add_argument("--workspace", default="ai2/flex2")
     ap.add_argument("--budget", default="ai2/oe-other")
     ap.add_argument("--priority", default="urgent")
