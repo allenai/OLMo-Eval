@@ -478,9 +478,11 @@ def submit(args, bins: list[list[Cell]], only: set[int] | None = None) -> None:
             "--timeout",
             "0",
             "--shared-memory",
-            f"{32 * gpus}GiB",
+            f"{args.shared_memory_gib * gpus}GiB",
             "--yes",
         ]
+        if args.min_runtime:
+            argv += ["--min-runtime", args.min_runtime]
         if branch:
             argv += ["--branch", branch]
         # gantry refuses --hostname together with --cluster; the hosts already pin the cluster
@@ -538,6 +540,8 @@ def submit(args, bins: list[list[Cell]], only: set[int] | None = None) -> None:
         "pad_token_id",
         "yarn_old_len",
         "attention_backend",
+        "min_runtime",
+        "shared_memory_gib",
         "cluster",
         "workspace",
         "budget",
@@ -763,6 +767,14 @@ def main() -> None:
         type=int,
         default=0,
         help="pack up to N bins into one N-GPU job (one bin per GPU); 0 = one 1-GPU job per bin",
+    )
+    ap.add_argument(
+        "--min-runtime",
+        default="",
+        help="gantry --min-runtime (e.g. 1h, as the setA training launcher uses); default none",
+    )
+    ap.add_argument(
+        "--shared-memory-gib", type=int, default=32, help="shared memory per GPU of each job"
     )
     ap.add_argument(
         "--attention-backend",
