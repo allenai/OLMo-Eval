@@ -81,3 +81,21 @@ make_suite(
     aggregation=AggregationStrategy.AVERAGE,
     description="Molmo2's multi-image benchmarks (primary metrics are accuracy, 0-1).",
 )
+
+# Judge-graded multimodal safety benchmarks. Their primary metrics point different ways
+# (MM-SafetyBench ASR is lower-is-safer; SIUO safe, SIUO MCQA accuracy and USB SR are
+# higher-is-safer), so no cross-task average is computed.
+MULTIMODAL_SAFETY_TASKS = (
+    "mm_safety_bench",
+    "siuo",
+    "siuo_mcqa",
+    "usb_base",
+    "usb_hard",
+)
+
+make_suite(
+    "multimodal_safety",
+    MULTIMODAL_SAFETY_TASKS,
+    aggregation=AggregationStrategy.DISPLAY_ONLY,
+    description="Multimodal safety benchmarks: MM-SafetyBench, SIUO and USB (GPT judges).",
+)

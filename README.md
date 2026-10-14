@@ -703,7 +703,7 @@ olmo-eval evaluates vision-language models on image benchmarks. Tasks attach ima
 to `LMRequest.images` and the provider decides how to render them, so the task
 definition is the same regardless of which multimodal provider runs it.
 
-Five families of image tasks are built in:
+Six families of image tasks are built in:
 
 | Family | Suite | Tasks |
 | --- | --- | --- |
@@ -714,6 +714,7 @@ Five families of image tasks are built in:
 | Multi-image | `molmo2_multiimage` | `muir_bench`, `mmiu`, `blink` |
 | Document OCR, English (default for Molmo2) | `ocr_en` | `olmocr_bench`, `cc_ocr_multi_scene_en`, `omnidocbench_en` |
 | Document OCR, every language | `ocr` | `olmocr_bench`, `cc_ocr_multi_scene`, `omnidocbench` |
+| Safety | `multimodal_safety` | `mm_safety_bench`, `siuo`, `siuo_mcqa`, `usb_base`, `usb_hard` |
 
 Image-QA primary metrics are all 0-1, so `molmo2_imageqa` averages them.
 `dense_caption` reports on a 0-100 scale, so `molmo2_imageqa_caption` is display-only
@@ -764,6 +765,19 @@ system_prompt_style=style_and_length_v2`) gets the OCR style tag it was trained 
 The OCR datasets are downloaded from the Hugging Face Hub at pinned revisions rather
 than read from `$MOLMO_DATA_DIR`.
 
+Safety tasks grade free-form answers with each benchmark's own GPT judge prompts
+and report rates over the examples the judge graded (judge errors are counted
+separately rather than scored). `mm_safety_bench` runs MM-SafetyBench's 1,680
+questions text-only and with SD, typography and SD+typography images, and
+reports attack success rate (`asr/<setting>`, lower is safer, averaged over the
+13 scenarios; `asr/sd_typo` is the headline; `asr_pooled/<setting>` pools over
+questions instead, as many later papers do). `siuo` reports SIUO's `safe`,
+`effective` and `safe_effective` rates, `siuo_mcqa` its multiple-choice
+accuracy. `usb_base` and `usb_hard` report USB's safety rate `sr` (mean of the
+12 category x risk-combination cells, higher is safer) and the over-refusal rate
+`rr` on its MOSSBench probes. Each task's module docstring lists where it departs
+from the official scripts (retired judge models, parsing bugs, missing images).
+
 ### Setup
 
 The multimodal providers live behind the `hf` and `olmo_core_vlm` extras, and the
@@ -794,14 +808,19 @@ Images live under `$MOLMO_DATA_DIR/torch_datasets/`. Manifests that recorded
 absolute paths on another machine are re-anchored under the current root
 automatically.
 
-Four tasks call the OpenAI API and need `OPENAI_API_KEY`, so the
-`molmo2_imageqa` suite needs it as a whole:
+Several tasks call the OpenAI API and need `OPENAI_API_KEY`, so the
+`molmo2_imageqa` and `multimodal_safety` suites need it as a whole:
 
 - `math_vista` defaults to the official `gpt-4-0613` answer extraction. Use the
   `math_vista:offline` variant for an API-free heuristic instead.
 - `charxiv_descriptive` and `charxiv_reasoning` run the official `gpt-4o` grader.
 - `dense_caption` runs a `gpt-4o` recall+consistency judge. Judge responses are
   cached, so the key is only needed on a cache miss.
+- The safety tasks (all but `siuo_mcqa`) run GPT judges: `gpt-4-0613` for
+  MM-SafetyBench, `gpt-4o-mini-2024-07-18` for SIUO (its official
+  `gpt-4-vision-preview` is retired) and `gpt-4o-2024-08-06` for USB, the last
+  two shown the image. Override with `-o judge_model=...`; replies are cached
+  under `SAFETY_JUDGE_CACHE_DIR`.
 
 The launcher resolves the key as the user-scoped beaker secret
 `{beaker-username}_OPENAI_API_KEY`; if it is missing, the launch fails up front
