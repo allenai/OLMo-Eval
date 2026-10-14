@@ -18,7 +18,10 @@ primary metric averages the three turns.
 
 Defaults follow the post-training reasoning regime shared by this repo's other
 instruction-following tasks, and reasoning inside ``<think>`` tags is removed
-before verification. The ``:paper`` variant uses the paper's sampling.
+before verification. Generation is bounded only by the context window, so a
+very long reply can leave no room for later turns, which then score as
+unanswered. The ``:paper`` variant uses the paper's sampling, with 1,024
+tokens per reply.
 """
 
 from __future__ import annotations
@@ -29,6 +32,8 @@ from typing import Any
 
 from olmo_eval.common.metrics import MultiIFAccuracy
 from olmo_eval.common.types import (
+    FOLLOW_UP_TURNS_KEY,
+    REPLIES_KEY,
     Instance,
     LMOutput,
     LMRequest,
@@ -39,7 +44,6 @@ from olmo_eval.common.types import (
 from olmo_eval.data import DataSource
 from olmo_eval.evals.extract import extract_think_answer
 from olmo_eval.evals.tasks.common import Task, register, register_variant
-from olmo_eval.harness.scaffolds.multi_turn_chat import FOLLOW_UP_TURNS_KEY, REPLIES_KEY
 
 _DATASET_PATH = "facebook/Multi-IF"
 _DATASET_REVISION = "0ab97ce0b45c7f57772e8ba2ac1616f4b00bd3aa"

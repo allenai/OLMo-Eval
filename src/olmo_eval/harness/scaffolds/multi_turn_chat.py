@@ -14,7 +14,14 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from olmo_eval.common.types import LMOutput, LMRequest, RequestType, SamplingParams
+from olmo_eval.common.types import (
+    FOLLOW_UP_TURNS_KEY,
+    REPLIES_KEY,
+    LMOutput,
+    LMRequest,
+    RequestType,
+    SamplingParams,
+)
 from olmo_eval.harness.config import HarnessConfig
 from olmo_eval.harness.result import HarnessResult
 from olmo_eval.harness.scaffolds import Scaffold, register_scaffold
@@ -22,15 +29,6 @@ from olmo_eval.inference.base import InferenceProvider
 from olmo_eval.inference.errors import first_output, is_context_overflow_output, request_error
 
 logger = logging.getLogger(__name__)
-
-#: ``LMRequest.metadata`` key holding the user messages sent after the first reply.
-FOLLOW_UP_TURNS_KEY = "follow_up_turns"
-
-#: ``LMOutput.metadata`` key holding the model's reply to each user turn, in order.
-REPLIES_KEY = "replies"
-
-#: ``LMOutput.metadata`` key set when the conversation outgrew the context window.
-CONTEXT_OVERFLOW_KEY = "conversation_context_overflow"
 
 
 @register_scaffold("multi_turn_chat")
@@ -52,8 +50,8 @@ class MultiTurnChatScaffold(Scaffold):
             (request.metadata or {}).get(FOLLOW_UP_TURNS_KEY, ())
         )
         messages: list[dict[str, Any]] = [dict(m) for m in request.messages]
+        system_prompt = config.system_prompt or request.system_prompt
         replies: list[str] = []
-        context_overflow: str | None = None
         last_output = LMOutput(text="")
 
         for turn_index in range(len(follow_ups) + 1):
@@ -66,7 +64,7 @@ class MultiTurnChatScaffold(Scaffold):
                     LMRequest(
                         request_type=RequestType.CHAT,
                         messages=tuple(messages),
-                        system_prompt=request.system_prompt,
+                        system_prompt=system_prompt,
                     )
                 ],
                 sampling_params,
@@ -75,11 +73,11 @@ class MultiTurnChatScaffold(Scaffold):
             if is_context_overflow_output(generated):
                 # Later turns only add to the conversation, so none of them can
                 # be asked; the task scores them as unanswered.
-                context_overflow = request_error(generated) or "context overflow"
                 logger.warning(
-                    "Conversation %s outgrew the context window on turn %s.",
+                    "Conversation %s outgrew the context window on turn %s: %s",
                     (trace_metadata or {}).get("instance_id", "?"),
                     turn_index + 1,
+                    request_error(generated),
                 )
                 break
             last_output = first_output(generated)
@@ -87,7 +85,4 @@ class MultiTurnChatScaffold(Scaffold):
 
         final = LMOutput(text=last_output.text, metadata=dict(last_output.metadata or {}))
         final.metadata[REPLIES_KEY] = replies
-        if context_overflow is not None:
-            final.metadata[CONTEXT_OVERFLOW_KEY] = context_overflow
-
         return HarnessResult(final_output=final, metadata={"turns": len(replies)})

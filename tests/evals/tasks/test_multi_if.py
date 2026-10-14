@@ -10,9 +10,15 @@ import pytest
 from olmo_eval.common.metrics import MultiIFAccuracy
 from olmo_eval.common.scorers import MultiIFScorer
 from olmo_eval.common.scorers.base import get_scorer_result
-from olmo_eval.common.types import Instance, LMOutput, RequestType, Response
+from olmo_eval.common.types import (
+    FOLLOW_UP_TURNS_KEY,
+    REPLIES_KEY,
+    Instance,
+    LMOutput,
+    RequestType,
+    Response,
+)
 from olmo_eval.evals.tasks.common import get_task
-from olmo_eval.harness.scaffolds.multi_turn_chat import FOLLOW_UP_TURNS_KEY, REPLIES_KEY
 
 _TURN_INSTRUCTIONS: list[tuple[str, list[str], list[dict[str, Any]]]] = [
     ("Write a haiku about rain. Use no commas.", ["punctuation:no_comma"], [{}]),
@@ -128,6 +134,22 @@ def test_format_request_sends_the_first_turn_and_scripts_the_rest() -> None:
 def test_extract_answer_strips_each_turns_reasoning_and_whitespace() -> None:
     output = LMOutput(text="", metadata={REPLIES_KEY: ["<think>plan</think>\n\na", " b\n"]})
     assert get_task("multi_if").extract_answer(output) == ["a", "b"]
+
+
+def test_extraction_reads_replies_after_trace_stripping() -> None:
+    # Trace stripping rewrites the output's text, the last reply; each turn's
+    # reply is still read from the replies the scaffold recorded.
+    task = get_task("multi_if")
+    instance = _instance(turns=2)
+    output = LMOutput(
+        text="<think>b</think>Done.",
+        metadata={REPLIES_KEY: ["<think>a</think>Rain", "<think>b</think>Done."]},
+    )
+    response = Response(instance=instance, request=task.format_request(instance), outputs=[output])
+    task.strip_thinking_traces([response])
+    task._extract_answers([response])
+    assert response.outputs[0].text == "Done."
+    assert response.outputs[0].extracted_answer == ["Rain", "Done."]
 
 
 def test_extract_answer_without_replies() -> None:

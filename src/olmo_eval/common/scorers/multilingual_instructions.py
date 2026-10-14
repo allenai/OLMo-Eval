@@ -11,6 +11,9 @@ verifiers:
   punctuation, and Hindi splits sentences on the danda.
 - A response wrapped in curly or corner quotation marks counts as quoted.
 
+Language detection is seeded here, unlike the reference, so a rerun scores the
+same reply the same way.
+
 The reference also counts Thai words and sentences with ``pythainlp``. No
 Multi-IF conversation combines a Thai response with a length instruction, so
 that path is left out.
@@ -18,14 +21,16 @@ that path is left out.
 
 from __future__ import annotations
 
+import functools
 import re
 from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any
 
 import emoji
-import langdetect
 from ifbench import classic_instructions, instructions_registry, instructions_util
+from langdetect.detector_factory import PROFILES_DIRECTORY, DetectorFactory
+from langdetect.lang_detect_exception import LangDetectException
 
 #: ``langdetect`` codes whose words and sentences are counted by character and
 #: CJK punctuation.
@@ -46,11 +51,25 @@ _HINDI_SENTENCE_END = re.compile(r"(?<=[।!?])\s*")
 _QUOTATION_MARKS = (('"', '"'), ("“", "”"), ("「", "」"))
 
 
+@functools.cache
+def _language_detector_factory() -> DetectorFactory:
+    """A seeded ``langdetect`` factory, kept apart from the library's shared one."""
+    factory = DetectorFactory()
+    factory.load_profile(PROFILES_DIRECTORY)
+    factory.set_seed(0)
+    return factory
+
+
 def _detect_language(text: str) -> str:
-    """The text's ``langdetect`` code, or English when it cannot be told."""
+    """The text's ``langdetect`` code, or English when it cannot be told.
+
+    Detection is seeded, so the same reply is always counted the same way.
+    """
+    detector = _language_detector_factory().create()
+    detector.append(text)
     try:
-        return langdetect.detect(text)
-    except langdetect.LangDetectException:
+        return detector.detect()
+    except LangDetectException:
         return "en"
 
 

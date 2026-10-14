@@ -4,17 +4,19 @@ from __future__ import annotations
 
 import pytest
 
-from olmo_eval.common.types import LMOutput, LMRequest, RequestType, SamplingParams
-from olmo_eval.harness.presets import get_harness_preset
-from olmo_eval.harness.scaffolds import get_scaffold
-from olmo_eval.harness.scaffolds.multi_turn_chat import (
-    CONTEXT_OVERFLOW_KEY,
+from olmo_eval.common.types import (
     FOLLOW_UP_TURNS_KEY,
     REPLIES_KEY,
+    LMOutput,
+    LMRequest,
+    RequestType,
+    SamplingParams,
 )
+from olmo_eval.harness.config import HarnessConfig
+from olmo_eval.harness.presets import get_harness_preset
+from olmo_eval.harness.scaffolds import get_scaffold
 from olmo_eval.inference.base import InferenceProvider
-from olmo_eval.inference.errors import CONTEXT_OVERFLOW_KEY as PROVIDER_OVERFLOW_KEY
-from olmo_eval.inference.errors import REQUEST_ERROR_KEY
+from olmo_eval.inference.errors import CONTEXT_OVERFLOW_KEY, REQUEST_ERROR_KEY
 
 
 class ScriptedProvider(InferenceProvider):
@@ -49,13 +51,15 @@ def request_for(*turns: str, system_prompt: str | None = None) -> LMRequest:
     )
 
 
-async def run(provider: InferenceProvider, request: LMRequest):
-    return await get_scaffold("multi_turn_chat").run(provider, None, request, SamplingParams())
+async def run(provider: InferenceProvider, request: LMRequest, config: HarnessConfig | None = None):
+    return await get_scaffold("multi_turn_chat").run(
+        provider, config or HarnessConfig(name="test"), request, SamplingParams()
+    )
 
 
 OVERFLOW = LMOutput(
     text="",
-    metadata={REQUEST_ERROR_KEY: "context overflow: too long", PROVIDER_OVERFLOW_KEY: True},
+    metadata={REQUEST_ERROR_KEY: "context overflow: too long", CONTEXT_OVERFLOW_KEY: True},
 )
 
 
@@ -70,6 +74,16 @@ async def test_each_turn_is_asked_with_the_models_earlier_replies() -> None:
         (user("First?"), {"role": "assistant", "content": "one"}, user("Second?")),
     ]
     assert all(r.system_prompt == "Be brief." for r in provider.requests)
+
+
+@pytest.mark.anyio
+async def test_the_harness_system_prompt_takes_precedence() -> None:
+    provider = ScriptedProvider([LMOutput(text="one"), LMOutput(text="two")])
+    config = HarnessConfig(name="test", system_prompt="From the harness.")
+
+    await run(provider, request_for("First?", "Second?", system_prompt="From the task."), config)
+
+    assert [r.system_prompt for r in provider.requests] == ["From the harness."] * 2
 
 
 @pytest.mark.anyio
@@ -101,7 +115,18 @@ async def test_an_overflow_ends_the_conversation_without_failing_it() -> None:
 
     assert len(provider.requests) == 2
     assert result.final_output.metadata[REPLIES_KEY] == ["a"]
-    assert result.final_output.metadata[CONTEXT_OVERFLOW_KEY] == "context overflow: too long"
+    assert REQUEST_ERROR_KEY not in result.final_output.metadata
+
+
+@pytest.mark.anyio
+async def test_an_overflow_on_the_first_turn_leaves_no_replies() -> None:
+    provider = ScriptedProvider([OVERFLOW])
+
+    result = await run(provider, request_for("1", "2"))
+
+    assert len(provider.requests) == 1
+    assert result.final_output.metadata[REPLIES_KEY] == []
+    assert result.final_output.text == ""
     assert REQUEST_ERROR_KEY not in result.final_output.metadata
 
 

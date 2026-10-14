@@ -41,6 +41,13 @@ def test_english_counts_match_ifbench() -> None:
     assert count_sentences(ENGLISH) == 3
 
 
+def test_language_detection_is_deterministic() -> None:
+    # Unseeded ``langdetect`` calls this Japanese about one time in seven,
+    # which would count it as 7 words instead of 4.
+    text = "data テスト ok 测试"
+    assert {count_words(text) for _ in range(100)} == {4}
+
+
 def test_undetectable_text_is_counted_as_english() -> None:
     assert count_words("") == 0
     assert count_words("1234 5678") == 2
