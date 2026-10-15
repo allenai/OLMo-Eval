@@ -45,7 +45,7 @@ class RequestMetrics:
 class BatchMetrics:
     """Aggregated metrics for a batch of requests.
 
-    Core metadata fields mirror the evaluation database schema for join-ability.
+    Core metadata fields identify the run, model and task the batch belongs to.
     """
 
     # Aggregate statistics
@@ -61,7 +61,7 @@ class BatchMetrics:
     # Batch identification
     batch_hash: str | None = None  # Hash of request IDs for reproducibility
 
-    # Core metadata (mirrors evaluation schema)
+    # Core metadata
     experiment_id: str | None = None
     experiment_name: str | None = None
     experiment_group: str | None = None

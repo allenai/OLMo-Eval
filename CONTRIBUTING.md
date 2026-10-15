@@ -24,7 +24,7 @@ Run these before opening a PR that changes code:
 ```bash
 uv run ruff check src/ tests/
 uv run ruff format --check src/ tests/
-uv run ty check src/ alembic/
+uv run ty check src/
 uv run pytest tests/ --ignore=tests/integration -v
 ```
 
@@ -33,10 +33,8 @@ uv run pytest tests/ --ignore=tests/integration -v
 - `./scripts/fix.sh` formats and applies lint fixes. `./scripts/verify.sh` syncs
   dependencies and runs everything, including Docker-backed integration tests
   (`--no-docker` skips them; `--gpu` enables GPU tests).
-- `make type-check` checks only `src/`; the command above also checks `alembic/`.
 - Unit tests must run without a GPU, network access, or Docker. GPU tests use the `gpu`
-  marker and run with `--gpu`; Docker-backed tests live in `tests/integration/`. Run the
-  relevant integration tests for storage changes.
+  marker and run with `--gpu`; Docker-backed tests live in `tests/integration/`.
 - For a docs-only change, check links, paths, and every command you documented.
 
 ## Find your way around
@@ -73,7 +71,7 @@ Paths are relative to `src/olmo_eval/` unless stated otherwise.
 | Tools, scaffolds, sandboxes, execution presets | `harness/` |
 | Scheduling, aggregation, saved artifacts | `runners/` |
 | CLI and remote submission | `cli/`, `launch/` |
-| Results storage and analysis | `storage/`, `analysis/`; migrations at repository-root `alembic/` |
+| Results upload to the dashboard | `upload/`; the dashboard itself is in repository-root `dashboard/` |
 | Tests and maintenance scripts | Repository-root `tests/` and `scripts/` |
 
 Registration happens on import. Text task modules, suite modules, and external benchmark
@@ -154,9 +152,9 @@ results and hashed to identify it.
 - Deep-copy presets before applying overrides. Keep multiprocessing payloads small and
   picklable; pass paths instead of decoded images.
 - Tasks don't import suite modules or depend on Beaker, and runners work without Beaker.
-- Schema changes ship with a migration in the right chain (`alembic/results` or
-  `alembic/metrics`), each chain keeps a single head, and the PR tells users to run
-  `make db-upgrade`.
+- olmo-eval reaches the dashboard only through `upload/` over HTTP and never imports
+  `olmo_eval_api` (the separate package in `dashboard/api`). Upload payloads follow
+  `dashboard/contract/ingest-v1.schema.json`; change the contract there first.
 - Beaker and Ai2 infrastructure are the supported way to run remotely, and Ai2 defaults
   are fine. Keep credentials, personal values (an individual's image, workspace, or
   secret names), and internal-only URLs out of source, and keep deployment values

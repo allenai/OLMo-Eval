@@ -149,3 +149,69 @@ class TestStreamingControlCommand(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class _CommandTimeoutError(Exception):
+    """Named like swe-rex's timeout so the executor recognizes it."""
+
+
+class TestSessionTimeout(unittest.IsolatedAsyncioTestCase):
+    def _executor(self) -> SandboxExecutor:
+        executor = SandboxExecutor(
+            SandboxConfig(image="test", mode=SandboxMode.DOCKER, container_runtime="docker")
+        )
+        executor._deployment = mock.Mock()
+        executor._runtime = mock.Mock()
+        executor._session_created = True
+        return executor
+
+    async def test_a_timed_out_command_is_interrupted_and_reported(self) -> None:
+        executor = self._executor()
+        interrupted = mock.Mock(output="^C", exit_code=0)
+        executor._runtime.run_in_session = mock.AsyncMock(
+            side_effect=[_CommandTimeoutError("timed out after 5s"), interrupted]
+        )
+
+        result = await executor.execute_in_session("sleep 100", timeout=5.0)
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.error, "timeout")
+        self.assertEqual(result.exit_code, -1)
+        self.assertIn("timed out after 5.0s", result.output)
+        actions = [c.args[0] for c in executor._runtime.run_in_session.await_args_list]
+        self.assertEqual(actions[0].command, "sleep 100")
+        self.assertEqual(type(actions[1]).__name__, "BashInterruptAction")
+
+    async def test_a_syntax_error_comes_back_as_a_result(self) -> None:
+        executor = self._executor()
+
+        class BashIncorrectSyntaxError(RuntimeError):
+            pass
+
+        executor._runtime.run_in_session = mock.AsyncMock(
+            side_effect=BashIncorrectSyntaxError("bash: line 1: syntax error near `('")
+        )
+
+        result = await executor.execute_in_session("echo (")
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.exit_code, 2)
+        self.assertEqual(result.error, "syntax")
+        self.assertIn("syntax error", result.output)
+        self.assertEqual(executor._runtime.run_in_session.await_count, 1)
+
+    async def test_other_failures_still_raise(self) -> None:
+        executor = self._executor()
+        executor._runtime.run_in_session = mock.AsyncMock(side_effect=RuntimeError("gone"))
+
+        with self.assertRaises(RuntimeError):
+            await executor.execute_in_session("ls")
+
+    async def test_interrupt_without_a_session_is_a_no_op(self) -> None:
+        executor = self._executor()
+        executor._session_created = False
+        executor._runtime.run_in_session = mock.AsyncMock()
+
+        await executor.interrupt_session()
+
+        executor._runtime.run_in_session.assert_not_awaited()

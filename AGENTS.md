@@ -28,7 +28,7 @@ then explain the dependency.
 ```bash
 uv run ruff check src/ tests/
 uv run ruff format --check src/ tests/
-uv run ty check src/ alembic/
+uv run ty check src/
 uv run pytest tests/ --ignore=tests/integration -v
 ```
 
@@ -64,6 +64,9 @@ uv run pytest tests/ --ignore=tests/integration -v
   suites or depend on Beaker. Ai2 infrastructure defaults are fine; credentials,
   personal values (an individual's image, workspace, or secret names), and internal-only
   URLs are not.
+- **Upload boundary.** olmo-eval reaches the dashboard only through `src/olmo_eval/upload/`
+  over HTTP and never imports `olmo_eval_api` (`dashboard/api`). Upload payloads follow
+  `dashboard/contract/ingest-v1.schema.json`; change the contract there first.
 
 ## Common mistakes
 
