@@ -81,3 +81,36 @@ def test_deepscholar_judge_routes_through_openrouter() -> None:
 def test_deepscholar_judge_keeps_openai_name_with_openai_key() -> None:
     command = DeepScholarExternalEval()._build_eval_command(DeepScholarArgs.from_dict({}))
     assert "--model-name gpt-4o" in command
+
+
+@pytest.mark.usefixtures("openrouter_only")
+@pytest.mark.parametrize(
+    ("model", "expected"),
+    [
+        ("gpt-4o", "openrouter/openai/gpt-4o"),
+        ("gpt-4-0613", "openrouter/openai/gpt-4"),
+        ("gpt-5.5-2026-04-23", "openrouter/openai/gpt-5.5"),
+    ],
+)
+def test_deepscholar_model_under_test_routes_through_openrouter(model: str, expected: str) -> None:
+    lm = DeepScholarExternalEval()._build_lm_config(
+        model, "http://localhost:8000/v1", False, DeepScholarArgs.from_dict({})
+    )
+    assert lm["model"] == expected
+
+
+@pytest.mark.usefixtures("openrouter_only")
+def test_deepscholar_local_model_is_unchanged() -> None:
+    args = DeepScholarArgs.from_dict({})
+    lm = DeepScholarExternalEval()._build_lm_config(
+        "my-model", "http://10.0.0.1:8000/v1", True, args
+    )
+    assert lm["model"] == f"{args.local_model_prefix}/my-model"
+
+
+@pytest.mark.usefixtures("openai_only")
+def test_deepscholar_model_under_test_keeps_openai_name_with_openai_key() -> None:
+    lm = DeepScholarExternalEval()._build_lm_config(
+        "gpt-4-0613", "http://localhost:8000/v1", False, DeepScholarArgs.from_dict({})
+    )
+    assert lm["model"] == "gpt-4-0613"

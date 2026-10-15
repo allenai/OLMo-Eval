@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from olmo_eval.common.openai_credentials import SECRET_ALTERNATIVES
+from olmo_eval.common.openai_credentials import OPENROUTER_API_KEY_ALIASES, SECRET_ALTERNATIVES
 
 if TYPE_CHECKING:
     from beaker import Beaker
@@ -423,6 +423,15 @@ def ensure_common_secrets(
     return [("WANDB_API_KEY", name)] if found else []
 
 
+def _secret_write_hint(username: str, candidates: tuple[str, ...]) -> str:
+    """Commands that create any one of ``candidates`` as a Beaker secret."""
+    names = [c for c in candidates if c not in OPENROUTER_API_KEY_ALIASES]
+    return "\n".join(
+        f"  {'' if i == 0 else 'or: '}beaker secret write {username}_{name} <value>"
+        for i, name in enumerate(names)
+    )
+
+
 def ensure_task_secrets(
     workspace: str,
     required_secrets: set[str],
@@ -461,7 +470,7 @@ def ensure_task_secrets(
     client = Beaker.from_env(default_workspace=workspace)
     username = _get_beaker_username(client)
     secrets: list[tuple[str, str]] = []
-    missing: list[str] = []
+    missing: list[tuple[str, ...]] = []
 
     for env_var in sorted(required_secrets):
         candidates = (env_var, *SECRET_ALTERNATIVES.get(env_var, ()))
@@ -475,16 +484,18 @@ def ensure_task_secrets(
             log.debug(f"Found required secret {secret_name}")
             break
         else:
-            missing.append(
-                " or ".join(f"{c} (expected Beaker secret: {username}_{c})" for c in candidates)
-            )
+            missing.append(candidates)
 
     if missing:
         raise ValueError(
             "Missing required Beaker secrets:\n"
-            + "\n".join(f"  - {m}" for m in missing)
+            + "\n".join(
+                "  - "
+                + " or ".join(f"{c} (expected Beaker secret: {username}_{c})" for c in candidates)
+                for candidates in missing
+            )
             + "\n\nCreate these secrets with:\n"
-            + "\n".join(f"  beaker secret write {username}_{m.split()[0]} <value>" for m in missing)
+            + "\n".join(_secret_write_hint(username, candidates) for candidates in missing)
         )
 
     return secrets

@@ -443,7 +443,9 @@ class TestEnsureTaskSecrets:
         message = str(excinfo.value)
         assert "alice_OPENAI_API_KEY" in message
         assert "alice_OPENROUTER_API_KEY" in message
-        assert "beaker secret write alice_OPENAI_API_KEY <value>" in message
+        assert "  beaker secret write alice_OPENAI_API_KEY <value>" in message
+        assert "  or: beaker secret write alice_OPENROUTER_API_KEY <value>" in message
+        assert "beaker secret write alice_OPEN_ROUTER_KEY" not in message
 
     def test_other_secrets_have_no_alternative(self) -> None:
         with pytest.raises(ValueError, match="alice_S2_API_KEY"):

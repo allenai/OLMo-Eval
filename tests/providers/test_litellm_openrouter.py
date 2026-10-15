@@ -151,6 +151,46 @@ async def test_logprobs_are_kept_without_openrouter_routing(fake_litellm, monkey
     assert fake_litellm[0]["logprobs"] is True
 
 
+async def _logprobs(provider: LiteLLMProvider) -> None:
+    request = LMRequest(request_type=RequestType.CHAT, prompt="hi", continuations=("a", "b"))
+    await provider._logprobs_single_impl(request)
+
+
+@pytest.mark.anyio
+@pytest.mark.usefixtures("openrouter_only")
+async def test_logprob_requests_route_to_openrouter(fake_litellm) -> None:
+    await _logprobs(LiteLLMProvider("gpt-4o", api_base="https://api.openai.com/v1"))
+
+    assert len(fake_litellm) == 2
+    for call in fake_litellm:
+        assert call["model"] == "openrouter/openai/gpt-4o"
+        assert call["api_base"] is None
+        assert call["api_key"] == "or-key"
+        assert call["logprobs"] is True
+
+
+@pytest.mark.anyio
+@pytest.mark.usefixtures("openrouter_only")
+async def test_logprob_requests_drop_params_openai_rejects(fake_litellm) -> None:
+    await _logprobs(LiteLLMProvider("openai/o3-mini-2025-01-31"))
+
+    assert fake_litellm[0]["model"] == "openrouter/openai/o3-mini"
+    assert "logprobs" not in fake_litellm[0]
+    assert "top_logprobs" not in fake_litellm[0]
+
+
+@pytest.mark.anyio
+async def test_logprob_requests_keep_openai_endpoint_with_openai_key(
+    fake_litellm, monkeypatch
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
+    await _logprobs(LiteLLMProvider("gpt-4o", api_base="https://api.openai.com/v1"))
+
+    assert fake_litellm[0]["model"] == "gpt-4o"
+    assert fake_litellm[0]["api_base"] == "https://api.openai.com/v1"
+    assert "api_key" not in fake_litellm[0]
+
+
 class TestProviderConfigSecrets:
     def _config(self) -> ProviderConfig:
         return ProviderConfig(model="gpt-4o", required_secrets=("OPENAI_API_KEY",))

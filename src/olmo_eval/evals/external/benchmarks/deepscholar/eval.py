@@ -416,7 +416,7 @@ class DeepScholarExternalEval(SandboxedExternalEval):
             lm["api_base"] = sandbox_url
             lm["api_key"] = "EMPTY"
         else:
-            lm["model"] = model_name
+            lm["model"] = litellm_model_name(model_name)
         return lm
 
     async def _write_config(

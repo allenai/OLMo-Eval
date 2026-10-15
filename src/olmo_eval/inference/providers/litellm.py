@@ -383,16 +383,20 @@ class LiteLLMProvider(InferenceProvider):
         for i, continuation in enumerate(request.continuations or ()):
             content = cont_prompts[i] if cont_prompts else default_content
 
-            response = await self._litellm.acompletion(
-                api_base=self.api_base,
-                model=self.model_name,
-                messages=[{"role": "user", "content": content}],
-                max_completion_tokens=50,
-                temperature=params.temperature,
-                logprobs=True,
-                top_logprobs=1,  # NOTE: workaround for litellm proxy issue https://github.com/BerriAI/litellm/issues/21932
+            kwargs: dict[str, Any] = {
+                "api_base": self.api_base,
+                "model": self.model_name,
+                "messages": [{"role": "user", "content": content}],
+                "max_completion_tokens": 50,
+                "temperature": params.temperature,
+                "logprobs": True,
+                "top_logprobs": 1,  # NOTE: workaround for litellm proxy issue https://github.com/BerriAI/litellm/issues/21932
                 **self.api_kwargs,
-            )
+                **self._request_overrides,
+            }
+            self._drop_unsupported_params(kwargs)
+
+            response = await self._litellm.acompletion(**kwargs)
 
             completion_logprobs: list[LogProbEntry] = []
             if response.choices:
