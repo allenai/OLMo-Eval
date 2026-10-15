@@ -173,6 +173,8 @@ def matrix_metric_keys(
     metric: str,
     subjects: Sequence[Subject],
     baseline: Subject | None,
+    *,
+    require_gap_anchor: bool = True,
 ) -> list[dict[str, str | None]]:
     """Select comparison metrics independently for each matrix row."""
     parents = {spec.name: spec.node for spec in rows if spec.kind == "suite"}
@@ -190,7 +192,7 @@ def matrix_metric_keys(
                 subjects,
                 baseline,
                 node_for_metrics,
-                require_gap_anchor=spec.kind == "suite",
+                require_gap_anchor=require_gap_anchor and spec.kind == "suite",
             )
         )
     return row_metrics
@@ -271,16 +273,19 @@ async def compare_matrix(
     if is_runtime_metric(body.metric):
         # No bootstraps, so nothing worth caching.
         return await _runtime_matrix(session, body, subjects, baseline, rows, stats.alpha)
-    ckey = cache_key("matrix-v6", request, used, scope_hashes(node, defs))
+    ckey = cache_key("matrix-v7", request, used, scope_hashes(node, defs))
     cached = await get_cached(session, ckey, a.MatrixResponse)
     if cached is not None:
         return cached.model_copy(update={"subjects": live_subjects(cached.subjects, by_key)})
 
     task_names = list(dict.fromkeys(r.name for r in rows if r.kind == "task"))
     row_metrics = matrix_metric_keys(rows, body.metric, subjects, baseline)
+    row_side_metrics = matrix_metric_keys(
+        rows, body.metric, subjects, baseline, require_gap_anchor=False
+    )
     loader = SideLoader(session)
     wanted: set[tuple[int, str]] = set()
-    for metric_keys in row_metrics:
+    for metric_keys in row_side_metrics:
         for name, key in metric_keys.items():
             for subject in subjects:
                 tr = subject.trs.get(name)
@@ -294,10 +299,10 @@ async def compare_matrix(
     coverage = {"complete": 0, "missing": 0, "failed": 0, "hash_mismatch": 0}
 
     def build_rows() -> None:
-        for spec, metric_keys in zip(rows, row_metrics, strict=True):
+        for spec, metric_keys, side_keys in zip(rows, row_metrics, row_side_metrics, strict=True):
             sides = {
                 name: {subject.key: loader.side(subject.trs.get(name), key) for subject in subjects}
-                for name, key in metric_keys.items()
+                for name, key in side_keys.items()
             }
             if spec.kind == "task":
                 out_rows.append(

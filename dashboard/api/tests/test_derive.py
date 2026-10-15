@@ -734,3 +734,55 @@ def test_shared_gap_task_anchors_are_selected_per_matrix_row() -> None:
         if row.kind == "task" and row.name == "in"
     ]
     assert in_tasks == [("a", "strict"), ("b", "flex")]
+
+
+@pytest.mark.parametrize("missing_companion", [False, True])
+def test_matrix_parent_keeps_leaves_from_unanchored_gap_child(missing_companion):
+    from olmo_eval_api.routers.api.compare import RowSpec, _matrix_suite_row, matrix_metric_keys
+    from olmo_eval_api.schemas.api import MatrixRequest
+    from olmo_eval_api.services.subjects import Subject
+    from olmo_eval_api.stats.paired import Side
+
+    node = build_tree(
+        "root",
+        {
+            "root": (
+                "average",
+                [{"type": "suite", "name": "pair"}, {"type": "task", "name": "other"}],
+            ),
+            "pair": ("gap", [{"type": "task", "name": "in"}, {"type": "task", "name": "out"}]),
+        },
+    )
+    trs = {
+        name: {
+            "score": score,
+            "stderr": 0.02,
+            "num_instances": 10,
+            "display_format": "percent",
+            "higher_is_better": True,
+            "primary_metric": metric,
+        }
+        for name, score, metric in [("in", 0.2, "acc"), ("out", 0.4, "f1"), ("other", 0.8, "acc")]
+    }
+    if missing_companion:
+        del trs["out"]
+    subject = Subject("r:model001", "run", {}, None, trs=trs)
+    spec = RowSpec("suite:root", "suite", "root", 0, None, "average", node)
+    checks = matrix_metric_keys([spec], "primary", [subject], None)[0]
+    sides_keys = matrix_metric_keys([spec], "primary", [subject], None, require_gap_anchor=False)[0]
+    assert checks["in"] is None
+    sides = {
+        name: {subject.key: Side(name, "hash", trs[name]["score"], 0.02, False)}
+        for name, key in sides_keys.items()
+        if name in trs and key is not None
+    }
+    row = _matrix_suite_row(
+        spec,
+        [subject],
+        None,
+        sides,
+        MatrixRequest(subjects=[subject.key], scope="suite:root", metric="primary"),
+        None,
+        metric_keys=checks,
+    )
+    assert row.cells[0].score == pytest.approx(sum(tr["score"] for tr in trs.values()) / len(trs))

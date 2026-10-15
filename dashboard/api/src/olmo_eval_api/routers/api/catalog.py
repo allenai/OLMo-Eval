@@ -370,6 +370,7 @@ async def model_progression(
     for tr in all_trs:
         by_run.setdefault(tr["run_id"], []).append(tr)
     run_population = [latest_by_task(run_trs) for run_trs in by_run.values()]
+    # Keep the earliest complete metric fixed so adding checkpoints cannot rewrite history.
     population = list(merged.values()) if merge == "latest" else list(run_population)
     population.extend(subject.trs for subject in ref_subjects)
     panels = []
