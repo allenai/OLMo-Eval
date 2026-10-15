@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+from olmo_eval.evals.external.benchmarks.asta.args import AstaArgs
+from olmo_eval.evals.external.benchmarks.asta.eval import AstaExternalEval
 from olmo_eval.evals.external.benchmarks.deepscholar.args import DeepScholarArgs
 from olmo_eval.evals.external.benchmarks.deepscholar.eval import DeepScholarExternalEval
 from olmo_eval.evals.external.benchmarks.tau2.eval import Tau2Args, Tau2ExternalEval
@@ -87,9 +89,9 @@ def test_deepscholar_judge_keeps_openai_name_with_openai_key() -> None:
 @pytest.mark.parametrize(
     ("model", "expected"),
     [
-        ("gpt-4o", "openrouter/openai/gpt-4o"),
-        ("gpt-4-0613", "openrouter/openai/gpt-4"),
-        ("gpt-5.5-2026-04-23", "openrouter/openai/gpt-5.5"),
+        ("gpt-4o", "openai/gpt-4o"),
+        ("gpt-4-0613", "openai/gpt-4"),
+        ("gpt-5.5-2026-04-23", "openai/gpt-5.5"),
     ],
 )
 def test_deepscholar_model_under_test_routes_through_openrouter(model: str, expected: str) -> None:
@@ -114,3 +116,34 @@ def test_deepscholar_model_under_test_keeps_openai_name_with_openai_key() -> Non
         "gpt-4-0613", "http://localhost:8000/v1", False, DeepScholarArgs.from_dict({})
     )
     assert lm["model"] == "gpt-4-0613"
+
+
+@pytest.mark.usefixtures("openrouter_only")
+@pytest.mark.parametrize(
+    ("model", "expected"),
+    [
+        ("openai/gpt-4o", "openrouter/openai/gpt-4o"),
+        ("openai/o3-mini-2025-01-31", "openrouter/openai/o3-mini"),
+    ],
+)
+def test_asta_model_under_test_routes_through_openrouter(model: str, expected: str) -> None:
+    command = AstaExternalEval()._build_run_command(
+        model, "http://localhost:8000/v1", False, AstaArgs.from_dict({})
+    )
+    assert f"--model {expected}" in command
+
+
+@pytest.mark.usefixtures("openrouter_only")
+def test_asta_local_model_is_unchanged() -> None:
+    command = AstaExternalEval()._build_run_command(
+        "my-model", "http://10.0.0.1:8000/v1", True, AstaArgs.from_dict({})
+    )
+    assert "openai-api/vllm/my-model" in command
+
+
+@pytest.mark.usefixtures("openai_only")
+def test_asta_keeps_openai_name_with_openai_key() -> None:
+    command = AstaExternalEval()._build_run_command(
+        "openai/o3-mini-2025-01-31", "http://localhost:8000/v1", False, AstaArgs.from_dict({})
+    )
+    assert "--model openai/o3-mini-2025-01-31" in command

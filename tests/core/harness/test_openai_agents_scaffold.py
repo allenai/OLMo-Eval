@@ -216,6 +216,7 @@ def _self_hosted_provider(chat_template_kwargs=None, client=None):
     openai_client = client if client is not None else _stub_openai_client()
     return SimpleNamespace(
         model_name="test-model",
+        openai_client_model_name="test-model",
         chat_template_kwargs=chat_template_kwargs,
         get_openai_client=lambda: openai_client,
     )
@@ -226,6 +227,7 @@ def _managed_api_provider():
     openai_client = SimpleNamespace(base_url="https://api.openai.com/v1")
     return SimpleNamespace(
         model_name="gpt-4o",
+        openai_client_model_name="gpt-4o",
         get_openai_client=lambda: openai_client,
     )
 
@@ -302,6 +304,15 @@ class TestChatTemplateKwargs:
         agent = _build_agent(_managed_api_provider())
 
         assert agent.model_settings.extra_body is None
+
+    def test_agent_sends_the_client_model_name(self):
+        provider = SimpleNamespace(
+            model_name="gpt-4-0613",
+            openai_client_model_name="openai/gpt-4",
+            get_openai_client=lambda: SimpleNamespace(base_url="https://openrouter.ai/api/v1"),
+        )
+
+        assert _build_agent(provider).model.model == "openai/gpt-4"
 
     def test_metrics_wrapped_provider_still_gets_the_default(self):
         from olmo_eval.inference.metrics.core.collector import InstrumentedProvider

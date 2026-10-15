@@ -331,3 +331,17 @@ class TestJudgeClient:
         monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
         with pytest.raises(ValueError, match="OPENROUTER_API_KEY is required for a test"):
             charxiv_judge._get_client("gpt-4o-2024-05-13", "a test")
+
+
+class TestIsAuthError:
+    @pytest.mark.parametrize("status", [401, 402, 403])
+    def test_unusable_key_statuses(self, status: int) -> None:
+        exc = RuntimeError("judge failed")
+        exc.status_code = status  # type: ignore[ty:unresolved-attribute]
+        assert charxiv_judge._is_auth_error(exc)
+
+    @pytest.mark.parametrize("status", [429, 500])
+    def test_transient_statuses(self, status: int) -> None:
+        exc = RuntimeError("judge failed")
+        exc.status_code = status  # type: ignore[ty:unresolved-attribute]
+        assert not charxiv_judge._is_auth_error(exc)

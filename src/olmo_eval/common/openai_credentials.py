@@ -26,8 +26,10 @@ __all__ = [
     "SECRET_ALTERNATIVES",
     "OpenAICredentials",
     "create_async_openai_client",
+    "describe_secret",
     "is_openai_model",
     "litellm_model_name",
+    "openai_endpoint_model_name",
     "openai_sandbox_env",
     "openrouter_model_slug",
     "require_openai_credentials",
@@ -65,6 +67,16 @@ def secret_available(name: str, environ: Mapping[str, str] | None = None) -> boo
     """Whether a required secret, or one that can stand in for it, is set."""
     env = os.environ if environ is None else environ
     return any(env.get(candidate) for candidate in (name, *SECRET_ALTERNATIVES.get(name, ())))
+
+
+def describe_secret(name: str) -> str:
+    """A secret's name plus the secrets that can stand in for it, for messages to users."""
+    alternatives = [
+        alt for alt in SECRET_ALTERNATIVES.get(name, ()) if alt not in OPENROUTER_API_KEY_ALIASES
+    ]
+    if not alternatives:
+        return name
+    return f"{name} (or {' or '.join(alternatives)})"
 
 
 def openrouter_model_slug(model: str) -> str:
@@ -163,6 +175,20 @@ def litellm_model_name(model: str, environ: Mapping[str, str] | None = None) -> 
     if credentials is None or not credentials.via_openrouter or not is_openai_model(model):
         return model
     return f"{_LITELLM_OPENROUTER_PREFIX}{openrouter_model_slug(model)}"
+
+
+def openai_endpoint_model_name(model: str, environ: Mapping[str, str] | None = None) -> str:
+    """Name to send to the OpenAI-compatible endpoint that ``openai_sandbox_env`` sets up.
+
+    With only an OpenRouter key, OpenAI models become OpenRouter slugs such as
+    ``openai/gpt-4o``, which both the OpenAI SDK and LiteLLM's ``openai/`` provider
+    accept. Other models, and all models when an OpenAI key is available, are
+    returned unchanged.
+    """
+    credentials = resolve_openai_credentials(environ)
+    if credentials is None or not credentials.via_openrouter or not is_openai_model(model):
+        return model
+    return openrouter_model_slug(model)
 
 
 def openai_sandbox_env(environ: Mapping[str, str] | None = None) -> dict[str, str]:

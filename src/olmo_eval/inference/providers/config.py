@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from olmo_eval.common.openai_credentials import secret_available
+from olmo_eval.common.openai_credentials import describe_secret, secret_available
 from olmo_eval.common.repr import hide_unset
 from olmo_eval.common.types import ProviderKind
 
@@ -134,7 +134,9 @@ class ProviderConfig:
 
         missing = self.validate_secrets()
         if missing:
-            raise ValueError(f"Missing required secrets: {', '.join(missing)}")
+            raise ValueError(
+                f"Missing required secrets: {', '.join(describe_secret(m) for m in missing)}"
+            )
 
         kind_str = str(self.kind)
         provider_kwargs: dict[str, Any] = dict(self.kwargs)

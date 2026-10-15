@@ -198,6 +198,7 @@ class TestLiteLLMOpenAIClient:
         provider = LiteLLMProvider.__new__(LiteLLMProvider)
         provider.base_url = None
         provider._client = None
+        provider._request_overrides = {}
 
         assert provider.get_openai_client() is None
 
@@ -209,6 +210,7 @@ class TestLiteLLMOpenAIClient:
         provider = LiteLLMProvider.__new__(LiteLLMProvider)
         provider.base_url = "https://api.openai.com/v1"
         provider._client = None
+        provider._request_overrides = {}
 
         client = provider.get_openai_client()
 

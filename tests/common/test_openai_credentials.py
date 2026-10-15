@@ -11,8 +11,10 @@ from olmo_eval.common.openai_credentials import (
     OPENROUTER_BASE_URL,
     OpenAICredentials,
     create_async_openai_client,
+    describe_secret,
     is_openai_model,
     litellm_model_name,
+    openai_endpoint_model_name,
     openai_sandbox_env,
     openrouter_model_slug,
     require_openai_credentials,
@@ -128,6 +130,22 @@ class TestModelNames:
     def test_litellm_model_name_without_openrouter_fallback(self, environ) -> None:
         assert litellm_model_name("gpt-4o", environ) == "gpt-4o"
 
+    @pytest.mark.parametrize(
+        ("model", "expected"),
+        [
+            ("gpt-4o", "openai/gpt-4o"),
+            ("gpt-4-0613", "openai/gpt-4"),
+            ("openai/gpt-5.5-2026-04-23", "openai/gpt-5.5"),
+            ("anthropic/claude-3-opus-20240229", "anthropic/claude-3-opus-20240229"),
+        ],
+    )
+    def test_openai_endpoint_model_name_with_openrouter(self, model: str, expected: str) -> None:
+        assert openai_endpoint_model_name(model, OPENROUTER_ONLY) == expected
+
+    @pytest.mark.parametrize("environ", [OPENAI_ONLY, BOTH, {}])
+    def test_openai_endpoint_model_name_without_openrouter_fallback(self, environ) -> None:
+        assert openai_endpoint_model_name("gpt-4-0613", environ) == "gpt-4-0613"
+
 
 class TestSandboxEnv:
     def test_openai_key(self) -> None:
@@ -177,3 +195,14 @@ def test_create_async_openai_client_passes_base_url(monkeypatch) -> None:
         {"api_key": "sk-openai"},
         {"api_key": "sk-or", "base_url": OPENROUTER_BASE_URL},
     ]
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("OPENAI_API_KEY", "OPENAI_API_KEY (or OPENROUTER_API_KEY)"),
+        ("S2_API_KEY", "S2_API_KEY"),
+    ],
+)
+def test_describe_secret(name: str, expected: str) -> None:
+    assert describe_secret(name) == expected

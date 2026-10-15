@@ -414,9 +414,12 @@ def _charxiv_cache_key(model: str, prompt: str) -> str:
 
 
 def _is_auth_error(exc: Exception) -> bool:
-    """Whether the judge call failed because the credentials are unusable."""
+    """Whether the judge call failed because the credentials are unusable.
+
+    Includes 402, which OpenRouter returns when the key is out of credits.
+    """
     status = getattr(exc, "status_code", None) or getattr(exc, "http_status", None)
-    if status in (401, 403):
+    if status in (401, 402, 403):
         return True
     return type(exc).__name__ in ("AuthenticationError", "PermissionDeniedError")
 

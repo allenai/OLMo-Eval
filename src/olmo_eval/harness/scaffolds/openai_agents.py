@@ -270,12 +270,12 @@ class OpenAIAgentsScaffold(Scaffold):
         logger.debug(
             f"Creating agent with client: {type(client).__name__}, "
             f"base_url={getattr(client, 'base_url', 'unknown')}, "
-            f"model={provider.model_name}"
+            f"model={provider.openai_client_model_name}"
         )
 
         model = OpenAIChatCompletionsModel(
             openai_client=client,
-            model=provider.model_name,
+            model=provider.openai_client_model_name,
         )
 
         agent_tools = self._convert_tools(config.resolved_tools, function_tool, sandbox_manager)

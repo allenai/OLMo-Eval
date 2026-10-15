@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from olmo_eval.common.debug import is_debug_provider
 from olmo_eval.common.logging import get_logger
 from olmo_eval.common.openai_credentials import (
+    OPENROUTER_BASE_URL,
     is_openai_model,
     openrouter_model_slug,
     resolve_openai_credentials,
@@ -161,25 +162,41 @@ class LiteLLMProvider(InferenceProvider):
             if value:
                 setattr(self._litellm, litellm_attr, value)
 
+    @property
+    def request_model_name(self) -> str:
+        """LiteLLM model name sent with requests, which may differ from ``model_name``."""
+        return self._request_overrides.get("model", self.model_name)
+
+    @property
+    def openai_client_model_name(self) -> str:
+        """Model name to send with the client from ``get_openai_client``."""
+        if self._request_overrides:
+            return openrouter_model_slug(self.model_name)
+        return self.model_name
+
     def get_openai_client(self) -> AsyncOpenAI | None:
-        """Get an AsyncOpenAI client if base_url is configured.
+        """Get an AsyncOpenAI client if base_url is configured or requests use OpenRouter.
 
         Returns cached client on subsequent calls to avoid connection pool leaks.
 
         Returns:
-            AsyncOpenAI client if base_url is set, None otherwise.
+            AsyncOpenAI client, or None when neither applies.
         """
-        if self.base_url is None:
+        if self._client is not None:
+            return self._client
+
+        if self._request_overrides:
+            base_url = OPENROUTER_BASE_URL
+            api_key = self._request_overrides["api_key"]
+        elif self.base_url is not None:
+            base_url = self.base_url
+            api_key = os.getenv("OPENAI_API_KEY", "EMPTY")
+        else:
             return None
 
-        if self._client is None:
-            from openai import AsyncOpenAI
+        from openai import AsyncOpenAI
 
-            self._client = AsyncOpenAI(
-                base_url=self.base_url,
-                api_key=os.getenv("OPENAI_API_KEY", "EMPTY"),
-            )
-
+        self._client = AsyncOpenAI(base_url=base_url, api_key=api_key)
         return self._client
 
     async def _generate_single_impl(
@@ -457,6 +474,12 @@ class LiteLLMProvider(InferenceProvider):
         """
         from olmo_eval.common.progress import ProgressLogger
         from olmo_eval.inference.dispatch import dispatch_concurrent
+
+        if self._openai_params is not None and "logprobs" not in self._openai_params:
+            raise ValueError(
+                f"{self.model_name} does not return logprobs, so it cannot score "
+                "loglikelihood requests."
+            )
 
         logger.info(
             f"Sending {len(requests)} logprob requests for {self.model_name}"

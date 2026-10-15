@@ -191,6 +191,43 @@ async def test_logprob_requests_keep_openai_endpoint_with_openai_key(
     assert "api_key" not in fake_litellm[0]
 
 
+@pytest.mark.anyio
+@pytest.mark.usefixtures("openrouter_only")
+async def test_loglikelihood_fails_for_models_without_logprobs(fake_litellm) -> None:
+    provider = LiteLLMProvider("openai/o3-mini-2025-01-31")
+    request = LMRequest(request_type=RequestType.CHAT, prompt="hi", continuations=("a",))
+
+    with pytest.raises(ValueError, match="does not return logprobs"):
+        await provider.alogprobs([request])
+    assert fake_litellm == []
+
+
+@pytest.mark.usefixtures("openrouter_only", "fake_litellm")
+def test_openai_client_targets_openrouter() -> None:
+    pytest.importorskip("openai")
+    provider = LiteLLMProvider("gpt-4-0613", api_base="https://api.openai.com/v1")
+
+    client = provider.get_openai_client()
+
+    assert client is not None
+    assert str(client.base_url).rstrip("/") == "https://openrouter.ai/api/v1"
+    assert client.api_key == "or-key"
+    assert provider.get_openai_client() is client
+    assert provider.openai_client_model_name == "openai/gpt-4"
+    assert provider.request_model_name == "openrouter/openai/gpt-4"
+    assert provider.model_name == "gpt-4-0613"
+
+
+@pytest.mark.usefixtures("fake_litellm")
+def test_model_names_are_unchanged_with_openai_key(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
+    provider = LiteLLMProvider("gpt-4-0613", api_base="https://api.openai.com/v1")
+
+    assert provider.get_openai_client() is None
+    assert provider.openai_client_model_name == "gpt-4-0613"
+    assert provider.request_model_name == "gpt-4-0613"
+
+
 class TestProviderConfigSecrets:
     def _config(self) -> ProviderConfig:
         return ProviderConfig(model="gpt-4o", required_secrets=("OPENAI_API_KEY",))
@@ -203,3 +240,9 @@ class TestProviderConfigSecrets:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
         assert self._config().validate_secrets() == ["OPENAI_API_KEY"]
+
+    def test_missing_key_error_names_both_options(self, monkeypatch) -> None:
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        with pytest.raises(ValueError, match=r"OPENAI_API_KEY \(or OPENROUTER_API_KEY\)"):
+            self._config().create_provider()

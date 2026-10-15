@@ -4,7 +4,7 @@ HLE has 2,500 expert-written, closed-ended questions across eight categories; ab
 42% are mathematics. Each has a short reference answer, either an exact-match string
 or a multiple-choice letter. 342 questions include an image; these tasks drop them,
 so they run on any model. A model judge grades the responses, so both tasks need
-``OPENAI_API_KEY``.
+``OPENAI_API_KEY`` or ``OPENROUTER_API_KEY``.
 
 Variants
 --------

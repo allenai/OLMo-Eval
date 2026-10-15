@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from olmo_eval.common.openai_credentials import (
     OPENAI_API_KEY_ENV,
-    OPENROUTER_API_KEY_ENV,
+    describe_secret,
     openai_sandbox_env,
 )
 from olmo_eval.evals.external.result import ExternalEvalResult
@@ -138,7 +138,7 @@ class ExternalEval(ABC):
                 if openai_env:
                     env_vars.update(openai_env)
                 else:
-                    missing.append(f"{OPENAI_API_KEY_ENV} (or {OPENROUTER_API_KEY_ENV})")
+                    missing.append(describe_secret(OPENAI_API_KEY_ENV))
                 continue
             value = os.environ.get(secret)
             if value:
