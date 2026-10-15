@@ -15,7 +15,7 @@ import os
 import re
 import string
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, cast
 
 from olmo_eval.common.formatters import ChatFormatter, PPLFormatter
@@ -196,7 +196,7 @@ class RulerTask(Task):
     @property
     def request_type(self) -> RequestType:
         """Return the request type for this task."""
-        return RequestType.COMPLETION
+        return super().request_type
 
     def format_request(self, instance: Instance) -> LMRequest:
         """Format an instance as an LMRequest.
@@ -209,6 +209,10 @@ class RulerTask(Task):
         """
         # Use config formatter if provided
         if self.config.formatter is not None:
+            if isinstance(self.config.formatter, ChatFormatter):
+                prefix = (instance.metadata or {}).get("prepend_text", "")
+                if prefix:
+                    instance = replace(instance, question=instance.question + "\n" + prefix)
             # For PPL formatters (BPB variant), convert list answers to strings
             if isinstance(self.config.formatter, PPLFormatter) and isinstance(
                 instance.gold_answer, list

@@ -1,3 +1,5 @@
+import pytest
+
 from olmo_eval.common.types import Instance, RequestType
 from olmo_eval.evals import suites, tasks  # noqa: F401  (registers tasks and suites)
 from olmo_eval.evals.suites.registry import get_suite
@@ -28,3 +30,26 @@ def test_chat_suite_mirrors_the_completion_suite():
     plain, chat = get_suite("ruler_all__65536"), get_suite("ruler_all_chat__65536")
     assert chat.tasks == tuple(f"{t}:chat" for t in plain.tasks)
     assert len(chat.tasks) == 13
+
+
+@pytest.mark.parametrize("name", ["ruler_qa_1__65536", "ruler_niah_s_1__65536"])
+@pytest.mark.parametrize("input_text", [None, ""])
+def test_chat_preserves_the_fallback_answer_prefix(name, input_text):
+    from olmo_eval.data.ruler_loader import get_ruler_templates
+
+    completion, chat = get_task(name), get_task(f"{name}:chat")
+    user, system, prompt = get_ruler_templates(completion.task_type)
+    doc = {
+        "input": input_text,
+        "context": "The value is 42.",
+        "question": "Value?",
+        "query": "key",
+        "type_needle_v": "number",
+        "outputs": ["42"],
+    }
+    for task in (completion, chat):
+        task._templates = {"user": user, "system": system, "prompt": prompt}
+    plain = completion.format_request(completion.process_doc(doc))
+    req = chat.format_request(chat.process_doc(doc))
+    assert req.messages == ({"role": "user", "content": plain.prompt},)
+    assert chat.request_type == RequestType.CHAT
