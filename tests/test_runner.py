@@ -1349,6 +1349,17 @@ class TestGapSuiteAggregation:
         assert payload["score"] is None and payload["primary_metric"] is None
         assert payload["aggregation"] == "gap" and len(payload["children"]) == 2
 
+    def test_incomplete_gap_summary_is_not_success(self, capsys):
+        from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
+        from olmo_eval.runners.processing.metrics import log_summary
+
+        tasks = {"task_in": self._task(0.6)}
+        suites = compute_suite_aggregations([self.SUITE], tasks)
+        log_summary({"tasks": {}, "suites": suites})
+        printed = capsys.readouterr().out
+        assert "Incomplete" in printed
+        assert "Success" not in printed
+
     def test_log_summary_shows_the_gap_row(self, capsys):
         from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
         from olmo_eval.runners.processing.metrics import log_summary

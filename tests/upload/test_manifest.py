@@ -461,6 +461,8 @@ def test_inference_truncation_is_reported(tmp_path: Path, monkeypatch: pytest.Mo
 def test_name_based_display_format_matches_metric_objects() -> None:
     from olmo_eval.common.metrics.base import display_format_for_name
 
+    assert display_format_for_name("exact_match") == "percentage"
+    assert display_format_for_name("exact_match_flex") == "percentage"
     assert display_format_for_name("accuracy") == "percentage"
     assert display_format_for_name("tool_accuracy") == "percentage"
     assert display_format_for_name("pass_at_1") == "percentage"

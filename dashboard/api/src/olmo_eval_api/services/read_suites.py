@@ -66,6 +66,7 @@ def primary_gap_metric_keys(
     if node.aggregation != "gap":
         return None
     names = leaves(node)
+    # Population order fixes one identity; metrics from other identities remain unscored.
     for tasks in subjects:
         if all(name in tasks and tasks[name].get("score") is not None for name in names):
             keys = {tasks[name].get("primary_metric") for name in names}

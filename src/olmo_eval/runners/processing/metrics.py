@@ -346,6 +346,8 @@ def log_summary(results: dict[str, Any], multi_model: bool = False) -> None:
                     else:
                         result += f" (gap {gap:+.4f})"
             table.add_row(name, "[green]Success[/green]", instances, metric_name, result)
+        elif task_data.get("aggregation") == "gap":
+            table.add_row(name, "[yellow]Incomplete[/yellow]", instances, metric_name, "-")
         else:
             table.add_row(name, "[green]Success[/green]", instances, metric_name, "-")
 
