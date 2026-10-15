@@ -170,6 +170,7 @@ class LiteLLMProvider(InferenceProvider):
                     "num_tokens_all": num_tokens,
                 }
 
+            metadata["finish_reason"] = getattr(choice, "finish_reason", None)
             outputs.append(LMOutput(text=text, logprobs=logprob_entries, metadata=metadata))
 
         return outputs
