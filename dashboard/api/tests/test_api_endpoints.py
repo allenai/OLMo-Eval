@@ -1226,3 +1226,24 @@ async def test_gap_progression_keeps_checkpoint_and_reference_metrics_consistent
         assert (
             next(r for r in child["references"] if r["subject"] == "r:progflex01")["score"] is None
         )
+
+
+async def test_generated_gap_task_panel_survives_a_missing_companion(client):
+    await seed_run(
+        client,
+        run_id="noanchor001",
+        model_name="test-org/noanchor-step1000",
+        step=1000,
+        tasks={"in": [0.4]},
+        suites=[suite("unanchored", ["in", "out"], score=None, aggregation="gap")],
+    )
+    body = await get(
+        client,
+        "/api/models/progression",
+        "ProgressionResponse",
+        series="test-org/noanchor",
+        scope="suite:unanchored",
+    )
+    panels = {panel["key"]: panel for panel in body["panels"]}
+    assert panels["suite:unanchored"]["points"] == []
+    assert [point["score"] for point in panels["task:in"]["points"]] == [0.4]

@@ -416,6 +416,8 @@ async def model_progression(
     population = list(merged.values()) if merge == "latest" else list(run_population)
     population.extend(subject.trs for subject in ref_subjects)
     inherited_keys = primary_gap_metric_keys(scope_node, population) if scope_node else None
+    if inherited_keys is not None and not any(inherited_keys.values()):
+        inherited_keys = None
     panels = []
     for kind, name, node in panels_spec:
         metric_keys = (

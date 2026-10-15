@@ -753,7 +753,7 @@ def test_matrix_parent_keeps_leaves_from_unanchored_gap_child(missing_companion)
             "pair": ("gap", [{"type": "task", "name": "in"}, {"type": "task", "name": "out"}]),
         },
     )
-    trs = {
+    trs: dict[str, Mapping[Any, Any]] = {
         name: {
             "score": score,
             "stderr": 0.02,
@@ -786,6 +786,7 @@ def test_matrix_parent_keeps_leaves_from_unanchored_gap_child(missing_companion)
         metric_keys=checks,
     )
     assert row.cells[0].score == pytest.approx(sum(tr["score"] for tr in trs.values()) / len(trs))
+    assert row.meta is not None
     assert row.meta.display_format == "percent"
     assert row.meta.higher_is_better is True
 
