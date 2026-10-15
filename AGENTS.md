@@ -19,9 +19,9 @@ and the configuration, code, data, and environment behind a result must be recov
 5. Report what changed, which checks actually ran, and remaining gaps. A submitted Beaker
    job is not a verified result.
 
-Don't commit or push unless the human asks. Beaker runs use a pushed commit, so when a
-requested remote trial needs one, finish the local code, tests, and launch command first,
-then explain the dependency.
+Committing and pushing to a feature branch is fine. Never push to `main`, force-push, or
+rewrite history on a branch someone else is using. Beaker runs use a pushed commit, so
+finish the local code, tests, and launch command before pushing for a remote trial.
 
 ## Commands
 

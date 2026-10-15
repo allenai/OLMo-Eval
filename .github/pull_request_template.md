@@ -26,7 +26,7 @@ if any. Changes to existing results need an entry in docs/result-compatibility.m
 List checks that were not run under remaining work rather than here. -->
 
 - [ ] `uv run ruff check src/ tests/` and `uv run ruff format --check src/ tests/`
-- [ ] `uv run ty check src/ alembic/`
+- [ ] `uv run ty check src/`
 - [ ] `uv run pytest tests/ --ignore=tests/integration -v`
 - [ ] Integration tests, if storage, providers, or sandboxes changed
 - [ ] New tests added for new behavior
