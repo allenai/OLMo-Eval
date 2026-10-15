@@ -1220,3 +1220,9 @@ async def test_gap_progression_keeps_checkpoint_and_reference_metrics_consistent
     assert reference_scores["r:progflex01"] is None
     assert reference_scores["r:progref01"] == 0.8
     assert panel["meta"]["display_format"] == "percent"
+    for task_name in ("in", "out"):
+        child = next(p for p in result["panels"] if p["key"] == f"task:{task_name}")
+        assert [(point["step"], point["score"]) for point in child["points"]] == [(1000, 0.4)]
+        assert (
+            next(r for r in child["references"] if r["subject"] == "r:progflex01")["score"] is None
+        )

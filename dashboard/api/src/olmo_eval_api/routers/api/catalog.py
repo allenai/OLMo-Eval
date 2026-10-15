@@ -254,6 +254,11 @@ def _panel_score(
     tr = trs.get(task or "")
     if tr is None:
         return None, None, None, None
+    if metric == "primary" and metric_keys is not None:
+        selected = metric_keys.get(task or "")
+        if selected is None:
+            return None, None, tr["num_instances"], tr
+        metric = selected
     if metric == "primary" or metric == tr["primary_metric"]:
         return tr["score"], tr["stderr"], tr["num_instances"], tr
     return (tr["metrics"] or {}).get(metric), None, tr["num_instances"], tr
@@ -325,6 +330,7 @@ async def model_progression(
     if not models:
         raise not_found(f"Model series {series!r} not found")
     defs = await load_defs(session)
+    scope_node: SuiteNode | None = None
     panels_spec: list[tuple[str, str, SuiteNode | None]] = []  # (kind, name, node)
     if scope:
         kind, _, name = scope.partition(":")
@@ -332,6 +338,7 @@ async def model_progression(
             if name not in defs:
                 raise bad_request(f"unknown suite {name!r}")
             node = tree(name, defs)
+            scope_node = node
             panels_spec.append(("suite", name, node))
             panels_spec.extend(("task", t, None) for t in leaves(node)[:24])
         elif kind == "task" and name:
@@ -408,9 +415,16 @@ async def model_progression(
     # Anchor on the first complete subject in stable step/model or creation/run order.
     population = list(merged.values()) if merge == "latest" else list(run_population)
     population.extend(subject.trs for subject in ref_subjects)
+    inherited_keys = primary_gap_metric_keys(scope_node, population) if scope_node else None
     panels = []
     for kind, name, node in panels_spec:
-        metric_keys = primary_gap_metric_keys(node, population) if node is not None else None
+        metric_keys = (
+            primary_gap_metric_keys(node, population)
+            if node is not None
+            else inherited_keys
+            if inherited_keys is not None and name in inherited_keys
+            else None
+        )
         points: list[a.ProgressionPoint] = []
         meta = None
         if merge == "latest":
@@ -421,7 +435,16 @@ async def model_progression(
                     continue
                 if tr is not None and meta is None:
                     meta = metric_meta_or_none(
-                        meta_for(tr, tr["primary_metric"] if metric == "primary" else metric)
+                        meta_for(
+                            tr,
+                            (
+                                metric_keys.get(name)
+                                if metric_keys is not None
+                                else tr["primary_metric"]
+                            )
+                            if metric == "primary"
+                            else metric,
+                        )
                     )
                 contributing = [trs[t] for t in (leaves(node) if node else [name]) if t in trs]
                 newest = max(contributing, key=lambda x: x["run_created_at"])
@@ -446,7 +469,16 @@ async def model_progression(
                     continue
                 if tr is not None and meta is None:
                     meta = metric_meta_or_none(
-                        meta_for(tr, tr["primary_metric"] if metric == "primary" else metric)
+                        meta_for(
+                            tr,
+                            (
+                                metric_keys.get(name)
+                                if metric_keys is not None
+                                else tr["primary_metric"]
+                            )
+                            if metric == "primary"
+                            else metric,
+                        )
                     )
                 any_tr = next(iter(trs.values()))
                 m = model_by_id[any_tr["model_id"]]

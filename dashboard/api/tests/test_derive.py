@@ -824,3 +824,18 @@ def test_gap_progression_meta_prefers_the_primary_anchor_subject():
     meta = _suite_panel_meta(node, [early, anchor], keys)
     assert meta.display_format == "percent"
     assert meta.higher_is_better is True
+
+
+@pytest.mark.parametrize("secondary", [False, True])
+def test_generated_gap_task_panel_uses_its_parent_anchor(secondary):
+    from olmo_eval_api.routers.api.catalog import _panel_score
+
+    tr = {
+        "score": 0.9,
+        "stderr": 0.01,
+        "num_instances": 10,
+        "primary_metric": "flex",
+        "metrics": {"flex": 0.9, **({"strict": 0.4} if secondary else {})},
+    }
+    result = _panel_score(None, "in", {"in": tr}, "primary", {"in": "strict"})
+    assert result[0] == (0.4 if secondary else None)
