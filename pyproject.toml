@@ -295,7 +295,6 @@ allowed-unresolved-imports = [
     "vllm.**",
     "torch.**",
     "math_verify.**",
-    "openai.**",
     "smart_open.**",
     "google.cloud.**",
     "scipy.**",
@@ -305,7 +304,6 @@ allowed-unresolved-imports = [
     "instructions.**",
     "crawl4ai.**",
     "modal.**",
-    "swerex.**",
     "olmocr.**",
     "pymupdf.**",
 ]

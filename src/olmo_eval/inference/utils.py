@@ -31,6 +31,9 @@ def run_async[T](coro: Coroutine[Any, Any, T]) -> T:
         return asyncio.run(coro)
 
 
+_agents_patched_for_vllm = False
+
+
 def patch_openai_agents_for_vllm() -> None:
     """Patch openai-agents SDK to omit 'strict' field for vLLM compatibility.
 
@@ -43,22 +46,26 @@ def patch_openai_agents_for_vllm() -> None:
     Call this once before creating any agents that will talk to vLLM.
     Safe to call multiple times (idempotent).
     """
-    from agents import FunctionTool  # type: ignore[ty:unresolved-import]
-    from agents.models.chatcmpl_converter import Converter  # type: ignore[ty:unresolved-import]
-
-    # Check if already patched
-    if getattr(Converter, "_vllm_patched", False):
+    global _agents_patched_for_vllm
+    if _agents_patched_for_vllm:
         return
+
+    from agents import FunctionTool, Tool
+    from agents.models.chatcmpl_converter import Converter
+    from openai.types.chat import ChatCompletionToolParam
 
     _original_tool_to_openai = Converter.tool_to_openai
 
     @classmethod
-    def _patched_tool_to_openai(cls, tool):
+    def _patched_tool_to_openai(cls, tool: Tool) -> ChatCompletionToolParam:
         result = _original_tool_to_openai(tool)
         # Remove 'strict' field if False (vLLM doesn't support it)
         if isinstance(tool, FunctionTool) and not tool.strict_json_schema:
             result.get("function", {}).pop("strict", None)
         return result
 
-    Converter.tool_to_openai = _patched_tool_to_openai
-    Converter._vllm_patched = True
+    # ty rejects replacing a method on a third-party class; the replacement keeps
+    # the original signature, so assign through an untyped view of the class.
+    patchable_converter: Any = Converter
+    patchable_converter.tool_to_openai = _patched_tool_to_openai
+    _agents_patched_for_vllm = True

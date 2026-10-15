@@ -72,7 +72,7 @@ jobs:
             uv-${{ runner.os }}-
 
       - name: Run type checker
-        run: uv run --frozen --no-group vllm ty check src/
+        run: scripts/type_check.sh
 
   # ============================================================================
   # File Sizes: block tracked files larger than 1 MB

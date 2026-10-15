@@ -250,7 +250,7 @@ class OpenAIAgentsScaffold(Scaffold):
         Returns:
             An Agent instance from the agents SDK.
         """
-        from agents import (  # type: ignore[ty:unresolved-import]
+        from agents import (
             Agent,
             ModelSettings,
             OpenAIChatCompletionsModel,
@@ -354,8 +354,8 @@ class OpenAIAgentsScaffold(Scaffold):
         """
         enable_compaction = kwargs.get("enable_compaction", True)
         try:
-            from agents import RunConfig, Runner, trace  # type: ignore[ty:unresolved-import]
-            from agents.exceptions import (  # type: ignore[ty:unresolved-import]
+            from agents import RunConfig, Runner, trace
+            from agents.exceptions import (
                 MaxTurnsExceeded,
                 ModelBehaviorError,
                 ModelRefusalError,
@@ -369,8 +369,8 @@ class OpenAIAgentsScaffold(Scaffold):
         session = None
         if enable_compaction:
             try:
-                from agents import SQLiteSession  # type: ignore[ty:unresolved-import]
-                from agents.memory import (  # type: ignore[ty:unresolved-import]
+                from agents import SQLiteSession
+                from agents.memory import (
                     OpenAIResponsesCompactionSession,
                 )
 

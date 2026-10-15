@@ -22,7 +22,7 @@ lint:
 
 # Run type checker
 type-check:
-	uv run ty check src/
+	./scripts/type_check.sh
 
 # Check that no tracked file exceeds the size limit
 file-sizes:

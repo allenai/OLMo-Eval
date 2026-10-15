@@ -58,7 +58,7 @@ class LiteLLMProvider(InferenceProvider):
             **api_kwargs: Additional arguments passed to litellm.completion.
         """
         try:
-            import litellm  # type: ignore[ty:unresolved-import]
+            import litellm
         except ImportError as e:
             raise ImportError(
                 "litellm is required for LiteLLMProvider. Install with: uv pip install litellm"
@@ -77,7 +77,10 @@ class LiteLLMProvider(InferenceProvider):
         if is_debug_provider():
             litellm._turn_on_debug()
         else:
-            litellm.suppress_debug_info = True
+            # litellm leaves this flag unannotated, so ty pins it to Literal[False];
+            # it is a documented runtime setting, so assign through an untyped view.
+            litellm_settings: Any = litellm
+            litellm_settings.suppress_debug_info = True
 
         self._setup_api_keys()
 
@@ -88,16 +91,22 @@ class LiteLLMProvider(InferenceProvider):
             if value:
                 setattr(self._litellm, litellm_attr, value)
 
-    def get_openai_client(self) -> AsyncOpenAI | None:
-        """Get an AsyncOpenAI client if base_url is configured.
+    def get_openai_client(self) -> AsyncOpenAI:
+        """Get an AsyncOpenAI client for the configured base_url.
 
         Returns cached client on subsequent calls to avoid connection pool leaks.
 
         Returns:
-            AsyncOpenAI client if base_url is set, None otherwise.
+            AsyncOpenAI client pointed at base_url.
+
+        Raises:
+            NotImplementedError: If base_url is not set, since LiteLLM's own routing
+                has no single OpenAI-compatible endpoint to hand out.
         """
         if self.base_url is None:
-            return None
+            raise NotImplementedError(
+                f"{type(self).__name__} provides an OpenAI client only when base_url is set."
+            )
 
         if self._client is None:
             from openai import AsyncOpenAI
