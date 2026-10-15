@@ -259,6 +259,39 @@ def _panel_score(
     return (tr["metrics"] or {}).get(metric), None, tr["num_instances"], tr
 
 
+def _suite_panel_meta(
+    node: SuiteNode,
+    population: Sequence[Mapping[str, Mapping[Any, Any]]],
+    metric_keys: Mapping[str, str | None] | None,
+) -> a.MetricMeta:
+    """Prefer metadata from subjects whose primary metrics establish the GAP anchor."""
+    ordered = population
+    if node.aggregation == "gap" and metric_keys:
+        ordered = sorted(
+            population,
+            key=lambda trs: (
+                not all(
+                    trs.get(name, {}).get("primary_metric") == key
+                    for name, key in metric_keys.items()
+                )
+            ),
+        )
+    result = next(
+        (
+            score
+            for trs in ordered
+            if (score := score_suite(node, trs, metric_keys=metric_keys)).score is not None
+        ),
+        None,
+    )
+    return a.MetricMeta(
+        higher_is_better=result.higher_is_better if result else None,
+        display_format=result.display_format if result else "raw",
+        unit=None,
+        kind="bounded" if result and result.display_format == "percent" else "unbounded",
+    )
+
+
 @router.get("/models/progression", response_model=a.ProgressionResponse)
 async def model_progression(
     session: SessionDep,
@@ -280,7 +313,8 @@ async def model_progression(
         (
             await session.execute(
                 text(
-                    f"SELECT {MODEL_COLUMNS} FROM models m WHERE {where} ORDER BY m.step NULLS LAST"
+                    f"SELECT {MODEL_COLUMNS} FROM models m WHERE {where} "
+                    "ORDER BY m.step NULLS LAST, m.model_id"
                 ),
                 params,
             )
@@ -356,7 +390,8 @@ async def model_progression(
                 await session.execute(
                     text(
                         f"SELECT {TR_COLUMNS} FROM task_results tr WHERE tr.model_id = ANY(:ids) "
-                        "AND tr.finalized_at IS NOT NULL ORDER BY tr.run_created_at"
+                        "AND tr.finalized_at IS NOT NULL "
+                        "ORDER BY tr.run_created_at, tr.run_id, tr.id"
                     ),
                     {"ids": model_ids},
                 )
@@ -370,7 +405,7 @@ async def model_progression(
     for tr in all_trs:
         by_run.setdefault(tr["run_id"], []).append(tr)
     run_population = [latest_by_task(run_trs) for run_trs in by_run.values()]
-    # Keep the earliest complete metric fixed so adding checkpoints cannot rewrite history.
+    # Anchor on the first complete subject in stable step/model or creation/run order.
     population = list(merged.values()) if merge == "latest" else list(run_population)
     population.extend(subject.trs for subject in ref_subjects)
     panels = []
@@ -430,20 +465,7 @@ async def model_progression(
                 )
             points.sort(key=lambda p: (p.step is None, p.step or 0, p.date))
         if node is not None and meta is None:
-            result = next(
-                (
-                    score
-                    for trs in population
-                    if (score := score_suite(node, trs, metric_keys=metric_keys)).score is not None
-                ),
-                None,
-            )
-            meta = a.MetricMeta(
-                higher_is_better=result.higher_is_better if result else None,
-                display_format=result.display_format if result else "raw",
-                unit=None,
-                kind="bounded" if result and result.display_format == "percent" else "unbounded",
-            )
+            meta = _suite_panel_meta(node, population, metric_keys)
         refs = []
         for s in ref_subjects:
             score, stderr, _, _ = _panel_score(node, name, s.trs, metric, metric_keys)

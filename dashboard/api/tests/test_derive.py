@@ -770,7 +770,7 @@ def test_matrix_parent_keeps_leaves_from_unanchored_gap_child(missing_companion)
     spec = RowSpec("suite:root", "suite", "root", 0, None, "average", node)
     checks = matrix_metric_keys([spec], "primary", [subject], None)[0]
     sides_keys = matrix_metric_keys([spec], "primary", [subject], None, require_gap_anchor=False)[0]
-    assert checks["in"] is None
+    assert checks["in"] == "acc"
     sides = {
         name: {subject.key: Side(name, "hash", trs[name]["score"], 0.02, False)}
         for name, key in sides_keys.items()
@@ -786,3 +786,41 @@ def test_matrix_parent_keeps_leaves_from_unanchored_gap_child(missing_companion)
         metric_keys=checks,
     )
     assert row.cells[0].score == pytest.approx(sum(tr["score"] for tr in trs.values()) / len(trs))
+    assert row.meta.display_format == "percent"
+    assert row.meta.higher_is_better is True
+
+
+def test_gap_progression_meta_prefers_the_primary_anchor_subject():
+    from olmo_eval_api.routers.api.catalog import _suite_panel_meta
+    from olmo_eval_api.services.read_suites import primary_gap_metric_keys
+
+    node = build_tree(
+        "pair", {"pair": ("gap", [{"type": "task", "name": "in"}, {"type": "task", "name": "out"}])}
+    )
+    early = {
+        name: {
+            "score": 0.3,
+            "num_instances": 10,
+            "primary_metric": metric,
+            "metrics": {"strict": 0.3},
+            "display_format": "percent",
+            "higher_is_better": True,
+        }
+        for name, metric in [("in", "flex"), ("out", "strict")]
+    }
+    anchor = {
+        name: {
+            "score": 0.5,
+            "num_instances": 10,
+            "primary_metric": "strict",
+            "metrics": {"strict": 0.5},
+            "display_format": "percent",
+            "higher_is_better": True,
+        }
+        for name in ["in", "out"]
+    }
+    keys = primary_gap_metric_keys(node, [early, anchor])
+    assert keys == {"in": "strict", "out": "strict"}
+    meta = _suite_panel_meta(node, [early, anchor], keys)
+    assert meta.display_format == "percent"
+    assert meta.higher_is_better is True

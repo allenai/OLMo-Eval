@@ -192,7 +192,12 @@ def matrix_metric_keys(
                 subjects,
                 baseline,
                 node_for_metrics,
-                require_gap_anchor=require_gap_anchor and spec.kind == "suite",
+                require_gap_anchor=(
+                    require_gap_anchor
+                    and spec.kind == "suite"
+                    and spec.node is not None
+                    and spec.node.aggregation == "gap"
+                ),
             )
         )
     return row_metrics
