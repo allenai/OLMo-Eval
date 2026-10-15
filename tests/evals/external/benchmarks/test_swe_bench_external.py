@@ -189,6 +189,22 @@ class TestArgsAndPrompt(unittest.TestCase):
         args = swe_eval.SWEBenchArgs.from_dict({"max_tool_output_chars": "none"})
         self.assertIsNone(args.max_tool_output_chars)
 
+    @parameterized.expand([("vanillux", 64), ("openai_agents", 100)])
+    def test_max_turns_default_depends_on_scaffold(self, scaffold: str, expected: int) -> None:
+        args = swe_eval.SWEBenchArgs.from_dict({"scaffold": scaffold})
+        self.assertEqual(args.max_turns, expected)
+        args = swe_eval.SWEBenchArgs.from_dict({"scaffold": scaffold, "max_turns": "7"})
+        self.assertEqual(args.max_turns, 7)
+
+    def test_default_scaffold_and_sampling(self) -> None:
+        args = swe_eval.SWEBenchArgs.from_dict({})
+        self.assertEqual(args.scaffold, "vanillux")
+        params = args.sampling_params
+        self.assertEqual((params.temperature, params.top_p, params.max_tokens), (0.7, 0.95, 16384))
+        args = swe_eval.SWEBenchArgs.from_dict({"temperature": "0", "max_tokens": "512"})
+        self.assertEqual(args.sampling_params.temperature, 0.0)
+        self.assertEqual(args.sampling_params.max_tokens, 512)
+
     @parameterized.expand(
         [
             ("vllm", "This model's maximum context length is 40960 tokens.", True),
@@ -205,6 +221,13 @@ class TestArgsAndPrompt(unittest.TestCase):
         self.assertIn("Fix the bug in mod.", prompt)
         self.assertIn("/testbed", prompt)
         self.assertEqual("Look at mod.py." in prompt, include_hints)
+
+    @parameterized.expand([(True,), (False,)])
+    def test_build_task_text_is_the_bare_issue(self, include_hints: bool) -> None:
+        text = swe_eval.build_task_text(_instance(), include_hints=include_hints)
+        self.assertTrue(text.startswith("Fix the bug in mod."))
+        self.assertNotIn("submit()", text)
+        self.assertEqual("Look at mod.py." in text, include_hints)
 
 
 class TestMetrics(unittest.TestCase):
@@ -706,12 +729,124 @@ class TestSubmit(unittest.TestCase):
                     manager,
                     _instance(),
                     mock.MagicMock(),
-                    swe_eval.SWEBenchArgs(stop_on_submit=stop),
+                    swe_eval.SWEBenchArgs(scaffold="openai_agents", stop_on_submit=stop),
                     result,
                 )
             )
         self.assertEqual(scaffold.run.call_args.kwargs["stop_at_tools"], expected)
         self.assertEqual(result.completion_reason, "submitted")
+
+
+class TestVanilluxAgent(unittest.TestCase):
+    def _run_agent(
+        self, metadata: dict[str, Any], error: str | None = None, **args: Any
+    ) -> tuple[mock.MagicMock, swe_eval.InstanceResult]:
+        from olmo_eval.common.types import LMOutput
+        from olmo_eval.harness.result import HarnessResult
+
+        scaffold = mock.MagicMock()
+        scaffold.run = mock.AsyncMock(
+            return_value=HarnessResult(
+                final_output=LMOutput(text=""),
+                max_turns_reached=metadata.get("completion_reason") == "max_steps",
+                error=error,
+                metadata=metadata,
+            )
+        )
+        executor = mock.MagicMock()
+        executor.execute_in_session = mock.AsyncMock(return_value=ExecutionResult(success=True))
+        manager = mock.MagicMock()
+        manager.get_executor.return_value = executor
+        result = swe_eval.InstanceResult(instance_id="a", repo="a/a", difficulty="x")
+        with mock.patch("olmo_eval.harness.scaffolds.get_scaffold", return_value=scaffold):
+            asyncio.run(
+                swe_eval.SWEBenchVerifiedExternalEval()._run_agent(
+                    manager, _instance(), mock.MagicMock(), swe_eval.SWEBenchArgs(**args), result
+                )
+            )
+        return scaffold, result
+
+    def test_passes_bash_tool_task_text_and_sampling(self) -> None:
+        scaffold, _ = self._run_agent(
+            {"completion_reason": "submitted"}, agent_timeout=900.0, temperature=0.5
+        )
+        provider, config, request = scaffold.run.call_args.args
+        kwargs = scaffold.run.call_args.kwargs
+        self.assertEqual([t.name for t in config.tools], ["bash"])
+        self.assertIsNone(config.system_prompt)
+        self.assertEqual(config.max_turns, 64)
+        self.assertEqual(config.scaffold_kwargs["agent_timeout"], 900.0)
+        self.assertEqual(config.scaffold_kwargs["max_format_errors"], 64)
+        self.assertEqual(request.messages[0]["content"], "Fix the bug in mod.")
+        self.assertEqual(kwargs["sampling_params"].temperature, 0.5)
+        self.assertNotIn("stop_at_tools", kwargs)
+        self.assertNotIn("enable_compaction", kwargs)
+
+    def test_openai_agents_keeps_its_prompt_and_server_sampling(self) -> None:
+        scaffold, _ = self._run_agent({}, scaffold="openai_agents")
+        _, config, request = scaffold.run.call_args.args
+        self.assertEqual([t.name for t in config.tools], ["execute_bash_session", "submit"])
+        self.assertEqual(config.system_prompt, swe_eval.SYSTEM_PROMPT)
+        self.assertIn("<issue_description>", request.messages[0]["content"])
+        self.assertIsNone(scaffold.run.call_args.kwargs["sampling_params"])
+
+    @parameterized.expand(
+        [
+            ("submitted", "submitted"),
+            ("max_steps", "max_turns"),
+            ("timeout", "agent_timeout"),
+            ("context_overflow", "context_exceeded"),
+            ("format_errors", "format_errors"),
+        ]
+    )
+    def test_completion_reason(self, reported: str, expected: str) -> None:
+        _, result = self._run_agent({"completion_reason": reported})
+        self.assertEqual(result.completion_reason, expected)
+        self.assertIsNone(result.error)
+
+    def test_provider_failure_is_an_error(self) -> None:
+        _, result = self._run_agent({"completion_reason": "error"}, error="server down")
+        self.assertEqual(result.error, "agent_error: server down")
+
+    def test_unsupported_scaffold_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Unsupported scaffold"):
+            asyncio.run(
+                swe_eval.SWEBenchVerifiedExternalEval().execute(
+                    mock.MagicMock(), {"scaffold": "react"}
+                )
+            )
+
+    @parameterized.expand([("vanillux", "submitted"), ("openai_agents", "agent_timeout")])
+    def test_vanillux_gets_a_grace_period_past_the_agent_timeout(
+        self, scaffold: str, expected: str
+    ) -> None:
+        async def slow_agent(*_args: Any) -> None:
+            await asyncio.sleep(0.3)
+            _args[-1].completion_reason = "submitted"
+
+        manager = mock.MagicMock()
+        manager.start = mock.AsyncMock()
+        manager.stop = mock.AsyncMock()
+        with (
+            mock.patch.object(swe_eval, "AGENT_TIMEOUT_GRACE", 5.0),
+            mock.patch("olmo_eval.harness.sandbox.image.remove_swerex_image"),
+            mock.patch(
+                "olmo_eval.harness.sandbox.image.get_swerex_image", return_value="derived:latest"
+            ),
+            mock.patch("olmo_eval.harness.sandbox.SandboxManager", return_value=manager),
+            mock.patch.object(swe_eval.SWEBenchVerifiedExternalEval, "_run_agent", slow_agent),
+            mock.patch.object(swe_eval, "snapshot_worktree", mock.AsyncMock(return_value="tree")),
+            mock.patch.object(swe_eval, "extract_patch", mock.AsyncMock(return_value="")),
+        ):
+            result = asyncio.run(
+                swe_eval.SWEBenchVerifiedExternalEval()._run_instance(
+                    _instance(),
+                    mock.MagicMock(),
+                    swe_eval.SWEBenchArgs(scaffold=scaffold, agent_timeout=0.05),
+                    "docker",
+                )
+            )
+        self.assertEqual(result.completion_reason, expected)
 
 
 class TestRegistration(unittest.TestCase):
@@ -720,7 +855,7 @@ class TestRegistration(unittest.TestCase):
 
         ev = get_external_eval("swe_bench_verified")
         self.assertEqual(ev.extras, ("swebench",))
-        self.assertEqual(ev.scaffold, "openai_agents")
+        self.assertEqual(ev.scaffold, "vanillux")
         self.assertIn("instance_ids", ev.arguments)
 
 

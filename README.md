@@ -1245,8 +1245,14 @@ uv run olmo-eval beaker launch -E swe_bench_verified -m qwen3-coder-30b -c ai2/j
     -A max_concurrency=8
 ```
 
-The agent's run ends when it calls `submit()`; set `stop_on_submit=false` to
-let it keep going until `max_turns`.
+The default scaffold is `vanillux`, the agent used for Terminal-Bench and for
+tmax's SWE-bench Verified numbers. It gets the issue text as is, one `bash` tool,
+64 steps, and samples at temperature 0.7, top_p 0.95 and 16384 max tokens; it
+leaves thinking to the model's chat template. Set `scaffold=openai_agents` for
+the SWE-agent-style prompt with `execute_bash_session` and `submit` tools, 100
+turns, thinking off and the server's sampling defaults. Its run ends when the
+model calls `submit()`; set `stop_on_submit=false` to let it keep going until
+`max_turns`.
 
 Each finished instance is appended to `swe_bench_verified_progress.jsonl` in the
 output directory, so a job that is killed or preempted keeps its finished work.
@@ -1254,8 +1260,10 @@ Pass that file as `resume_from` to a new run to skip the instances it already
 covers.
 
 Other arguments include `limit`, `repos`, `max_turns`, `command_timeout`,
-`agent_timeout`, `image_timeout`, `eval_timeout`, `max_tool_output_chars`, and
-`include_hints`; `olmo-eval external-evals` lists them all with their defaults.
+`agent_timeout`, `image_timeout`, `eval_timeout`, `include_hints`, and the
+sampling arguments `temperature`, `top_p` and `max_tokens`;
+`olmo-eval external-evals` lists them all with their defaults. Qwen3.5 models
+need the same vLLM flags as for Terminal-Bench below.
 
 Scores from a single run carry a few points of noise: in one repeated run of 97
 sphinx instances, 25 changed outcome even though the total resolved count moved

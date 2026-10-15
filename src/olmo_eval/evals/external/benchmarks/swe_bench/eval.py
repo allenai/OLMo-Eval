@@ -10,7 +10,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from olmo_eval.common.types import LMRequest, RequestType
+from olmo_eval.common.types import LMRequest, RequestType, SamplingParams
 from olmo_eval.common.types.trajectory import AgentTrajectory
 from olmo_eval.evals.external.base import ExternalEval
 from olmo_eval.evals.external.network import get_docker_network_args
@@ -38,6 +38,29 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+DEFAULT_SCAFFOLD = "vanillux"
+
+#: Scaffolds this eval can drive, with the tools each one gets.
+SCAFFOLD_TOOLS: dict[str, tuple[str, ...]] = {
+    "vanillux": ("bash",),
+    "openai_agents": ("execute_bash_session", "submit"),
+}
+
+#: Agent turns per instance when ``max_turns`` is not given.
+DEFAULT_MAX_TURNS: dict[str, int] = {"vanillux": 64, "openai_agents": 100}
+
+#: Extra wall-clock time, past the agent timeout, before a vanillux run is cut
+#: off from outside. The scaffold stops itself at the timeout between steps;
+#: this bounds a step that is already in flight.
+AGENT_TIMEOUT_GRACE = 300.0
+
+#: Scaffold completion reasons renamed to the ones this eval reports.
+COMPLETION_REASONS: dict[str, str] = {
+    "max_steps": "max_turns",
+    "timeout": "agent_timeout",
+    "context_overflow": "context_exceeded",
+}
 
 SYSTEM_PROMPT = """\
 You are a software engineer working in a Linux container with a code repository.
@@ -124,7 +147,7 @@ class SWEBenchArgs:
     dataset: str = DATASET_PATH
     revision: str | None = DATASET_REVISION
     max_concurrency: int = 4
-    max_turns: int = 100
+    max_turns: int = DEFAULT_MAX_TURNS[DEFAULT_SCAFFOLD]
     command_timeout: float = 120.0
     agent_timeout: float = 3600.0
     max_tool_output_chars: int | None = 10000
@@ -138,10 +161,15 @@ class SWEBenchArgs:
     oracle: bool = False
     sandbox_mode: str = "docker"
     enable_compaction: bool = False
-    scaffold: str = "openai_agents"
+    scaffold: str = DEFAULT_SCAFFOLD
+    max_format_errors: int = 64
+    temperature: float = 0.7
+    top_p: float = 0.95
+    max_tokens: int = 16384
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> SWEBenchArgs:
+        scaffold = str(data.get("scaffold", DEFAULT_SCAFFOLD))
         return cls(
             instance_ids=_as_list(data.get("instance_ids")),
             repos=_as_list(data.get("repos")),
@@ -154,7 +182,7 @@ class SWEBenchArgs:
             )
             or None,
             max_concurrency=int(data.get("max_concurrency", 4)),
-            max_turns=int(data.get("max_turns", 100)),
+            max_turns=int(data.get("max_turns", DEFAULT_MAX_TURNS.get(scaffold, 64))),
             command_timeout=float(data.get("command_timeout", 120.0)),
             agent_timeout=float(data.get("agent_timeout", 3600.0)),
             max_tool_output_chars=_as_optional_int(data.get("max_tool_output_chars", 10000)),
@@ -168,7 +196,17 @@ class SWEBenchArgs:
             oracle=_as_bool(data.get("oracle", False)),
             sandbox_mode=data.get("sandbox_mode", "docker"),
             enable_compaction=_as_bool(data.get("enable_compaction", False)),
-            scaffold=data.get("scaffold", "openai_agents"),
+            scaffold=scaffold,
+            max_format_errors=int(data.get("max_format_errors", 64)),
+            temperature=float(data.get("temperature", 0.7)),
+            top_p=float(data.get("top_p", 0.95)),
+            max_tokens=int(data.get("max_tokens", 16384)),
+        )
+
+    @property
+    def sampling_params(self) -> SamplingParams:
+        return SamplingParams(
+            temperature=self.temperature, top_p=self.top_p, max_tokens=self.max_tokens
         )
 
 
@@ -252,16 +290,27 @@ def is_context_length_error(error: BaseException) -> bool:
     return "maximum context length" in message or "context_length_exceeded" in message
 
 
-def build_prompt(instance: SWEBenchInstance, include_hints: bool = False) -> str:
-    """Build the user message that describes the issue to the agent."""
-    hints = ""
+def _hints(instance: SWEBenchInstance, include_hints: bool) -> str:
     if include_hints and instance.hints_text.strip():
-        hints = HINTS_TEMPLATE.format(hints_text=instance.hints_text.strip())
+        return HINTS_TEMPLATE.format(hints_text=instance.hints_text.strip())
+    return ""
+
+
+def build_prompt(instance: SWEBenchInstance, include_hints: bool = False) -> str:
+    """Build the user message that describes the issue to the ``openai_agents`` agent."""
     return INSTANCE_PROMPT.format(
         testbed=TESTBED_DIR,
         problem_statement=instance.problem_statement.strip(),
-        hints=hints,
+        hints=_hints(instance, include_hints),
     )
+
+
+def build_task_text(instance: SWEBenchInstance, include_hints: bool = False) -> str:
+    """Build the task text for scaffolds that wrap it in their own instructions.
+
+    The issue is given as is, the way Harbor's SWE-bench tasks state it.
+    """
+    return instance.problem_statement.strip() + _hints(instance, include_hints)
 
 
 def compute_metrics(results: list[InstanceResult]) -> dict[str, float]:
@@ -319,13 +368,19 @@ class SWEBenchVerifiedExternalEval(ExternalEval):
             "dataset": ("HuggingFace dataset path", DATASET_PATH),
             "revision": ("Dataset revision", DATASET_REVISION),
             "max_concurrency": ("Max instances in flight at once", 4),
-            "max_turns": ("Max agent turns per instance", 100),
+            "max_turns": (
+                "Max agent turns per instance (default: 64 for vanillux, 100 for openai_agents)",
+                64,
+            ),
             "command_timeout": ("Timeout in seconds for each agent command", 120.0),
             "agent_timeout": ("Wall-clock budget in seconds for the agent on one instance", 3600.0),
-            "max_tool_output_chars": ("Truncate each tool output to this many characters", 10000),
+            "max_tool_output_chars": (
+                "Truncate each tool output to this many characters (openai_agents)",
+                10000,
+            ),
             "eval_timeout": ("Timeout in seconds for running the tests", 1800.0),
             "image_timeout": ("Timeout in seconds for pulling and building an image", 900.0),
-            "stop_on_submit": ("End the agent's run when it calls submit()", True),
+            "stop_on_submit": ("End the agent's run when it calls submit() (openai_agents)", True),
             "resume_from": (
                 "Progress file from an earlier run; instances recorded there are not rerun",
                 None,
@@ -338,13 +393,20 @@ class SWEBenchVerifiedExternalEval(ExternalEval):
             "include_hints": ("Show the issue's hints to the agent", False),
             "oracle": ("Grade the reference patch instead of running an agent", False),
             "sandbox_mode": ("Sandbox mode: docker, modal", "docker"),
-            "enable_compaction": ("Enable context compaction", False),
-            "scaffold": ("Scaffold to use for agent execution", "openai_agents"),
+            "enable_compaction": ("Enable context compaction (openai_agents)", False),
+            "scaffold": ("Scaffold: vanillux or openai_agents", DEFAULT_SCAFFOLD),
+            "max_format_errors": (
+                "Replies in a row without a valid tool call before stopping (vanillux)",
+                64,
+            ),
+            "temperature": ("Sampling temperature (vanillux)", 0.7),
+            "top_p": ("Nucleus sampling threshold (vanillux)", 0.95),
+            "max_tokens": ("Max tokens per model reply (vanillux)", 16384),
         }
 
     @property
     def scaffold(self) -> str | None:
-        return "openai_agents"
+        return DEFAULT_SCAFFOLD
 
     async def execute(
         self,
@@ -360,6 +422,12 @@ class SWEBenchVerifiedExternalEval(ExternalEval):
         if not swe_args.oracle:
             from olmo_eval.harness.scaffolds import validate_scaffold
 
+            if swe_args.scaffold not in SCAFFOLD_TOOLS:
+                supported = ", ".join(sorted(SCAFFOLD_TOOLS))
+                raise ValueError(
+                    f"Unsupported scaffold {swe_args.scaffold!r} for {self.name}; "
+                    f"use one of {supported}"
+                )
             validate_scaffold(swe_args.scaffold)
 
         instances = select_instances(
@@ -525,10 +593,15 @@ class SWEBenchVerifiedExternalEval(ExternalEval):
             try:
                 await manager.start()
                 baseline = await snapshot_worktree(manager.get_executor(frozenset()))
+                # vanillux stops itself at the agent timeout, so it gets a grace
+                # period for a step in flight before being cut off from outside.
+                agent_deadline = swe_args.agent_timeout
+                if swe_args.scaffold == "vanillux":
+                    agent_deadline += AGENT_TIMEOUT_GRACE
                 try:
                     await asyncio.wait_for(
                         self._run_agent(manager, instance, provider, swe_args, result),
-                        timeout=swe_args.agent_timeout,
+                        timeout=agent_deadline,
                     )
                 except TimeoutError:
                     logger.info(f"[{instance.instance_id}] Agent ran out of time")
@@ -602,32 +675,57 @@ class SWEBenchVerifiedExternalEval(ExternalEval):
         if not setup.success:
             raise RuntimeError(f"Session setup failed: {setup.output[-2000:]}")
 
-        tools = get_tools(("execute_bash_session", "submit"))
+        scaffold_name = swe_args.scaffold
+        scaffold_kwargs: dict[str, Any] = {}
+        run_kwargs: dict[str, Any] = {}
+        sampling_params: SamplingParams | None = None
+        if scaffold_name == "vanillux":
+            # vanillux brings its own system and instance prompts.
+            system_prompt = None
+            content = build_task_text(instance, swe_args.include_hints)
+            scaffold_kwargs = {
+                "command_timeout": swe_args.command_timeout,
+                "max_format_errors": swe_args.max_format_errors,
+                "agent_timeout": swe_args.agent_timeout,
+            }
+            sampling_params = swe_args.sampling_params
+        else:
+            system_prompt = SYSTEM_PROMPT
+            content = build_prompt(instance, swe_args.include_hints)
+            run_kwargs = {
+                "enable_compaction": swe_args.enable_compaction,
+                "max_tool_output_chars": swe_args.max_tool_output_chars,
+                "stop_at_tools": ("submit",) if swe_args.stop_on_submit else None,
+            }
+
         harness_config = HarnessConfig(
             name=f"swe_bench_{instance.instance_id}",
-            tools=tools,
-            system_prompt=SYSTEM_PROMPT,
+            tools=get_tools(SCAFFOLD_TOOLS[scaffold_name]),
+            system_prompt=system_prompt,
             max_turns=swe_args.max_turns,
-            scaffold=swe_args.scaffold,
+            scaffold=scaffold_name,
+            scaffold_kwargs=scaffold_kwargs,
         )
-        scaffold = get_scaffold(swe_args.scaffold)
+        scaffold = get_scaffold(scaffold_name)
         scaffold.set_sandbox_manager(sandbox_manager)
 
         request = LMRequest(
             request_type=RequestType.CHAT,
-            messages=({"role": "user", "content": build_prompt(instance, swe_args.include_hints)},),
+            messages=({"role": "user", "content": content},),
         )
         harness_result = await scaffold.run(
             provider,
             harness_config,
             request,
+            sampling_params=sampling_params,
             trace_metadata={"task_id": instance.instance_id},
-            enable_compaction=swe_args.enable_compaction,
-            max_tool_output_chars=swe_args.max_tool_output_chars,
-            stop_at_tools=("submit",) if swe_args.stop_on_submit else None,
+            **run_kwargs,
         )
         result.trajectory = harness_result.trajectory or AgentTrajectory(turns=())
-        if harness_result.max_turns_reached:
+        reported = harness_result.metadata.get("completion_reason")
+        if reported is not None:
+            result.completion_reason = COMPLETION_REASONS.get(reported, reported)
+        elif harness_result.max_turns_reached:
             result.completion_reason = "max_turns"
         elif called_tool(result.trajectory, "submit"):
             result.completion_reason = "submitted"
