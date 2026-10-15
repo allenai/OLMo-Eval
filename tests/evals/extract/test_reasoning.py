@@ -1,6 +1,8 @@
 """Tests for the reasoning-trace extractors."""
 
 import re
+import subprocess
+import sys
 import time
 
 import pytest
@@ -48,3 +50,19 @@ def test_linear_on_long_answers() -> None:
     start = time.perf_counter()
     extract_think_answer(text)
     assert time.perf_counter() - start < 0.05
+
+
+def test_long_blank_lines_without_answer_tags_complete() -> None:
+    # Multiline whitespace matching previously revisited each blank line.
+    # Bound a regression without making ordinary test runs wait indefinitely.
+    code = """
+from olmo_eval.evals.extract import extract_think_answer, extract_think_answer_only
+import time
+text = '\\n' * 100000
+started = time.perf_counter()
+assert extract_think_answer(text) == text
+assert extract_think_answer('<think>x</think>' + text) == text
+assert extract_think_answer_only('<think>x</think>' + text) == text
+assert time.perf_counter() - started < 2
+"""
+    subprocess.run([sys.executable, "-c", code], check=True, timeout=120)
