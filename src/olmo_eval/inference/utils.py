@@ -11,6 +11,8 @@ from olmo_eval.common.types import LMOutput, LMRequest
 from olmo_eval.inference.dispatch import dispatch_concurrent_results
 from olmo_eval.inference.errors import REQUEST_ERROR_KEY
 
+_MAX_REQUEST_ERROR_CHARS = 500
+
 
 async def dispatch_requests(
     requests: list[LMRequest],
@@ -28,8 +30,8 @@ async def dispatch_requests(
         if result.error is not None:
             error = result.error
             message = str(error)
-            if len(message) > 500:
-                message = message[:500] + "…"
+            if len(message) > _MAX_REQUEST_ERROR_CHARS:
+                message = message[:_MAX_REQUEST_ERROR_CHARS] + "…"
             outputs.append(
                 [
                     LMOutput(

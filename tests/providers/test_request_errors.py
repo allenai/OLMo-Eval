@@ -85,3 +85,24 @@ def test_failed_request_bounds_large_error_bodies(provider_type) -> None:
     assert error is not None and error.startswith("ValueError: gateway ")
     assert error.endswith("…")
     assert len(error) <= len("ValueError: ") + 501
+
+
+def test_dispatch_requests_preserves_order_and_records_individual_failures() -> None:
+    from olmo_eval.inference.errors import REQUEST_ERROR_KEY
+    from olmo_eval.inference.utils import dispatch_requests
+
+    async def process(request):
+        if request.prompt == "failed":
+            raise RuntimeError("service down")
+        if request.prompt == "missing":
+            return None
+        await asyncio.sleep(0.01)
+        return [LMOutput(text=request.prompt)]
+
+    requests = [
+        LMRequest(request_type=RequestType.COMPLETION, prompt=p)
+        for p in ["first", "failed", "missing", "last"]
+    ]
+    outputs = asyncio.run(dispatch_requests(requests, process))
+    assert [batch[0].text if batch else None for batch in outputs] == ["first", "", None, "last"]
+    assert outputs[1][0].metadata[REQUEST_ERROR_KEY] == "RuntimeError: service down"

@@ -14,7 +14,8 @@ from olmo_eval.common.types import Instance, LMOutput
 from olmo_eval.inference.errors import REQUEST_ERROR_KEY
 
 
-def test_strongreject_request_failure_raises_instead_of_becoming_zero() -> None:
+@pytest.mark.parametrize("empty", [False, True])
+def test_strongreject_request_failure_raises_from_scorer(empty: bool) -> None:
     tokenizer = SimpleNamespace(
         encode=lambda text, **kwargs: list(text), decode=lambda tokens: "".join(tokens)
     )
@@ -31,13 +32,17 @@ def test_strongreject_request_failure_raises_instead_of_becoming_zero() -> None:
         ),
         get_tokenizer=lambda: tokenizer,
     )
+    if empty:
+        provider.alogprobs.return_value = [[]]
     context = ScoringContext(
         inference_pool=SimpleNamespace(get=lambda name: provider, names=["judge"])
     )
     scorer = SafetyScorer(provider_name="judge", judge_format="strongreject")
     instance = Instance(question="q", gold_answer="response_harmfulness=yes")
 
-    with pytest.raises(RuntimeError, match="judge service unavailable"):
+    with pytest.raises(
+        RuntimeError, match="returned no output" if empty else "judge service unavailable"
+    ):
         asyncio.run(scorer.ascore_with_context(instance, LMOutput(text="answer"), context))
 
     provider.alogprobs.assert_awaited_once()

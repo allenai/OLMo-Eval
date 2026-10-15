@@ -465,7 +465,7 @@ def test_batched_loglikelihood_without_continuations_is_not_a_failure() -> None:
 
 
 def test_batched_loglikelihood_with_continuations_and_no_outputs_is_a_failure() -> None:
-    """vllm_server's alogprobs returns [] for a request it could not serve."""
+    """A provider returning no outputs for requested continuations has failed."""
     assert is_hard_failure(_run_empty_loglikelihood(continuations=(" a", " b")))
 
 
