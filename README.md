@@ -993,7 +993,7 @@ uv run olmo-eval run -m <checkpoint> -t hillclimb:dev \
     -o sandboxes.0.inject_swerex=true
 ```
 
-LiveCodeBench requires the sandboxed harness. Set the same model context limit
+LiveCodeBench requires the sandboxed harness; see [missing-sandbox tracking (#423)](https://github.com/allenai/olmo-eval/issues/423). Set the same model context limit
 for every checkpoint you compare; OMEGA has a 32,768-token generation cap.
 
 ## Uploading Results and the Dashboard

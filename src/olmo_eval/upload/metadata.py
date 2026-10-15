@@ -272,6 +272,7 @@ def suite_results(
         if entry["name"] in requested_roots:
             entry["parent"] = None
         elif entry["name"] in parents:
+            # The dashboard stores one parent; choose a stable one for shared children.
             entry["parent"] = min(parents[entry["name"]])
     return results
 

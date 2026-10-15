@@ -11,7 +11,7 @@ make_suite(
     (*HILLCLIMB_DEV_TIERS, *HILLCLIMB_GUARDS),
     aggregation=AggregationStrategy.NONE,
     description=(
-        "Hill-climb dev pass: LiveCodeBench v3 (one sample), the OMEGA in/out pair "
+        "Hill-climb dev pass: LiveCodeBench lite, the OMEGA in/out pair "
         "with its gap, and the IFEval, IFBench and GPQA main guards."
     ),
 )
