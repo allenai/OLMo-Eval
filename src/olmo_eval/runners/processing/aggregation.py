@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from olmo_eval.common.logging import get_logger
+from olmo_eval.runners.processing.generation_counts import sum_generation_counts
 
 logger = get_logger(__name__)
 
@@ -292,6 +293,17 @@ def _compute_child_average(
         )
 
 
+def _attach_generation_counts(
+    suite_result: dict[str, Any],
+    task_results: dict[str, dict[str, Any]],
+    task_specs: list[str],
+) -> None:
+    """Record the summed generation counts of the tasks behind a suite score."""
+    counts = sum_generation_counts(task_results, task_specs)
+    if counts is not None:
+        suite_result["generation_counts"] = counts
+
+
 def compute_suite_aggregations(
     task_specs: list[str],
     task_results: dict[str, dict[str, Any]],
@@ -396,6 +408,7 @@ def compute_suite_aggregations(
                             "average": result.primary_score
                         }
                         nested_result["primary_metric"] = "primary_score:average"
+                    _attach_generation_counts(nested_result, task_results, result.tasks)
                     suite_aggregations[result.nested_suite_key] = nested_result
 
             if not child_averages:
@@ -421,6 +434,7 @@ def compute_suite_aggregations(
                 aggregated_metrics["primary_score"] = {"average": avg_primary}
                 suite_result["primary_metric"] = "primary_score:average"
 
+            _attach_generation_counts(suite_result, task_results, all_tasks_included)
             suite_aggregations[spec] = suite_result
         else:
             # AVERAGE, WEIGHTED_AVERAGE or DISPLAY_ONLY: average all expanded
@@ -490,6 +504,7 @@ def compute_suite_aggregations(
                 aggregated_metrics["primary_score"] = {"average": avg_primary}
                 avg_suite_result["primary_metric"] = "primary_score:average"
 
+            _attach_generation_counts(avg_suite_result, task_results, tasks_included)
             suite_aggregations[spec] = avg_suite_result
 
     return suite_aggregations

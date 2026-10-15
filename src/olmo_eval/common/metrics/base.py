@@ -936,8 +936,8 @@ class MacroSubsetAccuracyMetric(Metric):
 @dataclass(frozen=True, slots=True)
 class SafetyErrorMetric(Metric):
     """
-    Counts the number of parsing errors from LLM-as-a-judge
-    Designed for the metadata format from the safety evals
+    Counts the responses an LLM judge could not grade, as flagged by
+    ``is_parsing_error`` in the instance metadata
     """
 
     scorer: type[Scorer] | Scorer = SafetyScorer
@@ -958,4 +958,7 @@ class SafetyErrorMetric(Metric):
         return float(response.instance.metadata.get("is_parsing_error", False))
 
     def supports_scorer_fallback(self) -> bool:
+        return False
+
+    def higher_is_better(self) -> bool:
         return False

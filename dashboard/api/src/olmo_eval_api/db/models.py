@@ -275,6 +275,7 @@ class TaskResult(SQLModel, table=True):
     num_instances: int = _int(nullable=False)
     instances_processed: int | None = _int()
     instances_failed: int | None = _int()
+    generation_counts: dict[str, int] | None = _jsonb(nullable=True)
     instance_count_expected: int = _int(nullable=False)
     instances_stored: int = _int(nullable=False, default=0)
     error: str | None = _text()

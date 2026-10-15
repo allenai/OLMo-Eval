@@ -38,7 +38,7 @@ uv python install 3.12
 # too — no extra flags needed.
 uv sync --frozen
 
-# Install pre-commit hooks
+# Install git hooks (ruff, ty, file sizes)
 make setup
 
 # To update the lockfile after changing pyproject.toml
@@ -2037,7 +2037,7 @@ which covers s3, beaker, hf, and the vLLM inference provider.
 # Install dependencies from the lockfile
 uv sync --frozen
 
-# Install pre-commit hooks
+# Install git hooks (ruff, ty, file sizes)
 make setup
 
 # Run linter / formatter

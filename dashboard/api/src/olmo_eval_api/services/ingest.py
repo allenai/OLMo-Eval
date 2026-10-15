@@ -546,6 +546,7 @@ async def upsert_task_result(
         "num_instances": req.num_instances,
         "instances_processed": req.instances_processed,
         "instances_failed": req.instances_failed,
+        "generation_counts": req.generation_counts,
         "instance_count_expected": req.instance_count,
         "instances_stored": 0,
         "error": req.error,
@@ -650,7 +651,10 @@ async def _content_hash(session: AsyncSession, run_id: str, req: s.TaskResultIn)
             select(ac.path, ac.md5_b64).where(ac.run_id == run_id, ac.path.in_(paths))
         )
         checksums = {path: md5 for path, md5 in rows}
-    body = {"request": req.model_dump(mode="json"), "files": {p: checksums.get(p) for p in paths}}
+    request = req.model_dump(mode="json")
+    if req.generation_counts is None:
+        request.pop("generation_counts", None)
+    body = {"request": request, "files": {p: checksums.get(p) for p in paths}}
     return hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
 
 

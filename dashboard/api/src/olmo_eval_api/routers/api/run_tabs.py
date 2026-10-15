@@ -27,7 +27,13 @@ from olmo_eval_api.services.queries import (
     model_ref,
     run_summary,
 )
-from olmo_eval_api.services.read_suites import definition_hashes, load_defs, score_suite, tree
+from olmo_eval_api.services.read_suites import (
+    definition_hashes,
+    load_defs,
+    score_suite,
+    suite_generation_counts,
+    tree,
+)
 from olmo_eval_api.services.runtime import RunTiming, derive_runtime, load_run_timings
 from olmo_eval_api.services.subjects import (
     TR_COLUMNS,
@@ -104,7 +110,7 @@ async def run_task_results_endpoint(
         subject = await resolve_one(session, baseline)
     used = list(trs) + (list(subject.trs.values()) if subject else [])
     key = cache_key(
-        "run-task-results",
+        "run-task-results-v2",
         {"run_id": run_id, "baseline": baseline, **stats.__dict__},
         used,
     )
@@ -151,6 +157,7 @@ async def run_task_results_endpoint(
                     stderr=side_b.stderr,
                     n=int(base["num_instances"] or 0),
                     metrics=base["metrics"] or {},
+                    generation_counts=base.get("generation_counts"),
                     delta=delta_model(d),
                     contingency=a.Contingency(**cont) if cont else None,
                 )
@@ -174,6 +181,7 @@ async def run_task_results_endpoint(
             n=int(tr["num_instances"] or 0),
             instances_processed=tr["instances_processed"],
             instances_failed=tr["instances_failed"],
+            generation_counts=tr["generation_counts"],
             instances_stored=int(tr["instances_stored"] or 0),
             metrics=tr["metrics"] or {},
             error=tr["error"],
@@ -310,7 +318,7 @@ async def run_suites(
     }
     defs = {**(await load_defs(session)), **stored_defs}
     key = cache_key(
-        "run-suites-v6",
+        "run-suites-v7",
         {"run_id": run_id, "baseline": baseline, **stats.__dict__},
         trs_list + (list(subject.trs.values()) if subject else []),
         definition_hashes([tree(r["suite_name"], defs) for r in ordered], defs),
@@ -364,7 +372,10 @@ async def run_suites(
                     run_trs, base_trs, node, loader, stats, corpus, r["higher_is_better"]
                 )
                 base_cells[r["suite_name"]] = a.SuiteBaselineCell(
-                    score=agg.score, stderr=agg.stderr, delta=delta
+                    score=agg.score,
+                    stderr=agg.stderr,
+                    delta=delta,
+                    generation_counts=suite_generation_counts(node, base_trs),
                 )
 
         # Bootstraps are CPU-bound; a worker thread keeps the event loop serving other requests.
@@ -390,6 +401,7 @@ async def run_suites(
                 n_instances=int(r["n_instances"] or 0),
                 display_format=r["display_format"],
                 higher_is_better=r["higher_is_better"],
+                generation_counts=suite_generation_counts(node, run_trs),
                 tasks_missing=list(r["tasks_missing"] or []),
                 baseline=base_cell,
             )

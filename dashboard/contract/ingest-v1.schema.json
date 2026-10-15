@@ -1642,6 +1642,20 @@
           ],
           "description": "When the task's first request was sent to an inference worker."
         },
+        "generation_counts": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/definitions/NonNegativeInteger"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Per-generation diagnostic counts; absent for older clients and loglikelihood tasks."
+        },
         "instance_count": {
           "$ref": "#/definitions/NonNegativeInt32",
           "description": "Number of instance rows the client will send for this task result (0 without predictions)."

@@ -1,7 +1,7 @@
-.PHONY: setup fix verify test lint type-check clean
+.PHONY: setup fix verify test lint type-check file-sizes clean
 
 setup:
-	uv run --frozen pre-commit install
+	git config core.hooksPath .githooks
 
 # Auto-fix formatting and lint issues
 fix:
@@ -23,6 +23,10 @@ lint:
 # Run type checker
 type-check:
 	uv run ty check src/
+
+# Check that no tracked file exceeds the size limit
+file-sizes:
+	./scripts/check_file_sizes.sh
 
 # Clean build artifacts
 clean:
