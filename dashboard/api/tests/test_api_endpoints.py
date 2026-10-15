@@ -1220,6 +1220,17 @@ async def test_gap_progression_keeps_checkpoint_and_reference_metrics_consistent
     assert reference_scores["r:progflex01"] is None
     assert reference_scores["r:progref01"] == 0.8
     assert panel["meta"]["display_format"] == "percent"
+    concrete = await get(
+        client,
+        "/api/models/progression",
+        "ProgressionResponse",
+        series="test-org/prog-model",
+        scope="suite:progpair",
+        merge=merge,
+        metric="flex:default",
+    )
+    for explicit_panel in concrete["panels"]:
+        assert [(p["step"], p["score"]) for p in explicit_panel["points"]] == [(2000, 0.9)]
     for task_name in ("in", "out"):
         child = next(p for p in result["panels"] if p["key"] == f"task:{task_name}")
         assert [(point["step"], point["score"]) for point in child["points"]] == [(1000, 0.4)]
