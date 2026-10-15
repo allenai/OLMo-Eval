@@ -413,8 +413,7 @@ class BBQ(SafetyBase):
             sample=self.fewshot_sample,
             fallback_splits=[],
         )
-        k = self.config.num_fewshot
-        return all_fewshot[:k] if k else all_fewshot
+        return all_fewshot[: self.config.num_fewshot]
 
 
 _BBQ_SUBSET = (

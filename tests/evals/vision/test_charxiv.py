@@ -243,6 +243,18 @@ class _FakeClient:
 
 def _patch_client(monkeypatch, client: _FakeClient) -> None:
     monkeypatch.setattr(charxiv_judge, "_get_client", lambda model: client)
+    monkeypatch.setattr(charxiv_judge, "_retry_delay", lambda attempt: 0.0)
+
+
+class TestRetryDelay:
+    @pytest.mark.parametrize("attempt", [1, 2, 5, 10, 50])
+    def test_delay_is_jittered_and_capped(self, attempt: int) -> None:
+        base = min(
+            charxiv_judge._RETRY_MAX_DELAY,
+            charxiv_judge._RETRY_BASE_DELAY * 2 ** (attempt - 1),
+        )
+        for _ in range(20):
+            assert 0.5 * base <= charxiv_judge._retry_delay(attempt) <= 1.5 * base
 
 
 class TestJudgeCall:
