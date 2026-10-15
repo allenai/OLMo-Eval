@@ -48,7 +48,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from olmo_eval.common.metrics import AccuracyMetric, Metric
-from olmo_eval.common.scorers import ExactMatchScorer, Scorer
+from olmo_eval.common.scorers import ExactMatchScorer, LabelSetMatchScorer, Scorer
 from olmo_eval.common.types import (
     Instance,
     LMOutput,
@@ -128,26 +128,6 @@ def extract_parenthesized(response: str) -> str | None:
 # -- Scoring --------------------------------------------------------------------
 
 
-@dataclass(frozen=True, slots=True)
-class LabelSetMatchScorer(Scorer):
-    """Score 1.0 if the predicted label set equals the gold label set.
-
-    Both the prediction and the gold answer are delimited label lists (for
-    example ``A,C``); order is ignored and labels are compared verbatim.
-    """
-
-    name: str = "label_set_match"
-    separator: str = ","
-
-    def score(self, instance: Instance, output: LMOutput) -> float:
-        if instance.gold_answer is None:
-            return 0.0
-        gold = {label for label in instance.gold_answer.split(self.separator) if label}
-        pred = output.extracted_answer
-        predicted = set(str(pred).split(self.separator)) if pred else set()
-        return 1.0 if predicted == gold else 0.0
-
-
 def _is_empty_generation(response: Response) -> bool:
     """Whether the model returned output with empty text.
 
@@ -174,7 +154,7 @@ class NonEmptyAccuracyMetric(AccuracyMetric):
             return None
         return float(response.scores.get(self.scorer().name, 0.0))
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         # Excluded instances carry a scorer value that is not part of the mean.
         return False
 
@@ -194,13 +174,13 @@ class EmptyGenerationRateMetric(Metric):
     def compute_instance(self, response: Response) -> float | None:
         return 1.0 if _is_empty_generation(response) else 0.0
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False
 
-    def pairwise_higher_is_better(self) -> bool:
+    def higher_is_better(self) -> bool:
         return False
 
-    def pairwise_display_format(self) -> str:
+    def display_format(self) -> str:
         return "percentage"
 
 
@@ -533,7 +513,7 @@ def _register_subtask(subtask: APTBenchSubtask) -> None:
         {
             "subtask": subtask,
             "data_source": DataSource(path="json", data_files=subtask.data_url, split="train"),
-            "metrics": (accuracy, EmptyGenerationRateMetric(scorer=scorer)),
+            "metrics": (accuracy, EmptyGenerationRateMetric(scorer=_EXACT_MATCH_SCORER)),
             "primary_metric": accuracy,
             "sampling_params": sampling_params,
             "__module__": __name__,
@@ -550,6 +530,7 @@ def _register_subtask(subtask: APTBenchSubtask) -> None:
             sampling_params=replace(
                 sampling_params,
                 truncate_prompt_tokens=budget * 1024 - _ANSWER_RESERVE_TOKENS,
+                truncation_side="left",
             ),
         )
 

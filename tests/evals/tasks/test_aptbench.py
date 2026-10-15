@@ -2,12 +2,12 @@
 
 import pytest
 
+from olmo_eval.common.scorers import LabelSetMatchScorer
 from olmo_eval.common.types import Instance, LMOutput, LMRequest, RequestType, Response
 from olmo_eval.evals.tasks import aptbench
 from olmo_eval.evals.tasks.aptbench import (
     APTBENCH_CONTEXT_BUDGETS,
     APTBENCH_SUBTASKS,
-    LabelSetMatchScorer,
     aptbench_task_names,
     extract_bracketed,
     extract_choice_a_to_d,
@@ -60,7 +60,9 @@ class TestAPTBenchRegistration:
         registered = set(list_tasks())
         assert set(_ALL_TASKS) <= registered
 
-    @pytest.mark.parametrize("category", ["env_setup", "issue_fix", "deepresearch", "tool"])
+    @pytest.mark.parametrize(
+        "category", ["env_setup", "issue_fix", "deepresearch", "tool", "agentic_math"]
+    )
     def test_category_filter(self, category):
         names = aptbench_task_names(category)
         assert names
@@ -73,12 +75,14 @@ class TestAPTBenchRegistration:
         assert params.temperature == 0.0
         assert params.stop_sequences is None
         assert params.truncate_prompt_tokens is None
+        assert params.truncation_side is None
 
     @pytest.mark.parametrize("budget", APTBENCH_CONTEXT_BUDGETS)
     def test_context_variants(self, budget):
         base = get_task("aptbench_issue_fix_plan").config.sampling_params
         variant = get_task(f"aptbench_issue_fix_plan:ctx{budget}k").config.sampling_params
         assert variant.truncate_prompt_tokens == budget * 1024 - 64
+        assert variant.truncation_side == "left"
         assert variant.max_tokens == base.max_tokens
         assert variant.temperature == base.temperature
 
@@ -157,33 +161,6 @@ class TestExtractAnswer:
         assert _output(task, "no letter here").extracted_answer is None
 
 
-class TestLabelSetMatchScorer:
-    """Tests for citation label-set scoring."""
-
-    @pytest.mark.parametrize(
-        ("pred", "gold", "expected"),
-        [
-            ("A,C", "A,C", 1.0),
-            ("C,A", "A,C", 1.0),
-            ("A,C,C", "A,C", 1.0),
-            ("A", "A,C", 0.0),
-            ("A,B,C", "A,C", 0.0),
-            ("A, C", "A,C", 0.0),
-            ("a,c", "A,C", 0.0),
-            (None, "A,C", 0.0),
-            ("", "A,C", 0.0),
-        ],
-    )
-    def test_score(self, pred, gold, expected):
-        output = LMOutput(text="", extracted_answer=pred)
-        assert LabelSetMatchScorer().score(_instance(gold), output) == expected
-
-    def test_missing_gold(self):
-        output = LMOutput(text="", extracted_answer="A")
-        instance = Instance(question="q", gold_answer=None, metadata={"id": "x"})
-        assert LabelSetMatchScorer().score(instance, output) == 0.0
-
-
 class TestExactMatchScoring:
     """Tests for case-sensitive exact-match scoring."""
 
@@ -249,6 +226,11 @@ class TestEmptyGenerationRateMetric:
         assert metric.compute(responses) == pytest.approx(0.5)
         assert [metric.compute_instance(r) for r in responses] == [0.0, 1.0, 0.0, 1.0]
 
+    @pytest.mark.parametrize("subtask", APTBENCH_SUBTASKS, ids=lambda s: s.task_name)
+    def test_single_storage_key(self, subtask):
+        metric = get_task(subtask.task_name).metrics[1]
+        assert metric.scorer().name == "exact_match"
+
     def test_no_responses(self):
         task = get_task("aptbench_issue_fix_plan")
         assert task.metrics[1].compute([]) == 0.0
@@ -256,6 +238,13 @@ class TestEmptyGenerationRateMetric:
 
 class TestPersistedInstanceMetrics:
     """Tests that persisted per-instance values agree with the aggregates."""
+
+    def test_metric_hooks(self):
+        accuracy, rate = get_task("aptbench_issue_fix_plan").metrics
+        assert not accuracy.supports_scorer_fallback()
+        assert not rate.supports_scorer_fallback()
+        assert not rate.higher_is_better()
+        assert rate.display_format() == "percentage"
 
     @pytest.mark.parametrize(
         "task_name", ["aptbench_issue_fix_plan", "aptbench_deepresearch_openend_citation_en"]

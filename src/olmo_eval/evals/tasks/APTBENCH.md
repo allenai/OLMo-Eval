@@ -14,13 +14,13 @@ agent performance.
 ## Files
 
 - [`aptbench.py`](aptbench.py): subtask definitions, answer extractors, the
-  label-set scorer, the `APTBenchTask` base class, and registration of the 24
-  tasks and their `ctx<N>k` variants.
+  `APTBenchTask` base class, and registration of each subtask and its
+  `ctx<N>k` variants.
 - [`../suites/aptbench.py`](../suites/aptbench.py): per-category and composite
   suites.
 
-No existing files are modified. Both modules are picked up by task and suite
-auto-discovery (`tasks/__init__.py`, `suites/__init__.py`).
+Both modules are picked up by task and suite auto-discovery
+(`tasks/__init__.py`, `suites/__init__.py`).
 
 ## Subtasks
 
@@ -76,23 +76,22 @@ uv run olmo-eval run -m mock -t aptbench_env_setup_action -o limit=5 --dry-run
 # One subtask on a real base model (vLLM server, the default harness)
 uv run olmo-eval run -m Qwen/Qwen3-8B-Base -t aptbench_issue_fix_plan:ctx32k
 
-# test with longer timeout
-uv run olmo-eval run -m Qwen/Qwen3-8B-Base -t aptbench_issue_fix_plan:ctx32k --harness default -o provider.kwargs.startup_timeout=900
-
 # Headline SWE + DR suite, 32K context
 uv run olmo-eval run \
     --harness default -o provider.max_model_len=32768 \
     -m Qwen/Qwen3-8B-Base \
     -t aptbench:ctx32k
 
-# Everything, at the upstream 128K setting
+# Everything, at a 128K budget (truncates from the start; see "Differences from upstream")
 uv run olmo-eval run \
     --harness default -o provider.max_model_len=131072 \
     -m <model> -t aptbench:all:ctx128k
 ```
 
 Harness overrides (`provider.*`) go right after `--harness`; task overrides
-such as `limit=...` go right after `-t`.
+such as `limit=...` go right after `-t`. If the vLLM server is slow to start
+(large models or long contexts), raise its startup timeout with
+`--harness default -o provider.kwargs.startup_timeout=900`.
 
 ### Pick a context variant
 
@@ -130,8 +129,8 @@ kept.
      and becomes `Instance.question`.
 
    So `olmo-eval task inspect` shows just the instance, and the full prompt is
-   byte-identical to upstream. This was checked on every row of all 24
-   subtasks.
+   byte-identical to upstream. This was checked on every row of every
+   subtask.
 3. **Generation.** `RequestType.COMPLETION`, greedy (`temperature=0`), no
    stop sequences, and upstream's `max_new_tokens` as `max_tokens`.
 4. **Extraction.** `extract_answer` strips the output, applies the ported
@@ -140,7 +139,7 @@ kept.
    cut at `;`, text before `]`, text before `)`. They were
    differential-tested against the upstream functions.
 5. **Scoring.** Case-sensitive `ExactMatchScorer`; citation subtasks use
-   `LabelSetMatchScorer`, which compares `A,C`-style label sets, ignoring
+   `LabelSetMatchScorer` (from `olmo_eval.common.scorers`), which compares `A,C`-style label sets, ignoring
    order. The primary metric is `accuracy`, the same number upstream's
    per-category `code/results/<category>/get_results.py` reports (the share of
    lines with `"judge": true`). As upstream does, empty generations are
