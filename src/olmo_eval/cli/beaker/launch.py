@@ -125,27 +125,20 @@ from olmo_eval.common.constants.infrastructure import BEAKER_RESULT_DIR, BEAKER_
     help="Inject GCP credentials. Auto-detected from gs:// model paths.",
 )
 @click.option(
-    "--s3-bucket",
-    help="S3 bucket for storing evaluation results (required for S3 uploads)",
+    "--upload/--no-upload",
+    "upload",
+    default=None,
+    help=(
+        "Upload results to the olmo-eval dashboard from the job with your Google "
+        "credentials (default: on; OLMO_EVAL_UPLOAD=0 turns it off)"
+    ),
 )
 @click.option(
-    "--s3-prefix",
-    help="S3 prefix/path within bucket for results (required for S3 uploads)",
+    "--api-url",
+    default=None,
+    help="Ingest service URL for the job (default: $OLMO_EVAL_API_URL, else production)",
 )
-@click.option(
-    "--s3-endpoint-url",
-    help="S3 endpoint URL (for S3-compatible storage like LocalStack)",
-)
-@click.option(
-    "--s3-region",
-    default="us-east-1",
-    help="S3 region (default: us-east-1)",
-)
-@click.option(
-    "--store/--no-store",
-    default=False,
-    help="Persist results to the configured database",
-)
+@click.option("--tag", "tags", multiple=True, help="Label to attach to uploaded runs (repeatable)")
 @click.option(
     "--debug-requests",
     is_flag=True,
@@ -238,6 +231,17 @@ from olmo_eval.common.constants.infrastructure import BEAKER_RESULT_DIR, BEAKER_
     help="UV cache directory for package downloads (on Weka shared storage)",
 )
 @click.option(
+    "--hf-token/--no-hf-token",
+    "hf_token",
+    default=None,
+    help=(
+        "Inject HF_TOKEN from the Beaker secret <user>_HF_TOKEN, copying your local token "
+        "there if the secret is missing. Default: inject an existing secret, and copy the "
+        "local token only when a task declares HF_TOKEN or a model or dataset is gated or "
+        "private. --no-hf-token never injects it."
+    ),
+)
+@click.option(
     "--secret-env",
     multiple=True,
     help="Map Beaker secret to env var: BEAKER_SECRET:ENV_VAR (e.g., my-openai-key:OPENAI_API_KEY)",
@@ -282,11 +286,9 @@ def launch(
     follow: bool,
     aws_credentials: bool | None,
     gcs_credentials: bool | None,
-    s3_bucket: str | None,
-    s3_prefix: str | None,
-    s3_endpoint_url: str | None,
-    s3_region: str,
-    store: bool,
+    upload: bool | None,
+    api_url: str | None,
+    tags: tuple[str, ...],
     debug_requests: bool,
     debug_provider: bool,
     force_download_model: bool,
@@ -303,6 +305,7 @@ def launch(
     eval_args: tuple[str, ...],
     provider_kwargs: tuple[str, ...],
     uv_cache_dir: str,
+    hf_token: bool | None,
     secret_env: tuple[str, ...],
     env_vars: tuple[str, ...],
     gpus: int | None,
@@ -381,6 +384,17 @@ def launch(
                 continue
             parsed_env_vars[entry] = local_value
 
+    from olmo_eval.upload import resolve_upload_config
+    from olmo_eval.upload.config import API_URL_ENV, upload_param_hint
+
+    try:
+        upload_config = resolve_upload_config(upload, api_url, tags)
+    except ValueError as e:
+        raise click.BadParameter(str(e), param_hint=upload_param_hint(e)) from None
+    if upload_config.notice:
+        console.print(f"[yellow]Note:[/yellow] {upload_config.notice}")
+    job_api_url = api_url or _os.environ.get(API_URL_ENV) or None
+
     # Build CLI args dict
     cli_args = {
         "name": name,
@@ -399,11 +413,9 @@ def launch(
         "image": image,
         "group": group,
         "gpus": gpus,
-        "s3_bucket": s3_bucket,
-        "s3_prefix": s3_prefix,
-        "s3_endpoint_url": s3_endpoint_url,
-        "s3_region": s3_region,
-        "store": store,
+        "upload": upload_config.enabled,
+        "api_url": job_api_url,
+        "tags": list(upload_config.tags),
         "debug_requests": debug_requests,
         "debug_provider": debug_provider,
         "force_download_model": force_download_model,
@@ -460,11 +472,11 @@ def launch(
             follow=follow,
             aws_credentials=aws_credentials,
             gcs_credentials=gcs_credentials,
-            s3_bucket=s3_bucket,
-            s3_prefix=s3_prefix,
-            s3_region=s3_region,
-            store=store,
+            upload=upload_config.enabled,
+            api_url=job_api_url,
+            tags=list(upload_config.tags),
             secret_env_overrides=secret_env_overrides,
+            hf_token=hf_token,
             user_env_vars=parsed_env_vars,
             eval_args=parsed_eval_args if parsed_eval_args else None,
             provider_kwargs=parsed_provider_kwargs if parsed_provider_kwargs else None,
@@ -504,11 +516,11 @@ def launch(
     # Set up credentials
     cred_manager = CredentialManager(
         launch_config.model_specs,
-        launch_config.store,
         aws_credentials,
         gcs_credentials,
     )
     inject_aws, inject_gcs = cred_manager.detect_and_setup(launcher)
+    _require_upload_credentials(launch_config.upload, dry_run)
 
     if dry_run:
         console.print("[yellow]Dry run mode - not submitting[/yellow]")
@@ -516,16 +528,7 @@ def launch(
     # Auto-generate group if needed
     effective_groups = _auto_generate_group(launch_config.name, list(launch_config.groups))
 
-    # Display storage info
-    cred_manager.display_storage_info(
-        launcher,
-        launch_config.s3_bucket,
-        launch_config.s3_prefix,
-        launch_config.s3_region,
-        launch_config.s3_endpoint_url,
-        effective_groups,
-        inject_aws,
-    )
+    cred_manager.display_aws_info(launcher, inject_aws)
 
     # Determine effective image
     # Check if harness has a sandbox configured - if so, use sandbox image
@@ -590,8 +593,12 @@ def launch(
                 all_required_secrets.update(sandbox.required_secrets)
 
     # Ensure secrets
-    common_secrets, store_secrets, task_secrets = _ensure_secrets(
-        launcher, dry_run, launch_config, all_required_secrets
+    common_secrets, task_secrets = _prepare_secrets(
+        launcher,
+        dry_run=dry_run,
+        all_required_secrets=all_required_secrets,
+        hf_token=hf_token,
+        hf_repos=_hf_repos(launch_config.model_specs, task_configs_by_spec.values()),
     )
 
     # Print summary header
@@ -620,7 +627,6 @@ def launch(
         effective_groups,
         launcher.beaker.user_name,
         common_secrets,
-        store_secrets,
         task_secrets,
         inject_aws,
         inject_gcs,
@@ -761,43 +767,21 @@ def _get_task_configs(
     return task_configs
 
 
-def _ensure_secrets(
-    launcher, dry_run: bool, launch_config, all_required_secrets: set[str]
-) -> tuple[list[tuple[str, str]], list[tuple[str, str]], list[tuple[str, str]]]:
-    """Ensure required secrets exist."""
-    from olmo_eval.launch.beaker.secrets import (
-        COMMON_SECRET_NAMES,
-        ensure_common_secrets,
-        ensure_task_secrets,
-        get_local_hf_token,
-        get_local_wandb_api_key,
-        get_store_secret_mappings,
-    )
+def _require_upload_credentials(upload: bool, dry_run: bool) -> None:
+    """Stop before launching when uploads are on but no local Google credentials exist.
 
-    beaker_username = launcher.beaker.user_name
+    The launch reads the uploader key from Secret Manager with the local credentials, so
+    they never leave this machine.
+    """
+    from olmo_eval.upload.auth import NO_CREDENTIALS_MESSAGE, has_local_google_credentials
 
-    task_required_secrets = all_required_secrets - COMMON_SECRET_NAMES
-
+    if not upload or has_local_google_credentials():
+        return
     if dry_run:
-        common_secrets = []
-        if get_local_hf_token():
-            common_secrets.append(("HF_TOKEN", f"{beaker_username}_HF_TOKEN"))
-        if get_local_wandb_api_key():
-            common_secrets.append(("WANDB_API_KEY", f"{beaker_username}_WANDB_API_KEY"))
-        task_secrets = [(s, f"{beaker_username}_{s}") for s in sorted(task_required_secrets)]
-    else:
-        common_secrets = ensure_common_secrets(workspace=launch_config.workspace)
-        try:
-            task_secrets = ensure_task_secrets(
-                workspace=launch_config.workspace, required_secrets=task_required_secrets
-            )
-        except ValueError as e:
-            console.print(f"[red]Error:[/red] {e}")
-            raise SystemExit(1) from None
-
-    store_secrets = get_store_secret_mappings() if launch_config.store else []
-
-    return common_secrets, store_secrets, task_secrets
+        console.print(f"[yellow]Warning:[/yellow] {NO_CREDENTIALS_MESSAGE}")
+        return
+    console.print(f"[red]Error:[/red] {NO_CREDENTIALS_MESSAGE}")
+    raise SystemExit(1)
 
 
 def _print_experiment_matrix(experiment_plan: list["ExperimentPlan"]) -> None:
@@ -911,45 +895,117 @@ def _auto_generate_group(prefix: str, existing_groups: list[str]) -> list[str]:
     return [f"{prefix}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"]
 
 
+def _hf_repos(model_specs, task_configs=()) -> list[tuple[str, str]]:
+    """Collect the Hugging Face models and datasets a launch reads, for the gating check.
+
+    Values that are not Hugging Face repo ids (paths, s3:// or gs:// URIs, API model
+    names) are filtered out later by ``check_hf_access``.
+    """
+    from olmo_eval.common.configs import get_provider_config
+    from olmo_eval.data import DataSource
+    from olmo_eval.data.sources import SourceType
+
+    repos: list[tuple[str, str]] = []
+    for model_spec in model_specs:
+        repos.append((model_spec, "model"))
+        try:
+            provider_config = get_provider_config(model_spec)
+        except Exception:
+            continue
+        for repo in (provider_config.model, provider_config.tokenizer):
+            if repo:
+                repos.append((repo, "model"))
+    for task_cfg in task_configs:
+        for source in (
+            getattr(task_cfg, "data_source", None),
+            getattr(task_cfg, "fewshot_source", None),
+        ):
+            if isinstance(source, str):
+                try:
+                    source = DataSource.from_uri(source)
+                except Exception:
+                    continue
+            if isinstance(source, DataSource) and source.source_type == SourceType.HF:
+                repos.append((source.path, "dataset"))
+    return repos
+
+
 def _prepare_secrets(
+    launcher,
+    *,
     dry_run: bool,
-    workspace: str,
     all_required_secrets: set[str],
-    beaker_username: str,
-    store: bool = False,
-) -> tuple[list[tuple[str, str]], list[tuple[str, str]], list[tuple[str, str]]]:
-    """Prepare common, task, and store secrets for Beaker jobs.
+    hf_token: bool | None = None,
+    hf_repos: list[tuple[str, str]] | None = None,
+) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """Prepare common and task secrets for Beaker jobs.
+
+    The Hugging Face token is injected from an existing ``<user>_HF_TOKEN`` secret, and
+    the local token is copied there only when the job needs it (see ``plan_hf_token``).
+    A dry run neither reads nor writes Beaker secrets.
 
     Args:
-        dry_run: If True, return mock secrets without creating them.
-        workspace: Beaker workspace name.
+        launcher: BeakerLauncher whose client defaults to the job's workspace.
+        dry_run: If True, return the secrets that would be used without touching Beaker.
         all_required_secrets: Set of required secret environment variable names.
-        beaker_username: Beaker username for dry-run secret naming.
-        store: If True, include database secret mappings.
+        hf_token: ``--hf-token`` (True), ``--no-hf-token`` (False), or auto (None).
+        hf_repos: (repo_id, repo_type) pairs checked for gated or private access.
 
     Returns:
-        Tuple of (common_secrets, task_secrets, store_secrets) as lists of
-        (env_var, secret_name) tuples.
+        Tuple of (common_secrets, task_secrets) as lists of (env_var, secret_name) tuples.
     """
     from olmo_eval.launch.beaker.secrets import (
         COMMON_SECRET_NAMES,
+        HF_TOKEN_ENV,
+        HfAccessCheck,
+        check_hf_access,
         ensure_common_secrets,
         ensure_task_secrets,
         get_local_hf_token,
-        get_local_wandb_api_key,
-        get_store_secret_mappings,
+        plan_hf_token,
+        secret_exists,
+        write_secret,
     )
 
+    beaker_username = launcher.beaker.user_name
+    workspace = launcher._workspace
     task_required_secrets = all_required_secrets - COMMON_SECRET_NAMES
+    local_hf_token = get_local_hf_token()
 
+    secret_present: bool | None = None
+    if not dry_run and hf_token is not False:
+        secret_present = secret_exists(launcher.beaker, f"{beaker_username}_{HF_TOKEN_ENV}")
+    # Skip the Hugging Face lookups when the answer cannot change the plan.
+    if hf_token is None and not secret_present:
+        access = check_hf_access(hf_repos or [], token=local_hf_token)
+    else:
+        access = HfAccessCheck()
+    plan = plan_hf_token(
+        username=beaker_username,
+        mode=hf_token,
+        secret_present=secret_present,
+        required=HF_TOKEN_ENV in all_required_secrets,
+        access=access,
+        have_local_token=local_hf_token is not None,
+    )
+    if plan.error:
+        if not dry_run:
+            console.print(f"[red]Error:[/red] {plan.error}")
+            raise SystemExit(1)
+        console.print(f"[yellow]Warning:[/yellow] {plan.error}")
+    elif plan.warning:
+        console.print(f"[yellow]Warning:[/yellow] {plan.message}")
+    elif plan.message:
+        console.print(f"[dim]{plan.message}[/dim]")
+
+    common_secrets: list[tuple[str, str]] = []
     if dry_run:
-        common_secrets: list[tuple[str, str]] = []
-        if get_local_hf_token():
-            common_secrets.append(("HF_TOKEN", f"{beaker_username}_HF_TOKEN"))
-        if get_local_wandb_api_key():
-            common_secrets.append(("WANDB_API_KEY", f"{beaker_username}_WANDB_API_KEY"))
+        # Jobs are not built in a dry run, so explain the BEAKER_TOKEN rule here.
+        launcher.beaker_token_secret(workspace, dry_run=True)
         task_secrets = [(s, f"{beaker_username}_{s}") for s in sorted(task_required_secrets)]
     else:
+        if plan.copy_local and local_hf_token:
+            write_secret(launcher.beaker, plan.secret_name, local_hf_token)
         common_secrets = ensure_common_secrets(workspace=workspace)
         try:
             task_secrets = ensure_task_secrets(
@@ -959,10 +1015,10 @@ def _prepare_secrets(
         except ValueError as e:
             console.print(f"[red]Error:[/red] {e}")
             raise SystemExit(1) from None
+    if plan.inject:
+        common_secrets.insert(0, (HF_TOKEN_ENV, plan.secret_name))
 
-    store_secrets = get_store_secret_mappings() if store else []
-
-    return common_secrets, task_secrets, store_secrets
+    return common_secrets, task_secrets
 
 
 def _launch_jobs(
@@ -1006,11 +1062,11 @@ def _launch_external_evals(
     follow: bool,
     aws_credentials: bool | None,
     gcs_credentials: bool | None,
-    s3_bucket: str | None,
-    s3_prefix: str | None,
-    s3_region: str,
-    store: bool = False,
+    upload: bool = True,
+    api_url: str | None = None,
+    tags: list[str] | None = None,
     secret_env_overrides: dict[str, str] | None = None,
+    hf_token: bool | None = None,
     user_env_vars: dict[str, str] | None = None,
     eval_args: dict[str, str] | None = None,
     provider_kwargs: dict[str, str] | None = None,
@@ -1082,11 +1138,11 @@ def _launch_external_evals(
     # Use CredentialManager for consistent credential detection (same as task path)
     cred_manager = CredentialManager(
         model_specs=list(model),
-        store=store,
         aws_credentials=aws_credentials,
         gcs_credentials=gcs_credentials,
     )
     inject_aws, inject_gcs = cred_manager.detect_and_setup(launcher)
+    _require_upload_credentials(upload, dry_run)
 
     # Auto-generate group if needed (using shared helper)
     effective_groups = _auto_generate_group("external-eval", list(group))
@@ -1094,16 +1150,7 @@ def _launch_external_evals(
     # Handle group creation
     _handle_group_creation(launcher, effective_groups, dry_run, yes)
 
-    # Display storage info (same as task path)
-    cred_manager.display_storage_info(
-        launcher,
-        s3_bucket,
-        s3_prefix,
-        s3_region,
-        None,  # s3_endpoint_url not supported yet
-        effective_groups,
-        inject_aws,
-    )
+    cred_manager.display_aws_info(launcher, inject_aws)
 
     # Collect required secrets from external evals and models
     all_required_secrets: set[str] = set()
@@ -1121,16 +1168,16 @@ def _launch_external_evals(
             pass
 
     # Prepare secrets (using shared helper)
-    common_secrets, task_secrets, store_secrets = _prepare_secrets(
+    common_secrets, task_secrets = _prepare_secrets(
+        launcher,
         dry_run=dry_run,
-        workspace=effective_workspace,
         all_required_secrets=all_required_secrets,
-        beaker_username=beaker_username,
-        store=store,
+        hf_token=hf_token,
+        hf_repos=_hf_repos(model),
     )
 
     # Build env secrets list
-    env_secrets = common_secrets + task_secrets + store_secrets
+    env_secrets = common_secrets + task_secrets
 
     # Add explicit secret overrides
     env_secrets.extend(
@@ -1141,6 +1188,9 @@ def _launch_external_evals(
         console.print("[yellow]Dry run mode - not submitting[/yellow]")
 
     # Build jobs and summaries for each model
+    from uuid import uuid4
+
+    launch_id = uuid4().hex[:12]
     job_configs = []
     summaries = []
     for model_spec in model:
@@ -1194,10 +1244,10 @@ def _launch_external_evals(
             budget=budget,
             groups=effective_groups,
             tensor_parallel_size=tensor_parallel_size,
-            s3_bucket=s3_bucket,
-            s3_prefix=s3_prefix,
-            s3_region=s3_region,
-            store=store,
+            upload=upload,
+            api_url=api_url,
+            tags=tags,
+            launch_id=launch_id,
             env_secrets=env_secrets,
             inject_aws_credentials=inject_aws,
             inject_gcs_credentials=inject_gcs,

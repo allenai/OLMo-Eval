@@ -1,0 +1,56 @@
+{
+  "user": [
+    {
+      "value": "maliam",
+      "count": 1
+    },
+    {
+      "value": "chrisg",
+      "count": 1
+    }
+  ],
+  "family": [
+    {
+      "value": "llama3.1",
+      "count": 1
+    },
+    {
+      "value": "qwen3",
+      "count": 1
+    }
+  ],
+  "group": [
+    {
+      "value": "llama-3.1-8b-instruct-omniscience_judge-20260930-180131",
+      "count": 1
+    }
+  ],
+  "workspace": [
+    {
+      "value": "ai2/olmo-eval-debug",
+      "count": 2
+    }
+  ],
+  "tag": [
+    {
+      "value": "omniscience",
+      "count": 1
+    }
+  ],
+  "status": [
+    {
+      "value": "complete",
+      "count": 2
+    }
+  ],
+  "model": [
+    {
+      "value": "meta-llama/Llama-3.1-8B-Instruct",
+      "count": 1
+    },
+    {
+      "value": "Qwen/Qwen3-8B",
+      "count": 1
+    }
+  ]
+}

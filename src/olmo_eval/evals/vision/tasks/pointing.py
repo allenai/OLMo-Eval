@@ -181,7 +181,7 @@ class PointingMetric(Metric):
             return None
         return float(result[self.kind])
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         # The scorer channel is f1; it is not precision/recall or any bucketed value.
         return False
 
@@ -206,10 +206,10 @@ class PointingErrorCountMetric(Metric):
             return None
         return 1.0 if result.get("error") else 0.0
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False
 
-    def pairwise_display_format(self) -> str:
+    def display_format(self) -> str:
         return "raw"
 
 
@@ -273,7 +273,7 @@ class PresenceMetric(Metric):
             return None
         return 1.0 if bool(result.get("made_prediction")) is self.expect_prediction else 0.0
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False
 
 

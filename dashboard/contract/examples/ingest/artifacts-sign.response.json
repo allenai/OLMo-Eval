@@ -1,0 +1,52 @@
+{
+  "uploads": [
+    {
+      "path": "metrics.json",
+      "gs_uri": "gs://ai2-skiff2-olmo-eval-results/runs/db385601e335/metrics.json",
+      "skip": true,
+      "url": null,
+      "method": "PUT",
+      "headers": {},
+      "expires_at": null
+    },
+    {
+      "path": "predictions/meta-llama_Llama-3.1-8B-Instruct/omniscience_judge_afd898-predictions.jsonl",
+      "gs_uri": "gs://ai2-skiff2-olmo-eval-results/runs/db385601e335/predictions/meta-llama_Llama-3.1-8B-Instruct/omniscience_judge_afd898-predictions.jsonl",
+      "skip": false,
+      "url": "https://storage.googleapis.com/ai2-skiff2-olmo-eval-results/runs/db385601e335/predictions/meta-llama_Llama-3.1-8B-Instruct/omniscience_judge_afd898-predictions.jsonl?X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Credential=olmo-eval-api%40ai2-skiff2-olmo-eval.iam.gserviceaccount.com%2F20261001%2Fauto%2Fstorage%2Fgoog4_request&X-Goog-Date=20261001T012700Z&X-Goog-Expires=3600&X-Goog-SignedHeaders=content-md5%3Bcontent-type%3Bhost&X-Goog-Signature=abc123",
+      "method": "PUT",
+      "headers": {
+        "Content-Type": "application/x-ndjson",
+        "Content-MD5": "jTm/RnEL1k8WrNeEEBxueQ==",
+        "x-goog-content-length-range": "4783708,4783708"
+      },
+      "expires_at": "2026-10-01T02:27:00+00:00"
+    },
+    {
+      "path": "requests/meta-llama_Llama-3.1-8B-Instruct/omniscience_judge_afd898-requests.jsonl",
+      "gs_uri": "gs://ai2-skiff2-olmo-eval-results/runs/db385601e335/requests/meta-llama_Llama-3.1-8B-Instruct/omniscience_judge_afd898-requests.jsonl",
+      "skip": false,
+      "url": "https://storage.googleapis.com/ai2-skiff2-olmo-eval-results/runs/db385601e335/requests/meta-llama_Llama-3.1-8B-Instruct/omniscience_judge_afd898-requests.jsonl?X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Credential=olmo-eval-api%40ai2-skiff2-olmo-eval.iam.gserviceaccount.com%2F20261001%2Fauto%2Fstorage%2Fgoog4_request&X-Goog-Date=20261001T012700Z&X-Goog-Expires=3600&X-Goog-SignedHeaders=content-md5%3Bcontent-type%3Bhost&X-Goog-Signature=abc123",
+      "method": "PUT",
+      "headers": {
+        "Content-Type": "application/x-ndjson",
+        "Content-MD5": "VL5poiXMyMZj1ev+jXzu0g==",
+        "x-goog-content-length-range": "1193030,1193030"
+      },
+      "expires_at": "2026-10-01T02:27:00+00:00"
+    },
+    {
+      "path": "metrics/vllm_server_meta-llama_Llama-3.1-8B-Instruct-inference.jsonl",
+      "gs_uri": "gs://ai2-skiff2-olmo-eval-results/runs/db385601e335/metrics/vllm_server_meta-llama_Llama-3.1-8B-Instruct-inference.jsonl",
+      "skip": false,
+      "url": "https://storage.googleapis.com/ai2-skiff2-olmo-eval-results/runs/db385601e335/metrics/vllm_server_meta-llama_Llama-3.1-8B-Instruct-inference.jsonl?X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Credential=olmo-eval-api%40ai2-skiff2-olmo-eval.iam.gserviceaccount.com%2F20261001%2Fauto%2Fstorage%2Fgoog4_request&X-Goog-Date=20261001T012700Z&X-Goog-Expires=3600&X-Goog-SignedHeaders=content-md5%3Bcontent-type%3Bhost&X-Goog-Signature=abc123",
+      "method": "PUT",
+      "headers": {
+        "Content-Type": "application/x-ndjson",
+        "Content-MD5": "PkJRSMp950TtO6uq28LfzQ==",
+        "x-goog-content-length-range": "1548445,1548445"
+      },
+      "expires_at": "2026-10-01T02:27:00+00:00"
+    }
+  ]
+}

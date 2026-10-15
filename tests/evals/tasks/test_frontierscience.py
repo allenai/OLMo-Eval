@@ -862,7 +862,7 @@ def test_metric_subject_slice_stays_out_of_pairwise_scorer_fallback():
 
     assert accuracy.compute([response]) == 1.0
     assert accuracy.compute_instance(response) is None
-    assert accuracy.pairwise_display_format() == "percentage"
+    assert accuracy.display_format() == "percentage"
 
 
 class TestVerifiedMultipleChoice:
@@ -928,4 +928,4 @@ class TestVerifiedMultipleChoice:
             expected_probability
         )
         assert metrics["logprob_margin"].compute([response]) == 1.0
-        assert metrics["logprob_margin"].pairwise_unit() == "logprob"
+        assert metrics["logprob_margin"].metric_unit() == "logprob"

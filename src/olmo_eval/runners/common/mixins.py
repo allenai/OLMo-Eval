@@ -3,29 +3,19 @@
 This module provides mixin classes that add common functionality to runners.
 Core logic has been extracted to dedicated modules:
 - models: Dataclasses for configuration and output
-- formatting: Model name sanitization and S3 path building
-- storage: S3 upload and storage backend operations
 - metrics: Metrics building and writing
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from olmo_eval.common.logging import get_logger
 from olmo_eval.runners.common.models import (
     MetricsOutput,
     ModelMetadata,
-    S3Config,
     ScoreSummary,
     TaskMetricsEntry,
 )
-from olmo_eval.runners.io.formatting import (  # noqa: F401
-    build_s3_prefix,
-    get_model_display_name,
-    sanitize_model_name,
-)
-from olmo_eval.runners.io.storage import save_results, upload_to_s3
 from olmo_eval.runners.io.writers import write_predictions_jsonl, write_requests_jsonl
 from olmo_eval.runners.processing.metrics import (
     build_multi_model_metrics,
@@ -34,17 +24,7 @@ from olmo_eval.runners.processing.metrics import (
     write_metrics_json,
 )
 
-if TYPE_CHECKING:
-    from olmo_eval.storage import StorageBackend
-
-logger = get_logger("runners.mixins")
-
-
 __all__ = [
-    "S3Config",
-    "sanitize_model_name",
-    "get_model_display_name",
-    "build_s3_prefix",
     "ModelMetadata",
     "TaskMetricsEntry",
     "ScoreSummary",
@@ -57,11 +37,7 @@ class RunnerResultsMixin:
     """Shared results-writing functionality for runners."""
 
     output_dir: str
-    storages: list[StorageBackend]
     task_specs: list[str]
-
-    # Optional S3 upload configuration
-    s3_config: S3Config | None
 
     # Per-task overrides
     task_overrides: dict[str, dict[str, Any]]
@@ -139,59 +115,6 @@ class RunnerResultsMixin:
             )
 
         return errors
-
-    def _save_results(
-        self,
-        results: dict[str, Any],
-        experiment_id: str | None = None,
-        model_hash: str | None = None,
-        s3_location: str | None = None,
-        experiment_duration_seconds: float | None = None,
-        provider_init_seconds: dict[str, float] | None = None,
-    ) -> None:
-        """Save results to all configured storage backends.
-
-        Thin wrapper around storage.save_results() with runner-specific context.
-        """
-        s3_cfg = getattr(self, "s3_config", None)
-        runner_experiment_name = getattr(self, "experiment_name", None)
-        runner_experiment_group = getattr(self, "experiment_group", None)
-
-        save_results(
-            results=results,
-            storages=self.storages,
-            s3_config=s3_cfg,
-            experiment_id=experiment_id,
-            model_hash=model_hash,
-            s3_location=s3_location,
-            experiment_name=runner_experiment_name,
-            experiment_group=runner_experiment_group,
-            experiment_duration_seconds=experiment_duration_seconds,
-            provider_init_seconds=provider_init_seconds,
-        )
-
-    def _upload_to_s3(
-        self,
-        model_name: str,
-        model_hash: str,
-        experiment_id: str,
-    ) -> str | None:
-        """Upload evaluation output to S3.
-
-        Thin wrapper around storage.upload_to_s3().
-        """
-        s3_config = getattr(self, "s3_config", None)
-        if not s3_config:
-            logger.debug("S3 upload not configured; skipping.")
-            return None
-
-        return upload_to_s3(
-            output_dir=self.output_dir,
-            s3_config=s3_config,
-            model_name=model_name,
-            model_hash=model_hash,
-            experiment_id=experiment_id,
-        )
 
     def _log_summary(self, results: dict[str, Any], multi_model: bool = False) -> None:
         """Log summary of all task scores.
