@@ -98,10 +98,10 @@ export function TasksTab(ctx: RunCtx) {
         id: "score",
         header: "Score",
         title: "Score",
-        width: 110,
+        width: 190,
         align: "right",
         sortValue: (r) => r.score,
-        cell: (r) => <ScoreValue score={r.score} stderr={r.stderr} format={scoreFormat(r)} />,
+        cell: (r) => <ScoreValue score={r.score} stderr={r.stderr} format={scoreFormat(r)} generationCounts={r.generation_counts} />,
         csv: (r) => r.score,
       },
       {
@@ -125,10 +125,10 @@ export function TasksTab(ctx: RunCtx) {
         id: "base",
         header: "Base",
         title: "Baseline score",
-        width: 80,
+        width: 190,
         align: "right",
         sortValue: (r) => r.baseline?.score,
-        cell: (r) => (r.baseline ? <ScoreValue score={r.baseline.score} format={scoreFormat(r)} showStderr={false} muted /> : <span className="faint">—</span>),
+        cell: (r) => (r.baseline ? <ScoreValue score={r.baseline.score} format={scoreFormat(r)} showStderr={false} muted generationCounts={r.baseline.generation_counts} /> : <span className="faint">—</span>),
         csv: (r) => r.baseline?.score,
       },
       {
@@ -325,6 +325,7 @@ export function TasksTab(ctx: RunCtx) {
       <Panel pad="none" refetching={ctx.tasks.isFetching && !ctx.tasks.isLoading}>
         <DataTable
           tableId="run-tasks"
+          rowHeight={rows.some((row) => row.generation_counts || row.baseline?.generation_counts) ? 72 : undefined}
           columns={columns}
           rows={rows}
           getRowId={(r) => String(r.task_result_id)}

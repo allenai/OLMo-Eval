@@ -65,6 +65,8 @@ class TaskResult:
     instances_processed: int = 0
     instances_failed: int = 0
     hard_failure_rate_exceeded: bool = False
+    # See olmo_eval.runners.processing.generation_counts.
+    generation_counts: dict[str, int] | None = None
     # Per-task cost (see TASK_COST_KEYS). Timestamps are ISO 8601 UTC. None when the
     # runner could not measure the value.
     first_request_at: str | None = None
@@ -105,6 +107,8 @@ class TaskResult:
             result["error"] = self.error
         if self.error_summary:
             result["error_summary"] = self.error_summary
+        if self.generation_counts is not None:
+            result["generation_counts"] = self.generation_counts
         if include_predictions and self.predictions:
             result["predictions"] = self.predictions
         return result

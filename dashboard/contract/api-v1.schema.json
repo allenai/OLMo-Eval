@@ -197,6 +197,20 @@
         "delta": {
           "$ref": "#/definitions/DeltaStats"
         },
+        "generation_counts": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/definitions/Count"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Generation diagnostics for the baseline task or suite."
+        },
         "metrics": {
           "$ref": "#/definitions/FlatMetrics"
         },
@@ -5429,6 +5443,20 @@
         "delta": {
           "$ref": "#/definitions/DeltaStats"
         },
+        "generation_counts": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/definitions/Count"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Generation diagnostics for the baseline task or suite."
+        },
         "score": {
           "type": [
             "number",
@@ -5576,6 +5604,20 @@
         },
         "display_format": {
           "$ref": "#/definitions/DisplayFormat"
+        },
+        "generation_counts": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/definitions/Count"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Summed diagnostics from the suite's contributing task results."
         },
         "higher_is_better": {
           "type": [
@@ -5861,6 +5903,20 @@
             "$ref": "#/definitions/Count"
           },
           "type": "object"
+        },
+        "generation_counts": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/definitions/Count"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Per-generation diagnostics, available even when predictions were not uploaded."
         },
         "instance_scale": {
           "type": "number"

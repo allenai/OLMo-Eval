@@ -13,6 +13,7 @@ from olmo_eval.evals.tasks.common import Task, get_task
 from olmo_eval.runners.asynq.types import QueueItem, TaskTracker, summarize_failed_instances
 from olmo_eval.runners.common.types import DEFAULT_MAX_HARD_FAILURE_RATE, TaskResult
 from olmo_eval.runners.io.builders import build_predictions, build_requests_from_responses
+from olmo_eval.runners.processing.generation_counts import count_generations
 from olmo_eval.runners.processing.utils import get_metric_metadata
 
 logger = get_logger(__name__)
@@ -191,6 +192,7 @@ async def finalize_task(tracker: TaskTracker) -> TaskResult:
         error_summary=error_summary,
         instances_processed=tracker.total_instances,
         instances_failed=len(tracker.failed_instances),
+        generation_counts=count_generations(scored),
     )
 
 
@@ -283,6 +285,7 @@ def compute_task_metrics(
         instances_processed=total_instances,
         instances_failed=instances_failed,
         hard_failure_rate_exceeded=gate_error is not None,
+        generation_counts=count_generations(scored_responses),
     )
 
 
