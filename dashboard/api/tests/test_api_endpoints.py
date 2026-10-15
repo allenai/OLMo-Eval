@@ -1032,3 +1032,23 @@ async def test_gap_comparisons_and_ranking_use_companion_metadata(
 
     assert leaderboard["meta"]["display_format"] == companion_format
     assert leaderboard["meta"]["higher_is_better"] is False
+
+
+async def test_average_run_baseline_uses_only_the_current_runs_present_tasks(client):
+    await seed_run(
+        client,
+        run_id="partial001",
+        tasks={"a": [0.6]},
+        suites=[suite("mean_pair", ["a", "b"], score=0.6)],
+    )
+    await seed_run(
+        client,
+        run_id="complete001",
+        tasks={"a": [0.2], "b": [0.8]},
+        suites=[suite("mean_pair", ["a", "b"], score=0.5)],
+    )
+    body = await get(
+        client, "/api/runs/partial001/suites", "RunSuitesResponse", baseline="r:complete001"
+    )
+    pair = next(row for row in body["items"] if row["name"] == "mean_pair")
+    assert pair["baseline"]["score"] == pytest.approx(0.2)
