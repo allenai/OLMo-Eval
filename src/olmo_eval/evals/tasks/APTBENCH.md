@@ -173,3 +173,41 @@ Inherited upstream quirks, kept for fidelity:
   one (4/241 in `issue_fix_action`, 3/1084 in `env_setup_action`) can never
   be matched.
 - `env_setup_plan` has one duplicated row.
+
+## Parity with the paper
+
+Qwen3-8B-Base, evaluated with `aptbench:ctx32k` (`provider.max_model_len=32768`),
+compared with the paper's Qwen3-8B base numbers (Tables 2 and 3; accuracy or
+exact match, in %).
+
+| Subtask | Paper | olmo-eval (ctx32k) | Δ |
+|---|---:|---:|---:|
+| `env_setup_plan` | 76.43 | 78.72 | +2.29 |
+| `env_setup_action` (EM) | 35.61 | 35.70 | +0.09 |
+| `env_setup_error` | 61.22 | 59.86 | −1.36 |
+| `issue_fix_locate` | 25.09 | 25.44 | +0.35 |
+| `issue_fix_fix_patch` | 25.43 | 21.55 | −3.88 |
+| `issue_fix_plan` | 52.67 | 50.21 | −2.46 |
+| `issue_fix_action` (EM) | 27.80 | 21.16 | −6.64 |
+| `issue_fix_test_patch` | 28.68 | 28.87 | +0.19 |
+| **SWE average** | **41.62** | **40.19** | **−1.43** |
+| `deepresearch_plan_en` | 73.94 | 74.43 | +0.49 |
+| `deepresearch_plan_zh` | 72.90 | 71.94 | −0.96 |
+| `deepresearch_summ_ans_en` (EM) | 31.60 | 31.60 | 0.00 |
+| `deepresearch_summ_ans_zh` (EM) | 36.96 | 36.23 | −0.73 |
+| `deepresearch_openend_plan_en` | 55.03 | 54.36 | −0.67 |
+| `deepresearch_openend_citation_en` | 15.61 | 17.92 | +2.31 |
+| `deepresearch_openend_citation_zh` | 8.47 | 6.35 | −2.12 |
+| `deepresearch_openend_quality_en` | 39.09 | 37.27 | −1.82 |
+| `deepresearch_openend_quality_zh` | 29.13 | 28.16 | −0.97 |
+
+The paper's DR average also includes ROUGE-1 columns, which are not
+implemented, so DR is compared per subtask only.
+
+The largest gaps are on subtasks whose prompts exceed 32K tokens. Measured with
+the Qwen3 tokenizer, every `issue_fix_action` prompt (median about 76K tokens)
+and about two thirds of `issue_fix_fix_patch` prompts are truncated at
+`ctx32k`, losing their in-context examples. Upstream leaves almost all of these
+prompts whole, since it only truncates prompts over 120K tokens. Comparisons
+against the paper on these subtasks need a model and variant with enough
+context (e.g. `ctx128k`).
