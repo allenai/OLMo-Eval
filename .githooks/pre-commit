@@ -98,5 +98,5 @@ run_check() {
 
 run_check "ruff check" uv run --frozen ruff check src/ tests/
 run_check "ruff format" uv run --frozen ruff format --check src/ tests/
-run_check "ty" scripts/type_check.sh
+run_check "ty" uv run --frozen ty check src/
 run_check "file sizes" scripts/check_file_sizes.sh

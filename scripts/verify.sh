@@ -40,7 +40,7 @@ $UV_RUN ruff check src/ tests/
 
 echo ""
 echo "==> Running ty type checker..."
-./scripts/type_check.sh
+$UV_RUN ty check src/
 
 echo ""
 echo "==> Checking file sizes..."
