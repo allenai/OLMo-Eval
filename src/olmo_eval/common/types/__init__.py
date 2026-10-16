@@ -11,6 +11,7 @@ from .agent import (
 from .base import (
     FOLLOW_UP_TURNS_KEY,
     REPLIES_KEY,
+    TURN_FINISH_REASONS_KEY,
     Instance,
     LMOutput,
     LMRequest,
@@ -62,6 +63,7 @@ from .trajectory import (
 __all__ = [
     "FOLLOW_UP_TURNS_KEY",
     "REPLIES_KEY",
+    "TURN_FINISH_REASONS_KEY",
     "AgentMetrics",
     "AgentTrajectory",
     "AgentTurn",

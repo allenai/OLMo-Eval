@@ -225,6 +225,9 @@ FOLLOW_UP_TURNS_KEY = "follow_up_turns"
 #: ``LMOutput.metadata`` key holding the model's reply to each user turn, in order.
 REPLIES_KEY = "replies"
 
+#: ``LMOutput.metadata`` key holding each reply's finish reason, in turn order.
+TURN_FINISH_REASONS_KEY = "turn_finish_reasons"
+
 
 @dataclass(frozen=True, slots=True)
 class LMRequest:
