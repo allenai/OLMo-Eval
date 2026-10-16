@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _current_binding: ContextVar[ExecutorBinding | None] = ContextVar("_current_binding", default=None)
+_max_tool_output_chars: ContextVar[int | None] = ContextVar("_max_tool_output_chars", default=None)
 FORCED_FINAL_ANSWER_INSTRUCTION = (
     "You have reached the maximum number of steps. Based on the information gathered so far, "
     "provide your final answer now. Do not call any tools."
@@ -37,6 +38,24 @@ DEFAULT_CHAT_TEMPLATE_KWARGS: dict[str, Any] = {"enable_thinking": False}
 # Sentinel distinguishing "provider does not support chat_template_kwargs" from
 # "provider supports it but has none configured".
 _UNSUPPORTED: Any = object()
+
+
+def truncate_tool_output(output: str, max_chars: int | None) -> str:
+    """Shorten a tool output to at most ``max_chars``, keeping its start and end.
+
+    Args:
+        output: The tool output.
+        max_chars: Character budget, or None to leave the output unchanged.
+
+    Returns:
+        The output, with its middle replaced by a marker if it was over budget.
+    """
+    if max_chars is None or len(output) <= max_chars:
+        return output
+    head = max_chars // 2
+    tail = max_chars - head
+    omitted = len(output) - max_chars
+    return f"{output[:head]}\n[... {omitted} characters omitted ...]\n{output[-tail:]}"
 
 
 def _resolve_chat_template_kwargs(provider: InferenceProvider) -> dict[str, Any] | None:
@@ -133,6 +152,7 @@ class OpenAIAgentsScaffold(Scaffold):
         self._cached_config: HarnessConfig | None = None
         self._cached_provider_id: int | None = None
         self._cached_has_sandbox: bool = False
+        self._cached_stop_at_tools: tuple[str, ...] = ()
         self._sandbox_manager: SandboxManager | None = None
 
     def clear_cache(self) -> None:
@@ -141,6 +161,7 @@ class OpenAIAgentsScaffold(Scaffold):
         self._cached_config = None
         self._cached_provider_id = None
         self._cached_has_sandbox = False
+        self._cached_stop_at_tools = ()
 
     async def initialize(self, config: HarnessConfig) -> None:
         """Initialize sandbox manager if needed.
@@ -222,7 +243,7 @@ class OpenAIAgentsScaffold(Scaffold):
                 if binding is None:
                     raise RuntimeError("No binding set for session tool")
                 result = await binding.execute_in_session(command)
-                output = result.output
+                output = truncate_tool_output(result.output, _max_tool_output_chars.get())
                 if result.exit_code != 0:
                     output += f"\n[Exit code: {result.exit_code}]"
                 return output
@@ -230,7 +251,8 @@ class OpenAIAgentsScaffold(Scaffold):
 
             async def sandboxed_execute(command: str) -> str:
                 """Execute command in sandbox."""
-                return await manager.execute(command, capabilities=required_caps)
+                output = await manager.execute(command, capabilities=required_caps)
+                return truncate_tool_output(output, _max_tool_output_chars.get())
 
         return sandboxed_execute
 
@@ -239,6 +261,7 @@ class OpenAIAgentsScaffold(Scaffold):
         provider: InferenceProvider,
         config: HarnessConfig,
         sandbox_manager: SandboxManager | None = None,
+        stop_at_tools: tuple[str, ...] = (),
     ) -> Any:
         """Create a new agent with the given configuration.
 
@@ -246,6 +269,7 @@ class OpenAIAgentsScaffold(Scaffold):
             provider: The inference provider for model calls.
             config: Harness configuration.
             sandbox_manager: Optional sandbox manager for sandboxed tools.
+            stop_at_tools: Tool names whose call ends the run.
 
         Returns:
             An Agent instance from the agents SDK.
@@ -254,6 +278,7 @@ class OpenAIAgentsScaffold(Scaffold):
             Agent,
             ModelSettings,
             OpenAIChatCompletionsModel,
+            StopAtTools,
             function_tool,
             set_tracing_disabled,
         )
@@ -290,6 +315,9 @@ class OpenAIAgentsScaffold(Scaffold):
                 extra_body={"chat_template_kwargs": chat_template_kwargs}
             )
 
+        if stop_at_tools:
+            agent_kwargs["tool_use_behavior"] = StopAtTools(stop_at_tool_names=list(stop_at_tools))
+
         agent = Agent(
             name=self.name,
             instructions=config.system_prompt or "",
@@ -305,11 +333,13 @@ class OpenAIAgentsScaffold(Scaffold):
         provider: InferenceProvider,
         config: HarnessConfig,
         sandbox_manager: SandboxManager | None = None,
+        stop_at_tools: tuple[str, ...] = (),
     ) -> Any:
         """Get cached agent or create a new one if config/provider changed.
 
-        Agents are cached based on config, provider, and whether sandbox is used.
-        The sandbox manager is stable across runs, so caching works.
+        Agents are cached based on config, provider, whether sandbox is used, and
+        which tools end the run. The sandbox manager is stable across runs, so
+        caching works.
         """
         has_sandbox = sandbox_manager is not None
         if (
@@ -317,15 +347,17 @@ class OpenAIAgentsScaffold(Scaffold):
             and self._cached_config == config
             and self._cached_provider_id == id(provider)
             and self._cached_has_sandbox == has_sandbox
+            and self._cached_stop_at_tools == stop_at_tools
         ):
             return self._cached_agent
 
-        agent = self._create_agent(provider, config, sandbox_manager)
+        agent = self._create_agent(provider, config, sandbox_manager, stop_at_tools)
 
         self._cached_agent = agent
         self._cached_config = config
         self._cached_provider_id = id(provider)
         self._cached_has_sandbox = has_sandbox
+        self._cached_stop_at_tools = stop_at_tools
 
         return agent
 
@@ -348,11 +380,17 @@ class OpenAIAgentsScaffold(Scaffold):
             trace_metadata: Optional metadata for tracing (e.g., instance_id, task_id).
             **kwargs: Scaffold-specific options:
                 - enable_compaction: Enable context compaction (default: True).
+                - max_tool_output_chars: Truncate sandboxed tool outputs to this many
+                  characters (default: no limit).
+                - stop_at_tools: Names of tools whose call ends the run, with that
+                  tool's output as the final output (default: none).
 
         Returns:
             HarnessResult with trajectory from SDK execution.
         """
         enable_compaction = kwargs.get("enable_compaction", True)
+        max_tool_output_chars = kwargs.get("max_tool_output_chars")
+        stop_at_tools = tuple(kwargs.get("stop_at_tools") or ())
         try:
             from agents import RunConfig, Runner, trace  # type: ignore[ty:unresolved-import]
             from agents.exceptions import (  # type: ignore[ty:unresolved-import]
@@ -398,7 +436,9 @@ class OpenAIAgentsScaffold(Scaffold):
             )
 
         # Use cached agent (tools read from ContextVar at execution time)
-        agent = self._get_or_create_agent(provider, config, self._sandbox_manager)
+        agent = self._get_or_create_agent(
+            provider, config, self._sandbox_manager, stop_at_tools=stop_at_tools
+        )
 
         # Acquire binding if session tools are used
         has_session_tools = any(t.session for t in config.resolved_tools if t.sandbox)
@@ -440,6 +480,8 @@ class OpenAIAgentsScaffold(Scaffold):
                 [tool.name for tool in config.resolved_tools]
             ),
         )
+
+        output_limit_token = _max_tool_output_chars.set(max_tool_output_chars)
 
         # Run agent within trace context for observability
         date_cutoff = (trace_metadata or {}).get("date_cutoff")
@@ -509,6 +551,7 @@ class OpenAIAgentsScaffold(Scaffold):
                 logger.error(f"Agent run failed: {e}\n{traceback.format_exc()}")
                 raise
             finally:
+                _max_tool_output_chars.reset(output_limit_token)
                 # Release binding after run
                 binding = _current_binding.get()
                 if binding is not None:

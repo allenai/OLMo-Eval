@@ -14,6 +14,7 @@ from olmo_eval.harness.scaffolds.openai_agents import (
     FORCED_FINAL_ANSWER_INSTRUCTION,
     OpenAIAgentsScaffold,
     _make_tool_error_formatter,
+    truncate_tool_output,
 )
 
 pytest.importorskip("agents")
@@ -75,7 +76,7 @@ def _patch_scaffold_agent(monkeypatch, agent):
     monkeypatch.setattr(
         OpenAIAgentsScaffold,
         "_get_or_create_agent",
-        lambda self, provider, config, sandbox_manager=None: agent,
+        lambda self, provider, config, sandbox_manager=None, **kwargs: agent,
     )
     monkeypatch.setattr(agents, "trace", lambda *args, **kwargs: contextlib.nullcontext())
 
@@ -571,3 +572,162 @@ class TestModelRefusal:
 
         assert "I cannot help with that." in result.final_output.text
         assert result.error is not None
+
+
+class TestToolOutputTruncation:
+    def test_short_output_and_no_limit_are_unchanged(self):
+        assert truncate_tool_output("abc", 10) == "abc"
+        assert truncate_tool_output("x" * 100, None) == "x" * 100
+
+    def test_long_output_keeps_head_and_tail(self):
+        output = "a" * 50 + "b" * 50
+        truncated = truncate_tool_output(output, 20)
+        assert truncated.startswith("a" * 10)
+        assert truncated.endswith("b" * 10)
+        assert "[... 80 characters omitted ...]" in truncated
+
+    @pytest.mark.anyio
+    async def test_session_tool_output_is_truncated_during_a_run(self, monkeypatch):
+        from agents import Agent, Runner
+
+        from olmo_eval.harness.sandbox.executor import ExecutionResult
+        from olmo_eval.harness.scaffolds import openai_agents
+        from olmo_eval.harness.tools import get_tool
+
+        class FakeBinding:
+            async def execute_in_session(self, command):
+                return ExecutionResult(success=False, output="x" * 1000, exit_code=2)
+
+            async def release(self):
+                pass
+
+        class FakeManager:
+            async def acquire_binding(self, capabilities):
+                return FakeBinding()
+
+        tool = get_tool("execute_bash_session")
+        execute = OpenAIAgentsScaffold()._wrap_sandboxed_tool(tool, FakeManager())  # type: ignore[arg-type]
+        outputs = []
+
+        async def fake_run(**kwargs):
+            outputs.append(await execute("cat big_file"))
+            return SimpleNamespace(new_items=[], final_output="done")
+
+        agent = Agent(name="test-agent", instructions="Use tools.")
+        _patch_scaffold_agent(monkeypatch, agent)
+        monkeypatch.setattr(Runner, "run", staticmethod(fake_run))
+        scaffold = OpenAIAgentsScaffold()
+        scaffold.set_sandbox_manager(FakeManager())
+
+        await scaffold.run(
+            provider=SimpleNamespace(),
+            config=HarnessConfig(name="test", max_turns=3, tools=(tool,)),
+            request=_agent_request(),
+            enable_compaction=False,
+            max_tool_output_chars=100,
+        )
+
+        assert len(outputs[0]) < 200
+        assert "[... 900 characters omitted ...]" in outputs[0]
+        assert outputs[0].endswith("[Exit code: 2]")
+        assert openai_agents._max_tool_output_chars.get() is None
+
+
+class TestStopAtTools:
+    def _scaffold_with_stub_agent(self, monkeypatch):
+        created = []
+
+        def fake_create(self, provider, config, sandbox_manager=None, stop_at_tools=()):
+            created.append(stop_at_tools)
+            return object()
+
+        monkeypatch.setattr(OpenAIAgentsScaffold, "_create_agent", fake_create)
+        return OpenAIAgentsScaffold(), created
+
+    def test_stop_setting_is_part_of_the_agent_cache_key(self, monkeypatch):
+        scaffold, created = self._scaffold_with_stub_agent(monkeypatch)
+        provider = SimpleNamespace()
+        config = HarnessConfig(name="test", max_turns=3)
+
+        first = scaffold._get_or_create_agent(provider, config, stop_at_tools=("submit",))
+        again = scaffold._get_or_create_agent(provider, config, stop_at_tools=("submit",))
+        plain = scaffold._get_or_create_agent(provider, config)
+
+        assert first is again
+        assert plain is not first
+        assert created == [("submit",), ()]
+
+    def test_agent_stops_at_named_tool(self):
+        from olmo_eval.harness.tools import get_tool
+
+        provider = SimpleNamespace(
+            get_openai_client=lambda: SimpleNamespace(base_url="http://x"),
+            model_name="m",
+        )
+        config = HarnessConfig(name="test", max_turns=3, tools=(get_tool("submit"),))
+        agent = OpenAIAgentsScaffold()._create_agent(provider, config, stop_at_tools=("submit",))
+        assert agent.tool_use_behavior == {"stop_at_tool_names": ["submit"]}
+
+        default = OpenAIAgentsScaffold()._create_agent(provider, config)
+        assert default.tool_use_behavior == "run_llm_again"
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("stop", [True, False])
+    async def test_calling_submit_ends_the_run(self, stop):
+        """Scripts a chat endpoint that calls submit on every turn."""
+        import json
+
+        import httpx
+        from openai import AsyncOpenAI
+
+        from olmo_eval.harness.tools import get_tool
+
+        requests: list[dict] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(json.loads(request.content.decode()))
+            message = {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": f"call_{len(requests)}",
+                        "type": "function",
+                        "function": {"name": "submit", "arguments": "{}"},
+                    }
+                ],
+            }
+            return httpx.Response(
+                200,
+                json={
+                    "id": "chatcmpl-test",
+                    "object": "chat.completion",
+                    "created": 0,
+                    "model": "test-model",
+                    "choices": [{"index": 0, "message": message, "finish_reason": "tool_calls"}],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+                },
+            )
+
+        client = AsyncOpenAI(
+            api_key="test-key-not-real",
+            base_url="http://test.invalid/v1",
+            http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        )
+        provider = SimpleNamespace(get_openai_client=lambda: client, model_name="test-model")
+        config = HarnessConfig(name="test", max_turns=3, tools=(get_tool("submit"),))
+
+        result = await OpenAIAgentsScaffold().run(
+            provider=provider,
+            config=config,
+            request=_agent_request(),
+            enable_compaction=False,
+            stop_at_tools=("submit",) if stop else None,
+        )
+
+        if stop:
+            assert len(requests) == 1
+            assert not result.max_turns_reached
+        else:
+            assert len(requests) >= 3
+            assert result.max_turns_reached
