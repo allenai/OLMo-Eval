@@ -146,7 +146,7 @@ class CharxivScoreMetric(Metric):
             return None
         return float(result["score"]) if result["score"] in (0, 1) else 0.0
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False
 
 
@@ -167,7 +167,7 @@ class CharxivInvalidCountMetric(Metric):
             return None
         return 0.0 if result["score"] in (0, 1) else 1.0
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False
 
 

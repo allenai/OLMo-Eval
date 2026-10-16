@@ -97,31 +97,15 @@ class ExternalRunConfig:
     multiple=True,
     help="Provider kwargs (key=value, e.g., -K enable_chunked_prefill=true)",
 )
-# Storage options
+# Dashboard upload options
 @click.option(
-    "--store",
-    is_flag=True,
-    help="Persist results to the configured database",
+    "--upload/--no-upload",
+    "upload",
+    default=None,
+    help="Upload results to the olmo-eval dashboard (default: on; OLMO_EVAL_UPLOAD=0 disables)",
 )
-@click.option("--s3-bucket", help="S3 bucket for storing evaluation results")
-@click.option("--s3-prefix", help="S3 prefix/path within bucket for results")
-@click.option("--s3-group", help="S3 group name (used in path structure)")
-@click.option(
-    "--s3-endpoint-url",
-    envvar="S3_ENDPOINT_URL",
-    help="S3 endpoint URL (for S3-compatible storage)",
-)
-@click.option(
-    "--s3-region",
-    default="us-east-1",
-    envvar="AWS_REGION",
-    help="S3 region (default: us-east-1)",
-)
-@click.option("--db-host", default="localhost", envvar="PGHOST", help="PostgreSQL host")
-@click.option("--db-port", default=5432, type=int, envvar="PGPORT", help="PostgreSQL port")
-@click.option("--db-name", default="olmo_eval", envvar="PGDATABASE", help="PostgreSQL database")
-@click.option("--db-user", default="postgres", envvar="PGUSER", help="PostgreSQL user")
-@click.option("--db-password", default="postgres", envvar="PGPASSWORD", help="PostgreSQL password")
+@click.option("--api-url", default=None, help="Dashboard ingest service URL")
+@click.option("--tag", "tags", multiple=True, help="Label to attach to the uploaded run")
 # Experiment metadata
 @click.option("--experiment-name", help="Human-readable experiment name")
 @click.option("--experiment-group", help="Experiment group for grouping related experiments")
@@ -162,17 +146,9 @@ def run_external(
     force_download_model: bool,
     eval_args: tuple[str, ...],
     provider_kwargs: tuple[str, ...],
-    store: bool,
-    s3_bucket: str | None,
-    s3_prefix: str | None,
-    s3_group: str | None,
-    s3_endpoint_url: str | None,
-    s3_region: str,
-    db_host: str,
-    db_port: int,
-    db_name: str,
-    db_user: str,
-    db_password: str,
+    upload: bool | None,
+    api_url: str | None,
+    tags: tuple[str, ...],
     experiment_name: str | None,
     experiment_group: str | None,
     enable_metrics: bool,
@@ -247,23 +223,15 @@ def run_external(
         console.print(f"[red]Error:[/red] Invalid eval arg: {e}")
         raise SystemExit(1) from None
 
-    # Set up storage backends
-    from olmo_eval.cli.run.storage import StorageSetup
+    from olmo_eval.upload import resolve_upload_config
+    from olmo_eval.upload.config import upload_param_hint
 
-    storage_setup = StorageSetup(
-        store=store,
-        db_host=db_host,
-        db_port=db_port,
-        db_name=db_name,
-        db_user=db_user,
-        db_password=db_password,
-        s3_bucket=s3_bucket,
-        s3_prefix=s3_prefix,
-        s3_group=s3_group,
-        s3_endpoint_url=s3_endpoint_url,
-        s3_region=s3_region,
-    )
-    storages, s3_config = storage_setup.setup()
+    try:
+        upload_config = resolve_upload_config(upload, api_url, tags)
+    except ValueError as e:
+        raise click.BadParameter(str(e), param_hint=upload_param_hint(e)) from None
+    if upload_config.notice:
+        console.print(f"[yellow]Note:[/yellow] {upload_config.notice}")
 
     # Build metrics config (matches default harness preset)
     from olmo_eval.inference.metrics import MetricsConfig
@@ -290,8 +258,7 @@ def run_external(
         container_runtime=runtime,
         server_port=port,
         eval_args=parsed_args,
-        s3_config=s3_config,
-        storages=storages,
+        upload_config=upload_config,
         experiment_name=experiment_name,
         experiment_group=experiment_group,
         metrics=metrics_config,

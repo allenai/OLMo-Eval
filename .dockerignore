@@ -52,3 +52,7 @@ scripts/
 Dockerfile.backup
 *.md
 !README.md
+
+# The dashboard and its infrastructure build separately (see skiff2.json)
+dashboard/
+infra/

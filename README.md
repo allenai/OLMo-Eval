@@ -16,6 +16,10 @@ Features:
 - Aggregate and instance-level prediction storage.
 - Inspection tooling for viewing instances, formatted prompts, token arrays, and model responses.
 
+To contribute, start with [CONTRIBUTING.md](CONTRIBUTING.md). The reasoning behind the
+design is in [docs/design.md](docs/design.md), and [AGENTS.md](AGENTS.md) holds the
+instructions for coding agents.
+
 ## Quick Start
 
 This project uses [uv](https://docs.astral.sh/uv/) with a checked-in `uv.lock`
@@ -489,87 +493,97 @@ This section explains how to create new evaluation tasks.
 
 ### Quick Start: Minimal Task Example
 
+A multiple-choice task scored by the log-likelihood of each answer choice:
+
 ```python
-"""Example: Minimal task implementation."""
+"""Example: a minimal multiple-choice task scored by log-likelihood."""
+
 from collections.abc import Iterator
 from typing import Any
 
-from olmo_eval.common.types import Instance, LMOutput, LMRequest, RequestType
-from olmo_eval.data import DataLoader, DataSource
+from olmo_eval.common.formatters import MultipleChoiceFormatter
+from olmo_eval.common.metrics import LogprobMCAccuracyMetric
+from olmo_eval.common.types import Instance, LMRequest
+from olmo_eval.data import DataSource
 from olmo_eval.evals.tasks.common import Task, register
 
 
 @register("my_task")
 class MyTask(Task):
-    """My task implementation."""
+    """MMLU abstract algebra, scored by the highest-likelihood answer choice."""
 
-    # DataSource arguments:
-    #   path: HuggingFace dataset path (e.g., "cais/mmlu")
-    #   subset: Dataset subset/config (e.g., "abstract_algebra")
-    #   split: Dataset split (e.g., "test", "validation")
-    data_source = DataSource(path="cais/mmlu", subset="abstract_algebra", split="test")
+    # Pin the revision so the task's data cannot change underneath stored results.
+    data_source = DataSource(
+        path="cais/mmlu",
+        subset="abstract_algebra",
+        split="test",
+        revision="c30699e8356da336a370243923dbaf21066bb9fe",
+    )
+    formatter = MultipleChoiceFormatter(
+        template="Question: {question}",
+        choice_template=" {choice}",
+        prompt_suffix="\nAnswer:",
+    )
+    metrics = (LogprobMCAccuracyMetric(),)
 
     @property
     def instances(self) -> Iterator[Instance]:
-        """Load and yield instances from the dataset."""
-        if self._instances_cache is None:
-            self._instances_cache = []
-            loader = DataLoader()
-            source = self.config.get_data_source()
-            for doc in loader.load(source):
-                self._instances_cache.append(self.process_doc(doc))
-        yield from self._instances_cache
+        # Loads the configured data source, calls process_doc, and caches the result.
+        yield from self._load_instances_cached()
 
-    def process_doc(self, doc: dict[str, Any]) -> Instance:
-        """Convert a dataset document to an Instance."""
+    def process_doc(self, doc: dict[str, Any], index: int = 0) -> Instance | None:
         return Instance(
             question=doc["question"],
-            gold_answer=doc["answer"],
-            choices=tuple(doc["choices"]),  # For MC tasks
-            metadata={"id": doc["id"]},
+            choices=tuple(doc["choices"]),
+            gold_answer=doc["choices"][doc["answer"]],
+            metadata={"id": f"my_task_{index}", "gold_idx": doc["answer"]},
         )
 
     def format_request(self, instance: Instance) -> LMRequest:
-        """Format instance for the language model."""
-        if self.config.formatter is not None:
-            return self.config.formatter.format(instance, self.get_fewshot())
-        # Fallback formatting
-        return LMRequest(request_type=RequestType.COMPLETION, prompt=instance.question)
-
-    def extract_answer(self, output: LMOutput) -> str | None:
-        """Extract the answer from model output."""
-        return output.text.strip()
+        assert self.config.formatter is not None
+        return self.config.formatter.format(instance, self.get_fewshot())
 ```
+
+Class attributes that match `TaskConfig` fields (`data_source`, `formatter`, `metrics`,
+and so on) become the task's default configuration. Put the module in
+`src/olmo_eval/evals/tasks/` and it is registered on import. Check it with
+`uv run olmo-eval task inspect my_task --request -n 1` and
+`uv run olmo-eval run -m mock -t my_task -o limit=5`. Generation tasks use a chat or
+completion formatter instead, extract an answer in `extract_answer`, and score it with a
+metric such as `AccuracyMetric(scorer=ExactMatchScorer)`.
 
 ### Task Class Overview
 
 | Method | Required | Purpose |
 |--------|----------|---------|
-| `instances` | Yes | Property that yields `Instance` objects from the dataset |
-| `process_doc(doc)` | Yes | Converts a raw document dict into an `Instance` |
+| `instances` | Yes | Property that yields `Instance` objects; usually `yield from self._load_instances_cached()` |
 | `format_request(instance)` | Yes | Converts an `Instance` into an `LMRequest` for the model |
-| `extract_answer(output)` | Yes | Extracts the answer string from `LMOutput` |
+| `process_doc(doc, index)` | When using `_load_instances*` | Converts a raw document into an `Instance`, or `None` to skip it |
+| `extract_answer(output)` | No | Extracts the answer from `LMOutput`; defaults to `config.answer_extractor` or the raw text |
 | `_build_fewshot()` | No | Override to customize few-shot example loading |
 | `score_responses(...)` | No | Override to customize scoring logic |
 | `compute_metrics(...)` | No | Override to customize metric computation |
 
 ### TaskConfig Reference
 
+Commonly used fields. `TaskConfig` in `src/olmo_eval/evals/tasks/common/base.py`
+documents the rest.
+
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `name` | `str` | Required | Task identifier used in CLI |
-| `data_source` | `DataSource \| str` | `None` | Dataset source (HuggingFace, S3, GCS, local, or URI string) |
-| `fewshot_source` | `DataSource \| str` | `None` | Optional separate source for few-shot examples |
-| `formatter` | `Formatter` | `None` | Request formatter |
+| `data_source` | `DataSource \| str \| None` | `None` | Dataset source (HuggingFace, S3, GCS, local, or URI string) |
+| `formatter` | `Formatter \| None` | `None` | Request formatter |
 | `metrics` | `tuple[Metric, ...]` | `()` | Evaluation metrics (scorers are inferred from metrics) |
 | `num_fewshot` | `int` | `0` | Number of few-shot examples |
-| `fewshot_seed` | `int` | `42` | Random seed for few-shot selection |
-| `seed` | `int` | `42` | General random seed for task |
 | `limit` | `int \| None` | `None` | Max instances to evaluate |
 | `split` | `Split` | `Split.TEST` | Dataset split to use |
 | `primary_metric` | `MetricName \| Metric \| None` | `None` | Primary metric for ranking (defaults to single metric if only one) |
 | `sampling_params` | `SamplingParams \| None` | `None` | Default sampling parameters for this task |
+| `answer_extractor` | `Callable[[str], str] \| None` | `None` | Function applied to output text by the default `extract_answer` |
+| `strip_thinking` | `bool` | `False` | Drop `<think>...</think>` traces before scoring |
 | `dependencies` | `list[str] \| None` | `None` | Runtime packages to install (e.g., `["pkg==1.0"]`) |
+| `judge_model` | `str \| None` | `None` | Judge model for LLM-as-judge scoring |
 
 ### Data Sources
 
@@ -607,7 +621,8 @@ DataSource(path="gs://my-bucket/datasets/data.parquet")
 | `path` | `str` | Required | Dataset path (HuggingFace repo, S3/GCS URI, or local path) |
 | `subset` | `str \| None` | `None` | Dataset subset/config name |
 | `split` | `str` | `"test"` | Dataset split |
-| `data_files` | `str \| None` | `None` | Specific data files to load |
+| `source_type` | `SourceType \| None` | `None` | Backend type; inferred from `path` when unset |
+| `data_files` | `str \| tuple[str, ...] \| None` | `None` | Specific data files to load |
 | `revision` | `str \| None` | `None` | Dataset revision/version |
 
 ### Common Patterns
@@ -697,7 +712,7 @@ olmo-eval evaluates vision-language models on image benchmarks. Tasks attach ima
 to `LMRequest.images` and the provider decides how to render them, so the task
 definition is the same regardless of which multimodal provider runs it.
 
-Four families of image tasks are built in:
+Five families of image tasks are built in:
 
 | Family | Suite | Tasks |
 | --- | --- | --- |
@@ -706,6 +721,8 @@ Four families of image tasks are built in:
 | Pointing | `molmo2_pointing` | `pixmo_points_eval`, `sa_co_gold_subset` |
 | Pointing (model prompts) | `molmo2_pointing_mp` | `pixmo_points_eval_mp`, `sa_co_gold_subset_mp`, `sa_co_gold_point_4k_mp` |
 | Multi-image | `molmo2_multiimage` | `muir_bench`, `mmiu`, `blink` |
+| Document OCR, English (default for Molmo2) | `ocr_en` | `olmocr_bench`, `cc_ocr_multi_scene_en`, `omnidocbench_en` |
+| Document OCR, every language | `ocr` | `olmocr_bench`, `cc_ocr_multi_scene`, `omnidocbench` |
 
 Image-QA primary metrics are all 0-1, so `molmo2_imageqa` averages them.
 `dense_caption` reports on a 0-100 scale, so `molmo2_imageqa_caption` is display-only
@@ -716,6 +733,45 @@ per instance (capped at 20, matching the mm_olmo eval config) and score multiple
 choice answers by MMMU-style option-letter parsing; besides the primary `all`
 accuracy each task reports per-category breakdowns (MuirBench's 12 task types,
 BLINK's 14 subtasks, MMIU's 7 relationship types plus image-count buckets).
+
+Document-OCR tasks hand the model one page image and grade the markdown (or JSON)
+it writes back, each with its benchmark's official scoring:
+
+- `olmocr_bench` — [olmOCR-bench](https://huggingface.co/datasets/allenai/olmOCR-bench):
+  1,403 PDF pages and 7,019 unit tests (text presence/absence, reading order, table
+  cells, rendered math). Tests run through the official `olmocr` scorer; `overall` is
+  the mean of the eight category pass rates (0-1). Math tests render with KaTeX in a
+  headless Chromium, which is installed on first use.
+- `cc_ocr_multi_scene` — the multi-scene OCR track of
+  [CC-OCR](https://huggingface.co/datasets/wulipc/CC-OCR): 2,750 scene-text, document and
+  web images in English and Chinese. The primary `macro_f1` is the official track score
+  (0-1): per-image F1 of the word (Chinese: character) multiset, averaged within and then
+  across the 13 sub-datasets.
+- `omnidocbench` — [OmniDocBench](https://github.com/opendatalab/OmniDocBench) v1.6:
+  1,651 pages scored by the pinned official evaluator, which runs in a virtualenv of its
+  own (needs `git` and `uv`). `overall` is the leaderboard's 0-100 number, which is why
+  the `ocr` suite is display-only. Its formula metric (CDM) renders LaTeX; the task sets
+  up the toolchain itself at job start, so it runs in one step anywhere (see
+  [OmniDocBench formula scoring](#omnidocbench-formula-scoring-cdm)). `omnidocbench_v15`
+  is the 1,355-page v1.5 release with its own evaluator; the two leaderboards are not
+  comparable.
+
+English-only variants keep the benchmarks' official scoring on a subset:
+`cc_ocr_multi_scene_en` runs the 8 English sub-datasets (2,000 images) and averages over
+those, and each OmniDocBench version has an `_en` variant (`omnidocbench_en`,
+`omnidocbench_v15_en`) that runs and scores only the pages annotated `english` (755 of
+v1.6's pages, 628 of v1.5's). Molmo2 models read English only, so the `_en` variants (suite
+`ocr_en`) are the default setting for evaluating them. The plain names run every language,
+as the leaderboards do, for multilingual models; `olmocr_bench` is English throughout and
+has no variant.
+
+By default each OCR task sends its benchmark's own instruction, for instruction-tuned
+checkpoints. A stage-1 checkpoint (`-o prompt_templates=none -o
+system_prompt_style=style_and_length_v2`) gets the OCR style tag it was trained on, alone:
+`olmocr:` for `olmocr_bench` and OmniDocBench, `textocr:` for CC-OCR.
+
+The OCR datasets are downloaded from the Hugging Face Hub at pinned revisions rather
+than read from `$MOLMO_DATA_DIR`.
 
 ### Setup
 
@@ -782,6 +838,70 @@ uv run olmo-eval suite inspect molmo2_imageqa
 The `molmo2-4b` preset runs `allenai/Molmo2-4B` with `dtype=float32`,
 `autocast_dtype=bfloat16` and `max_crops=24` (8 per image in multi-image prompts),
 matching the reference evaluation numerics.
+
+### OmniDocBench formula scoring (CDM)
+
+`omnidocbench`, `omnidocbench_v15` and their `_en` variants score formulas with CDM,
+which renders every formula through LaTeX and ImageMagick. Before inference each task
+installs whatever part of that toolchain is missing or at another version, then renders
+a test formula through its version's own CDM template. The whole evaluation, CDM
+included, finishes in the same job; no separate rescoring step is needed. Setup takes
+about 5-9 minutes on a fresh machine.
+
+The versions are the ones each release documents, because CDM follows the renderer
+(Ghostscript 10.02 instead of 9.55 moves a formula score by about 0.2 points):
+
+| | v1.6 (`omnidocbench`) | v1.5 (`omnidocbench_v15`) |
+| --- | --- | --- |
+| LaTeX | TeX Live 2025, `pdflatex` + `CJK` | TeX Live 2025, `xelatex` + `xeCJK` |
+| Font | `gkai` (TeX Live `arphic`) | Source Han Sans SC |
+| ImageMagick | 7.1.1-47 | 7.1.1-47 |
+| Ghostscript | 9.55.0 | 9.55.0 |
+| Other | | Node.js 16.13.1 (KaTeX tokenizer) |
+
+What the setup needs:
+
+- **Network access**: TeX Live 2025 comes from the frozen `tlnet-final` repository in the
+  TeX historic archive, ImageMagick and Ghostscript from their GitHub releases, the font
+  from Adobe's release, and Node.js from nodejs.org. Each download is checked against its
+  pinned SHA-256, and a mismatch stops the task.
+- **Linux x86_64**, where the installed binaries run. Elsewhere, put the toolchain on
+  `PATH` yourself.
+- **apt** (root, as in Beaker jobs), for the system libraries the ImageMagick AppImage
+  links against and for `fontconfig`.
+- TeX Live, ImageMagick and Ghostscript already on `PATH` at exactly these versions are
+  used as they are, as is any `node`; anything else is installed alongside, first on
+  `PATH` for the evaluation.
+
+If a download fails or the test formula does not render, the task stops before inference
+with the error, rather than scoring every formula zero. On a machine without network
+access or root, put the pinned versions on `PATH` first (the task then uses them as they
+are) or point `OMNIDOCBENCH_CDM_DIR` at a toolchain installed elsewhere.
+
+Environment variables:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `OMNIDOCBENCH_CDM_DIR` | `~/.cache/olmo_eval/omnidocbench/cdm` | Where the toolchain is installed; point several runs at one shared install to reuse it |
+| `OMNIDOCBENCH_EVAL_DIR` | `~/.cache/olmo_eval/omnidocbench` | Where each version's evaluator checkout and virtualenv are provisioned |
+| `OMNIDOCBENCH_EVAL_WORKERS` | `min(16, cpus / 4)` | Evaluator worker threads (matching, TEDS, CDM); 48 suits a Beaker GPU node |
+| `OMNIDOCBENCH_EVAL_TIMEOUT_S` | `43200` (12 h) | Wall-clock cap on evaluation; past it, as on any evaluator failure, the task reports no metrics and an error, and keeps the predictions for rescoring |
+| `OMNIDOCBENCH_DIR` / `OMNIDOCBENCH_V15_DIR` | Hub download | Local copy of the dataset (`OmniDocBench.json` + `images/`) |
+
+For example, on Beaker:
+
+```bash
+olmo-eval beaker launch -n molmo2-4b-omnidocbench \
+  -m /weka/oe-training-default/mm-olmo/released-models-molmo2-1225/Molmo2-4B/step2000 \
+  -t omnidocbench_en \
+  --harness default -o provider.kind=olmo_core_vlm -o provider.max_crops=24 \
+  -o provider.num_instances=2 \
+  --gpus 2 --env OMNIDOCBENCH_EVAL_WORKERS=48 \
+  -c ai2/holmes -p urgent --min-runtime 8h -w <workspace> -B <budget>
+```
+
+The job log shows the toolchain setup (`Running: ...install-tl...`, `tlmgr install ...`),
+then inference, then one `overall` for the task.
 
 ### Providers
 
@@ -1046,48 +1166,68 @@ against an external repo or runner.
 
 ### Defining an External Eval
 
+`SandboxedExternalEval` runs a benchmark inside one container. This sketch runs a
+benchmark's own CLI against the model under evaluation and reads its score file:
+
 ```python
+import json
+import time
 from typing import Any
 
-from olmo_eval.evals.external import SandboxedExternalEval, ExternalEvalResult, register_external_eval
+from olmo_eval.evals.external import (
+    ExternalEvalResult,
+    SandboxedExternalEval,
+    register_external_eval,
+)
+from olmo_eval.harness.sandbox import SandboxExecutor
+
 
 class MyBenchmarkExternalEval(SandboxedExternalEval):
     """My benchmark evaluation."""
 
     name = "my_benchmark"
-    description = "Evaluates model on my benchmark"
-    timeout_seconds = 3600
+    description = "Evaluates a model on my benchmark"
+    timeout_seconds = 3600.0
     required_secrets = ("MY_API_KEY",)
-
-    @property
-    def sandbox_image(self) -> str:
-        return "my-benchmark:latest"
-
-    @property
-    def working_dir(self) -> str:
-        return "/workspace"
-
-    @property
-    def setup_command(self) -> tuple[str, ...]:
-        return ("pip install -r requirements.txt",)
+    sandbox_image = "my-benchmark:latest"
+    working_dir = "/workspace"
+    setup_command = ("pip install -r requirements.txt",)
 
     @property
     def arguments(self) -> dict[str, tuple[str, Any | None]]:
-        # Returns dict of arg_name -> (description, default_value)
+        # arg_name -> (description, default_value)
         return {"subset": ("Which subset to evaluate", "default")}
 
-    async def execute(self, provider, args, output_dir, container_runtime):
-        # Run benchmark in sandbox
-        result = await self.run_in_sandbox(provider, args, output_dir)
+    async def execute(self, provider, args, output_dir=None, container_runtime="podman"):
+        start_time = time.time()
+        output: list[str] = []
+        config = self._create_sandbox_config(container_runtime, output_dir)
+        async with SandboxExecutor(config, name=self.name) as executor:
+            if error := await self._run_setup(executor, output, start_time):
+                return error
+            run = await executor.execute_command(
+                f"my-benchmark --model {provider.model_name} --subset {args['subset']} "
+                f"--out {self.results_dir}/score.json",
+                timeout=self.timeout_seconds,
+            )
+            output.append(run.output)
+            if not run.success:
+                return self._error_result("Benchmark run failed", start_time, "\n".join(output))
+            scores = await executor.execute_command(f"cat {self.results_dir}/score.json")
         return ExternalEvalResult(
             name=self.name,
-            metrics={"accuracy": result.score},
-            success=True,
+            metrics={"accuracy": json.loads(scores.output)["accuracy"]},
+            raw_output="\n".join(output),
+            duration_seconds=time.time() - start_time,
         )
 
-# Register the eval
+
 register_external_eval(MyBenchmarkExternalEval())
 ```
+
+Benchmark modules under `src/olmo_eval/evals/external/benchmarks/` are registered
+automatically. See `benchmarks/tau2/eval.py` for a complete implementation, including how
+a sandboxed benchmark reaches a locally served model.
 
 ### Running External Evals
 
@@ -1110,9 +1250,9 @@ External evals return structured results:
 | `metadata` | `dict` | Additional metadata |
 | `success` | `bool` | Whether the eval completed successfully |
 | `error` | `str \| None` | Error message if failed |
-| `duration_seconds` | `float` | Execution time |
+| `duration_seconds` | `float \| None` | Execution time |
 | `raw_output` | `str \| None` | Raw stdout/stderr from the evaluation |
-| `predictions` | `list` | Instance-level predictions |
+| `predictions` | `list[dict] \| None` | Instance-level predictions |
 
 ## Sandboxes
 
@@ -1138,30 +1278,30 @@ config = SandboxConfig(
 
 ### SandboxConfig Fields
 
+Commonly used fields. `SandboxConfig` in `src/olmo_eval/harness/sandbox/config.py`
+documents the rest, including Modal and SWE-ReX options.
+
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `image` | `str` | Required | Container image |
-| `mode` | `SandboxMode` | `DOCKER` | `LOCAL`, `DOCKER`, or `MODAL` |
+| `mode` | `SandboxMode` | Required | `LOCAL`, `DOCKER`, or `MODAL` |
+| `capabilities` | `frozenset[str]` | `Capability.DEFAULT` | Capabilities this sandbox provides, such as `Capability.BASH` or `Capability.PYTHON` |
+| `instances` | `int \| None` | `None` | Executors to create; `None` lets the caller allocate capacity, otherwise one executor |
 | `container_runtime` | `str` | `"podman"` | `"docker"` or `"podman"` |
-| `command_timeout` | `float` | `30.0` | Timeout per command (seconds) |
-| `startup_timeout` | `float` | `60.0` | Container startup timeout |
-| `instances` | `int` | `1` | Number of parallel executors |
-| `working_dir` | `str` | `"/workspace"` | Working directory in container |
-| `environment` | `tuple` | `()` | Environment variables |
-| `volumes` | `tuple` | `()` | Volume mounts (host, container) |
-| `capabilities` | `frozenset[str]` | `Capability.DEFAULT` | Capabilities like `Capability.BASH`, `Capability.PYTHON` |
-| `remove_container` | `bool` | `True` | Remove container after use |
-| `docker_args` | `tuple[str, ...]` | `()` | Additional Docker/Podman arguments |
-| `log_dir` | `str \| None` | `None` | Directory for container logs |
-| `exec_shell` | `tuple[str, ...] \| None` | `None` | Custom shell for command execution |
-| `enable_diagnostics` | `bool` | `True` | Run background diagnostics monitor |
+| `command_timeout` | `float` | `30.0` | Default timeout per command (seconds) |
+| `working_dir` | `str` | `"/workspace"` | Working directory in the container |
+| `environment` | `tuple[tuple[str, str], ...]` | `()` | Environment variables as `(name, value)` pairs |
+| `volumes` | `tuple[tuple[str, str], ...]` | `()` | Volume mounts as `(host_path, container_path)` pairs |
 
 ### Using SandboxManager
 
-The `SandboxManager` manages multiple executors with capability-based routing:
+The `SandboxManager` manages multiple executors and routes each command to an executor
+with the required capabilities:
 
 ```python
-from olmo_eval.harness.sandbox import SandboxConfig, SandboxManager, SandboxMode, Capability
+import asyncio
+
+from olmo_eval.harness.sandbox import Capability, SandboxConfig, SandboxManager, SandboxMode
 
 configs = [
     SandboxConfig(image="python:3.12", mode=SandboxMode.DOCKER, capabilities=Capability.PYTHON, instances=2),
@@ -1171,17 +1311,16 @@ configs = [
 manager = SandboxManager(configs, owner="my-scorer")
 await manager.start()
 
-# Execute with specific capability - routes to matching executor
-result = await manager.execute_with_capabilities(
-    "print('hello')",
-    Capability.PYTHON
-)
+# Run on an executor that provides the python capability
+output = await manager.execute("python -c 'print(1)'", capabilities=Capability.PYTHON)
 
-# Round-robin across matching executors
-results = await asyncio.gather(*[
-    manager.execute_with_capabilities(cmd, Capability.PYTHON)
-    for cmd in commands
+# Commands that need the same capability are spread across matching executors
+outputs = await asyncio.gather(*[
+    manager.execute(command, capabilities=Capability.PYTHON) for command in commands
 ])
+
+# execute_command and execute_code return an ExecutionResult with exit code and output
+result = await manager.execute_code("print('hello')", capabilities=Capability.PYTHON)
 
 await manager.stop()
 ```
@@ -1462,21 +1601,20 @@ uv run olmo-eval beaker launch -n "eval" \
     -B "ai2/oe-other"
 ```
 
-The `-o` flag uses OmegaConf dotlist syntax, supporting:
+Task overrides accept `TaskConfig` fields and `SamplingParams` fields (sampling shortcuts
+such as `temperature` or `max_tokens`). Any other key after `-t` is rejected; harness keys
+belong after `--harness`.
 
-| Type | Syntax | Example |
-|------|--------|---------|
-| String | `key=value` | `-o formatter.template="Q: {q}"` |
-| Number | `key=123` | `-o limit=100` |
-| Boolean | `key=true` | `-o preemptible=false` |
-| Nested | `a.b.c=val` | `-o scorer.normalize=true` |
-| List | `key=[a,b]` | `-o 'dependencies=[pkg1, pkg2]'` |
+| Kind | Example |
+|------|---------|
+| Number | `-o limit=100`, `-o num_fewshot=5` |
+| Sampling shortcut | `-o temperature=0.6`, `-o max_tokens=512` |
+| Boolean | `-o strip_thinking=true` |
+| List (JSON) | `-o 'dependencies=["pkg1==1.0", "pkg2"]'` |
+| Harness, nested | `--harness default -o provider.max_model_len=16384` |
 
-**Note:** Quote complex values to prevent shell interpretation:
-```bash
-# Good - single quotes protect the value
--o 'extra_config={key: value, nested: {a: 1}}'
-```
+Quote values that contain brackets, braces, or spaces so the shell passes them through
+unchanged.
 
 ### Secret Environment Overrides
 
@@ -1543,7 +1681,7 @@ uv run olmo-eval beaker launch -f eval_config.yaml --dry-run
 # Override specific values
 uv run olmo-eval beaker launch -f eval_config.yaml --gpus 4
 
-# Add additional models via CLI
+# Replace the config's model list from the CLI
 uv run olmo-eval beaker launch -f eval_config.yaml -m olmo-2-7b
 ```
 
@@ -1565,7 +1703,7 @@ budget: ai2/oe-other
 gpus: 1
 ```
 
-**Per-task priorities in config** (`examples/configs/prioritized_tasks.yaml`):
+**Per-task priorities in config** (`examples/beaker/configs/prioritized_tasks.yaml`):
 
 Use `@priority` suffix on tasks to run different tasks at different priority levels.
 Tasks with different priorities create separate Beaker experiments:
@@ -1615,40 +1753,44 @@ workspace: ai2/olmo-eval-debug
 budget: ai2/oe-other
 gpus: 4
 priority: high
-preemptible: false
+min_runtime: 8h
 timeout: 48h
 retries: 2
-description: "Full evaluation suite for Llama 70B"
 ```
 
 **Config file fields**:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `name` | string | yes | Experiment name |
-| `models` | list | yes | List of model names or presets |
-| `tasks` | list | yes | List of task specs (with optional `@priority`) |
+| `name` | string | no | Experiment name (generated from models and tasks if omitted) |
+| `models` | list of strings | yes | Model names or presets |
+| `tasks` | list | yes | Task specs (with optional `@priority`) |
 | `cluster` | string | yes | Cluster alias or full name |
-| `gpus` | int | no | Default GPUs per model instance (auto-detected based on provider) |
+| `workspace` | string | yes | Beaker workspace |
+| `budget` | string | when the workspace has no bound budget | Beaker budget |
+| `gpus` | int | no | GPUs per model instance (auto-detected from the provider if omitted) |
 | `max_gpus_per_node` | int | no | Max GPUs per node, splits tasks if exceeded (default: `8`) |
 | `priority` | string | no | Default priority (default: `normal`) |
-| `preemptible` | bool | no | Allow preemption (default: `true`) |
-| `min_runtime` | string | no | Minimum runtime before preemption (e.g., `2h`); replaces `preemptible` |
+| `min_runtime` | string | no | Minimum runtime before preemption (e.g., `2h`); see [Preemption](#preemption) |
+| `preemptible` | bool | no | Deprecated by Beaker; cannot be combined with `min_runtime` |
 | `timeout` | string | no | Job timeout (default: `24h`) |
 | `retries` | int | no | Retry count on failure |
-| `workspace` | string | yes | Beaker workspace |
-| `budget` | string | yes | Beaker budget |
 | `beaker_image` | string | no | Container image to use (config-only) |
-| `description` | string | no | Optional Beaker description |
 | `groups` | list | no | Beaker groups to add experiments to |
+
+CLI options override config values. `-m` and `-t` replace the config's lists rather than
+adding to them.
 
 See `examples/beaker/configs/` for more configuration examples.
 
 ### Cluster Aliases
 
 ```bash
-# List available cluster aliases
+# List clusters with utilization
 uv run olmo-eval beaker clusters
+
+# Only show cluster aliases
+uv run olmo-eval beaker clusters --aliases
 ```
 
 ### Programmatic API
@@ -1660,6 +1802,8 @@ config = BeakerJobConfig(
     name="eval-llama3-mmlu",
     command=["uv", "run", "olmo-eval", "run", "-m", "llama3.1-8b", "-t", "mmlu"],
     cluster="h100",
+    workspace="<workspace>",
+    budget="<budget>",  # optional when the workspace has a bound budget
     num_gpus=1,
 )
 
@@ -1808,28 +1952,4 @@ uv run olmo-eval beaker launch -n "eval" -m llama3.1-8b \
 
 ## Development
 
-This repo uses `uv` with a checked-in `uv.lock` for reproducible installs.
-The default dependency groups (`dev` + `vllm`) are installed automatically,
-which covers storage, beaker, hf, and the vLLM inference provider.
-
-```bash
-# Install dependencies from the lockfile
-uv sync --frozen
-
-# Install pre-commit hooks
-make setup
-
-# Run linter / formatter
-make lint
-make fix    # auto-fix
-
-# Run tests (and type checks)
-make test
-make verify
-
-# Update the lockfile after editing pyproject.toml
-uv lock
-```
-
-CI runs `uv sync --frozen` and `uv run --frozen ...`, so any change to
-`pyproject.toml` must be accompanied by a refreshed `uv.lock`.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, checks, and PR expectations.

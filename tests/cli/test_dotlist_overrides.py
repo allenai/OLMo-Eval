@@ -241,16 +241,28 @@ class TestDotlistErrors:
 
 
 class TestDotlistMutationBehavior:
-    def test_mutates_in_place(self):
+    def test_returns_new_dict(self):
         base = {"a": 1}
         result = _apply_dotlist_overrides(base, ["a=2"])
-        assert result is base
-        assert base["a"] == 2
+        assert result is not base
+        assert result["a"] == 2
+        assert base["a"] == 1
 
-    def test_original_unchanged_when_copied(self, sandbox_preset):
+    def test_does_not_mutate_nested_input(self, sandbox_preset):
         original = copy.deepcopy(sandbox_preset)
-        _apply_dotlist_overrides(sandbox_preset, ['sandboxes.0={"mode":"modal"}'])
-        assert original["sandboxes"][0]["inject_swerex"] is True
+        _apply_dotlist_overrides(
+            sandbox_preset,
+            ['sandboxes.0={"mode":"modal"}', "sandboxes.0.inject_swerex=false"],
+        )
+        assert sandbox_preset == original
+
+    def test_does_not_mutate_input_for_shared_sandbox_override(self, sandbox_preset):
+        original = copy.deepcopy(sandbox_preset)
+        result = _apply_dotlist_overrides(
+            sandbox_preset, ['sandboxes={"mode":"modal","instances":4}']
+        )
+        assert sandbox_preset == original
+        assert result["sandbox_pool_instances"] == 4
 
     def test_later_override_wins(self):
         base = {"a": 1}

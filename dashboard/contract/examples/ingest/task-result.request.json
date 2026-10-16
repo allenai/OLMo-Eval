@@ -1,0 +1,259 @@
+{
+  "task_name": "omniscience:judge",
+  "task_hash": "4962f82829afd898",
+  "base_task": "omniscience",
+  "primary_metric": "any__any__omniscience_index:omniscience_judge",
+  "metrics": {
+    "any__any__omniscience_index": {
+      "omniscience_judge": -33.44481605351171
+    },
+    "any__any__hallucination_rate": {
+      "omniscience_judge": 0.4509090909090909
+    },
+    "any__any__accuracy": {
+      "omniscience_judge": 0.0802675585284281
+    },
+    "domain__Finance__accuracy": {
+      "omniscience_judge": 0.08
+    },
+    "domain__Health__accuracy": {
+      "omniscience_judge": 0.05
+    },
+    "domain__Humanities and Social Sciences__accuracy": {
+      "omniscience_judge": 0.08
+    },
+    "domain__Law__accuracy": {
+      "omniscience_judge": 0.08163265306122448
+    },
+    "domain__Science Engineering and Mathematics__accuracy": {
+      "omniscience_judge": 0.08
+    },
+    "domain__Software Engineering__accuracy": {
+      "omniscience_judge": 0.11
+    },
+    "judge_parsing_errors": {
+      "omniscience_judge": 2.0
+    }
+  },
+  "metric_meta": {
+    "any__any__omniscience_index": {
+      "higher_is_better": true,
+      "display_format": "raw",
+      "unit": null
+    },
+    "any__any__hallucination_rate": {
+      "higher_is_better": false,
+      "display_format": "percent",
+      "unit": null
+    },
+    "any__any__accuracy": {
+      "higher_is_better": true,
+      "display_format": "percent",
+      "unit": null
+    },
+    "domain__Finance__accuracy": {
+      "higher_is_better": true,
+      "display_format": "percent",
+      "unit": null
+    },
+    "domain__Health__accuracy": {
+      "higher_is_better": true,
+      "display_format": "percent",
+      "unit": null
+    },
+    "domain__Humanities and Social Sciences__accuracy": {
+      "higher_is_better": true,
+      "display_format": "percent",
+      "unit": null
+    },
+    "domain__Law__accuracy": {
+      "higher_is_better": true,
+      "display_format": "percent",
+      "unit": null
+    },
+    "domain__Science Engineering and Mathematics__accuracy": {
+      "higher_is_better": true,
+      "display_format": "percent",
+      "unit": null
+    },
+    "domain__Software Engineering__accuracy": {
+      "higher_is_better": true,
+      "display_format": "percent",
+      "unit": null
+    },
+    "judge_parsing_errors": {
+      "higher_is_better": false,
+      "display_format": "raw",
+      "unit": null
+    }
+  },
+  "config": {
+    "name": "omniscience",
+    "data_source": {
+      "path": "ArtificialAnalysis/AA-Omniscience-Public",
+      "subset": null,
+      "split": "train",
+      "source_type": "hf",
+      "data_files": null,
+      "revision": null
+    },
+    "fewshot_source": null,
+    "formatter": {
+      "type": "ChatFormatter",
+      "system_prompt": "",
+      "user_template": "{question}",
+      "assistant_template": "{answer}"
+    },
+    "metrics": [
+      {
+        "type": "OmniscienceIndexMetric",
+        "name": "any__any__omniscience_index",
+        "scorer": {
+          "type": "OmniscienceScorer",
+          "name": "omniscience_judge",
+          "provider_name": null,
+          "judge_fn": "build_openai_judge_fn.<locals>.judge"
+        }
+      },
+      {
+        "type": "HallucinationRateMetric",
+        "name": "any__any__hallucination_rate",
+        "scorer": {
+          "type": "OmniscienceScorer",
+          "name": "omniscience_judge",
+          "provider_name": null,
+          "judge_fn": "build_openai_judge_fn.<locals>.judge"
+        }
+      },
+      {
+        "type": "OmniscienceAccuracyMetric",
+        "name": "any__any__accuracy",
+        "scorer": {
+          "type": "OmniscienceScorer",
+          "name": "omniscience_judge",
+          "provider_name": null,
+          "judge_fn": "build_openai_judge_fn.<locals>.judge"
+        }
+      },
+      {
+        "type": "OmniscienceAccuracyMetric",
+        "name": "domain__Finance__accuracy",
+        "scorer": {
+          "type": "OmniscienceScorer",
+          "name": "omniscience_judge",
+          "provider_name": null,
+          "judge_fn": "build_openai_judge_fn.<locals>.judge"
+        }
+      },
+      {
+        "type": "OmniscienceAccuracyMetric",
+        "name": "domain__Health__accuracy",
+        "scorer": {
+          "type": "OmniscienceScorer",
+          "name": "omniscience_judge",
+          "provider_name": null,
+          "judge_fn": "build_openai_judge_fn.<locals>.judge"
+        }
+      },
+      {
+        "type": "OmniscienceAccuracyMetric",
+        "name": "domain__Humanities and Social Sciences__accuracy",
+        "scorer": {
+          "type": "OmniscienceScorer",
+          "name": "omniscience_judge",
+          "provider_name": null,
+          "judge_fn": "build_openai_judge_fn.<locals>.judge"
+        }
+      },
+      {
+        "type": "OmniscienceAccuracyMetric",
+        "name": "domain__Law__accuracy",
+        "scorer": {
+          "type": "OmniscienceScorer",
+          "name": "omniscience_judge",
+          "provider_name": null,
+          "judge_fn": "build_openai_judge_fn.<locals>.judge"
+        }
+      },
+      {
+        "type": "OmniscienceAccuracyMetric",
+        "name": "domain__Science Engineering and Mathematics__accuracy",
+        "scorer": {
+          "type": "OmniscienceScorer",
+          "name": "omniscience_judge",
+          "provider_name": null,
+          "judge_fn": "build_openai_judge_fn.<locals>.judge"
+        }
+      },
+      {
+        "type": "OmniscienceAccuracyMetric",
+        "name": "domain__Software Engineering__accuracy",
+        "scorer": {
+          "type": "OmniscienceScorer",
+          "name": "omniscience_judge",
+          "provider_name": null,
+          "judge_fn": "build_openai_judge_fn.<locals>.judge"
+        }
+      },
+      {
+        "type": "JudgeParsingErrorMetric",
+        "name": "judge_parsing_errors",
+        "scorer": {
+          "type": "OmniscienceScorer",
+          "name": "omniscience_judge",
+          "provider_name": null,
+          "judge_fn": "build_openai_judge_fn.<locals>.judge"
+        }
+      }
+    ],
+    "num_fewshot": 0,
+    "fewshot_seed": 42,
+    "limit": null,
+    "seed": 42,
+    "split": "train",
+    "primary_metric": {
+      "type": "OmniscienceIndexMetric",
+      "name": "any__any__omniscience_index",
+      "scorer": {
+        "type": "OmniscienceScorer",
+        "name": "omniscience_judge",
+        "provider_name": null,
+        "judge_fn": "build_openai_judge_fn.<locals>.judge"
+      }
+    },
+    "sampling_params": {
+      "max_tokens": null,
+      "temperature": 0.6,
+      "top_p": 0.95,
+      "top_k": null,
+      "stop_sequences": null,
+      "num_samples": 1,
+      "logprobs": null,
+      "do_sample": true,
+      "truncate_prompt_tokens": null,
+      "truncation_side": null
+    },
+    "output_score_aggregation": "max",
+    "max_length": null,
+    "answer_extractor": "extract_think_answer",
+    "dependencies": null
+  },
+  "num_fewshot": 0,
+  "limit": null,
+  "split": "train",
+  "num_instances": 600,
+  "instances_processed": 600,
+  "instances_failed": 0,
+  "error": null,
+  "error_summary": null,
+  "duration_seconds": 1265.2544946670532,
+  "first_request_at": "2026-10-01T01:01:30.930000+00:00",
+  "last_completed_at": "2026-10-01T01:22:36.064495+00:00",
+  "prompt_tokens_total": 61234,
+  "completion_tokens_total": 398112,
+  "attributed_inference_seconds": null,
+  "predictions_path": "predictions/meta-llama_Llama-3.1-8B-Instruct/omniscience_judge_afd898-predictions.jsonl",
+  "requests_path": "requests/meta-llama_Llama-3.1-8B-Instruct/omniscience_judge_afd898-requests.jsonl",
+  "suites": [],
+  "instance_count": 600
+}
