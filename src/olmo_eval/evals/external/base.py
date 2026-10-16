@@ -52,6 +52,11 @@ class ExternalEval(ABC):
         return ()
 
     @property
+    def extras(self) -> tuple[str, ...]:
+        """Package extras that must be installed for this evaluation to run."""
+        return ()
+
+    @property
     def arguments(self) -> dict[str, tuple[str, Any | None]]:
         """Arguments that can be passed to this evaluation.
 
