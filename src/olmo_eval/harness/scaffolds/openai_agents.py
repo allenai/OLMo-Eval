@@ -39,6 +39,25 @@ DEFAULT_CHAT_TEMPLATE_KWARGS: dict[str, Any] = {"enable_thinking": False}
 _UNSUPPORTED: Any = object()
 
 
+def replay_own_reasoning(context: Any) -> bool:
+    """Replay a reasoning item into the next request when this model produced it.
+
+    Thinking models served by vLLM need their earlier reasoning in the conversation.
+    Without it, the chat template renders past assistant turns with empty think
+    blocks, and models such as Qwen3.5 then tend to put their next tool call inside
+    an unclosed think block, where the reasoning parser hides it. Reasoning from a
+    different model is not replayed, so model families are never mixed.
+
+    Args:
+        context: The SDK's ``ReasoningContentReplayContext`` for the candidate item.
+
+    Returns:
+        Whether to send the item back as the assistant message's ``reasoning_content``.
+    """
+    origin = context.reasoning.origin_model
+    return origin is None or origin == context.model
+
+
 def _resolve_chat_template_kwargs(provider: InferenceProvider) -> dict[str, Any] | None:
     """Resolve the ``chat_template_kwargs`` request field for a provider.
 
@@ -273,9 +292,13 @@ class OpenAIAgentsScaffold(Scaffold):
             f"model={provider.model_name}"
         )
 
+        # Self-hosted servers accept the extra reasoning_content field on past
+        # assistant messages; managed APIs would reject it, so they keep the SDK default.
+        self_hosted = getattr(provider, "chat_template_kwargs", _UNSUPPORTED) is not _UNSUPPORTED
         model = OpenAIChatCompletionsModel(
             openai_client=client,
             model=provider.model_name,
+            should_replay_reasoning_content=replay_own_reasoning if self_hosted else None,
         )
 
         agent_tools = self._convert_tools(config.resolved_tools, function_tool, sandbox_manager)

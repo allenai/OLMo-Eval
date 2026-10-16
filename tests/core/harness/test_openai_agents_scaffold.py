@@ -571,3 +571,115 @@ class TestModelRefusal:
 
         assert "I cannot help with that." in result.final_output.text
         assert result.error is not None
+
+
+class TestReasoningReplay:
+    """Thinking models on vLLM keep their reasoning across agent turns."""
+
+    @staticmethod
+    def _scripted_client(requests: list[dict]):
+        import json
+
+        import httpx
+        from openai import AsyncOpenAI
+
+        def completion(message: dict, finish: str) -> dict:
+            return {
+                "id": "chatcmpl-test",
+                "object": "chat.completion",
+                "created": 0,
+                "model": "qwen-test",
+                "choices": [{"index": 0, "message": message, "finish_reason": finish}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            }
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(json.loads(request.content.decode()))
+            if len(requests) == 1:
+                # vLLM 0.19 returns reasoning parser output as `reasoning`.
+                message = {
+                    "role": "assistant",
+                    "content": None,
+                    "reasoning": "I should look at the files first.",
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "lookup", "arguments": '{"query": "x"}'},
+                        }
+                    ],
+                }
+                return httpx.Response(200, json=completion(message, "tool_calls"))
+            return httpx.Response(
+                200, json=completion({"role": "assistant", "content": "done"}, "stop")
+            )
+
+        return AsyncOpenAI(
+            api_key="test-key-not-real",
+            base_url="http://test.invalid/v1",
+            http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        )
+
+    @staticmethod
+    def _lookup_tool():
+        from olmo_eval.harness.tools import Tool
+
+        async def lookup(query: str) -> str:
+            """Look something up."""
+            return "result"
+
+        return Tool.from_function(lookup)
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("self_hosted", [True, False])
+    async def test_reasoning_is_replayed_only_to_self_hosted_servers(self, self_hosted):
+        requests: list[dict] = []
+        client = self._scripted_client(requests)
+        provider = SimpleNamespace(get_openai_client=lambda: client, model_name="qwen-test")
+        if self_hosted:
+            provider.chat_template_kwargs = {"enable_thinking": True}
+        config = HarnessConfig(name="test", max_turns=3, tools=(self._lookup_tool(),))
+
+        result = await OpenAIAgentsScaffold().run(
+            provider=provider, config=config, request=_agent_request(), enable_compaction=False
+        )
+
+        assert result.final_output.text == "done"
+        assert len(requests) == 2
+        assistant = [m for m in requests[1]["messages"] if m.get("role") == "assistant"]
+        assert len(assistant) == 1
+        assert assistant[0]["tool_calls"][0]["function"]["name"] == "lookup"
+        if self_hosted:
+            assert assistant[0]["reasoning_content"] == "I should look at the files first."
+        else:
+            assert "reasoning_content" not in assistant[0]
+
+    def test_vllm_reasoning_field_becomes_a_reasoning_item(self):
+        from agents.models.chatcmpl_converter import Converter
+        from openai.types.chat import ChatCompletionMessage
+
+        from olmo_eval.inference.utils import patch_openai_agents_for_vllm
+
+        patch_openai_agents_for_vllm()
+        patch_openai_agents_for_vllm()  # idempotent
+        message = ChatCompletionMessage.model_validate(
+            {"role": "assistant", "content": "hi", "reasoning": "thinking"}
+        )
+        items = Converter.message_to_output_items(message)
+        reasoning = [i for i in items if getattr(i, "type", None) == "reasoning"]
+        assert len(reasoning) == 1
+        assert reasoning[0].summary[0].text == "thinking"
+
+    @pytest.mark.parametrize(
+        ("origin", "target", "expected"),
+        [
+            ("qwen-test", "qwen-test", True),
+            (None, "qwen-test", True),
+            ("other-model", "qwen-test", False),
+        ],
+    )
+    def test_replay_own_reasoning(self, origin, target, expected):
+        from olmo_eval.harness.scaffolds.openai_agents import replay_own_reasoning
+
+        context = SimpleNamespace(model=target, reasoning=SimpleNamespace(origin_model=origin))
+        assert replay_own_reasoning(context) is expected
