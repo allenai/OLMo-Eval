@@ -223,7 +223,8 @@ def test_model_names_are_unchanged_with_openai_key(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
     provider = LiteLLMProvider("gpt-4-0613", api_base="https://api.openai.com/v1")
 
-    assert provider.get_openai_client() is None
+    with pytest.raises(NotImplementedError):
+        provider.get_openai_client()
     assert provider.openai_client_model_name == "gpt-4-0613"
     assert provider.request_model_name == "gpt-4-0613"
 

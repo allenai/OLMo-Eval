@@ -439,6 +439,10 @@ def assemble_external_eval_job(
         for extra in collect_install_extras(scaffold_name=scaffold_name):
             if extra not in extras:
                 extras.append(extra)
+    for eval_name in external_evals:
+        for extra in get_external_eval(eval_name).extras:
+            if extra not in extras:
+                extras.append(extra)
 
     provider_packages = get_provider_dependencies(model) or None
 

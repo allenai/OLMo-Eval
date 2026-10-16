@@ -495,6 +495,22 @@ class TestPreemptionForwarding:
         assert job_config.preemptible is None
         assert job_config.min_runtime == "2h"
 
+    def test_external_eval_job_installs_eval_extras(self):
+        from olmo_eval.cli.beaker.job_assembler import assemble_external_eval_job
+
+        job_config = assemble_external_eval_job(
+            name="test",
+            model="test-model",
+            external_evals=["swe_bench_verified"],
+            cluster="h100",
+            num_gpus=1,
+            workspace="ai2/test",
+            beaker_image="test-image",
+        )
+
+        assert "swebench" in job_config.extras
+        assert "sandbox" in job_config.extras
+
     def test_resolve_preemption(self):
         from olmo_eval.cli.beaker.config_loader import resolve_preemption
 

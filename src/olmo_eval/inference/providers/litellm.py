@@ -82,7 +82,7 @@ class LiteLLMProvider(InferenceProvider):
             **api_kwargs: Additional arguments passed to litellm.completion.
         """
         try:
-            import litellm  # type: ignore[ty:unresolved-import]
+            import litellm
         except ImportError as e:
             raise ImportError(
                 "litellm is required for LiteLLMProvider. Install with: uv pip install litellm"
@@ -103,7 +103,10 @@ class LiteLLMProvider(InferenceProvider):
         if is_debug_provider():
             litellm._turn_on_debug()
         else:
-            litellm.suppress_debug_info = True
+            # litellm leaves this flag unannotated, so ty pins it to Literal[False];
+            # it is a documented runtime setting, so assign through an untyped view.
+            litellm_settings: Any = litellm
+            litellm_settings.suppress_debug_info = True
 
         self._setup_api_keys()
 
@@ -174,13 +177,18 @@ class LiteLLMProvider(InferenceProvider):
             return openrouter_model_slug(self.model_name)
         return self.model_name
 
-    def get_openai_client(self) -> AsyncOpenAI | None:
-        """Get an AsyncOpenAI client if base_url is configured or requests use OpenRouter.
+    def get_openai_client(self) -> AsyncOpenAI:
+        """Get an AsyncOpenAI client for the configured base_url, or for OpenRouter.
 
         Returns cached client on subsequent calls to avoid connection pool leaks.
 
         Returns:
-            AsyncOpenAI client, or None when neither applies.
+            AsyncOpenAI client pointed at OpenRouter when requests are routed there,
+            otherwise at base_url.
+
+        Raises:
+            NotImplementedError: If neither applies, since LiteLLM's own routing has
+                no single OpenAI-compatible endpoint to hand out.
         """
         if self._client is not None:
             return self._client
@@ -192,7 +200,10 @@ class LiteLLMProvider(InferenceProvider):
             base_url = self.base_url
             api_key = os.getenv("OPENAI_API_KEY", "EMPTY")
         else:
-            return None
+            raise NotImplementedError(
+                f"{type(self).__name__} provides an OpenAI client only when base_url is set "
+                "or requests are routed through OpenRouter."
+            )
 
         from openai import AsyncOpenAI
 

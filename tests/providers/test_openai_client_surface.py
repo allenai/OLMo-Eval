@@ -192,7 +192,7 @@ class TestVLLMServerUsageParsing:
 class TestLiteLLMOpenAIClient:
     """The litellm provider hands this client to the agents scaffold."""
 
-    def test_returns_none_without_a_base_url(self):
+    def test_raises_without_a_base_url(self):
         from olmo_eval.inference.providers.litellm import LiteLLMProvider
 
         provider = LiteLLMProvider.__new__(LiteLLMProvider)
@@ -200,7 +200,8 @@ class TestLiteLLMOpenAIClient:
         provider._client = None
         provider._request_overrides = {}
 
-        assert provider.get_openai_client() is None
+        with pytest.raises(NotImplementedError, match="base_url"):
+            provider.get_openai_client()
 
     def test_builds_and_caches_a_client_for_a_base_url(self, monkeypatch):
         from olmo_eval.inference.providers.litellm import LiteLLMProvider

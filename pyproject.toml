@@ -35,6 +35,9 @@ dependencies = [
     "tree-sitter>=0.24.0",
     "tree-sitter-python>=0.23.0,<0.25.0",
     "ifbench @ git+https://github.com/allenai/IFBench.git@finbarr/clean-install",
+    # The multilingual Multi-IF verifiers count emoji and detect the reply's language.
+    "emoji>=2.0",
+    "langdetect>=1.0.9",
     # syllapy (transitive via ifbench) imports pkg_resources, which setuptools>=81 removes.
     "setuptools<81",
     "bm25s>=0.3.9",
@@ -106,6 +109,11 @@ openhands = [
 sandbox = [
     "swe-rex[modal] @ git+https://github.com/jdahm/SWE-ReX.git@johannd/ai2",
 ]
+# Test log parsers and grading for SWE-bench external evals.
+swebench = [
+    # Grading logic changes between releases, so pin exactly for comparable scores.
+    "swebench==5.0.2",
+]
 beaker = [
     "beaker-py>=2.6.0,<3",
     "beaker-gantry>=3.7.0,<4",
@@ -172,7 +180,7 @@ dev = [
     "ruff>=0.14.0",
     "ty==0.0.39",
     # Unit tests import optional helpers directly, so dev installs need these extras too.
-    "olmo-eval[s3,beaker,hf,vision,sandbox]",
+    "olmo-eval[s3,beaker,hf,vision,sandbox,swebench]",
     "jinja2>=3.1.6",
     # Upload tests validate payloads against dashboard/contract/ingest-v1.schema.json.
     "jsonschema>=4.23",
@@ -296,6 +304,8 @@ allowed-unresolved-imports = [
     "torch.**",
     "math_verify.**",
     "openai.**",
+    "agents.**",
+    "litellm.**",
     "smart_open.**",
     "google.cloud.**",
     "scipy.**",

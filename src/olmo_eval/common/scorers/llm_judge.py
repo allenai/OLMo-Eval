@@ -270,6 +270,14 @@ def build_openai_judge_fn(
 DEFAULT_JUDGE_SPEC = "gpt-5.5:medium"
 
 
+def parse_judge_spec(spec: str) -> tuple[str, str | None]:
+    """Split a ``model[:reasoning_effort]`` judge spec into a model and an optional effort."""
+    model, separator, effort = spec.partition(":")
+    if not model:
+        raise ValueError("OLMO_EVAL_JUDGE must name a judge model")
+    return model, effort if separator and effort else None
+
+
 def build_default_judge_fn(scorer_name: str, max_tokens: int = 4096) -> JudgeFn:
     """Build the default attributed-QA judge, overridable via ``$OLMO_EVAL_JUDGE``.
 
@@ -283,13 +291,12 @@ def build_default_judge_fn(scorer_name: str, max_tokens: int = 4096) -> JudgeFn:
     """
     import os
 
-    spec = os.getenv("OLMO_EVAL_JUDGE", DEFAULT_JUDGE_SPEC)
-    model, sep, effort = spec.partition(":")
+    model, reasoning_effort = parse_judge_spec(os.getenv("OLMO_EVAL_JUDGE", DEFAULT_JUDGE_SPEC))
     return build_openai_judge_fn(
         model=model,
         scorer_name=scorer_name,
         max_tokens=max_tokens,
-        reasoning_effort=(effort if sep else None),
+        reasoning_effort=reasoning_effort,
     )
 
 

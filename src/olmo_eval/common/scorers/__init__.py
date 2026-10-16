@@ -29,7 +29,7 @@ from .execution import (
     SandboxRequiredError,
     ScoringIncompleteError,
 )
-from .ifeval import IFEvalScorer
+from .ifeval import IFEvalScorer, MultiIFScorer
 from .label_set import LabelSetMatchScorer
 from .llm_judge import (
     JudgeFn,
@@ -75,6 +75,7 @@ __all__ = [
     "LogprobScorer",
     "MathVerifyScorer",
     "MinervaMathScorer",
+    "MultiIFScorer",
     "MultipleChoiceScorer",
     "MultiplEScorer",
     "NGramCopyingBPBScorer",
