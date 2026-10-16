@@ -147,7 +147,7 @@ class WMDPLogprobMCAccuracyMetric(Metric):
         logprob_sums = [scorer.score(response.instance, o) for o in response.outputs]
         return 0.0 if logprob_sums.index(max(logprob_sums)) == gold_idx else 1.0
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False
 
 
@@ -219,8 +219,7 @@ class WMDP(SafetyBase):
             sample=self.fewshot_sample,
             fallback_splits=[],
         )
-        k = self.config.num_fewshot
-        return all_fewshot[:k] if k else all_fewshot
+        return all_fewshot[: self.config.num_fewshot]
 
 
 _WMDP_SUBSET_METRICS = (

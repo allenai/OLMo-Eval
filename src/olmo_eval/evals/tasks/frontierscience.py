@@ -340,15 +340,15 @@ class FrontierScienceMetric(Metric):
         key = self.score_key or self.name
         return sum(response.scores.get(key, 0.0) for response in selected) / len(selected)
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         # The shared scorer channel carries the primary metric only, so a subject
         # slice must never fall back to it.
         return False
 
-    def pairwise_display_format(self) -> str:
+    def display_format(self) -> str:
         return "percentage"
 
-    def pairwise_unit(self) -> str:
+    def metric_unit(self) -> str:
         return "proportion"
 
 
@@ -407,13 +407,13 @@ class FrontierScienceMCMetric(Metric):
         ]
         return sum(values) / len(values) if values else 0.0
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False
 
-    def pairwise_display_format(self) -> str:
+    def display_format(self) -> str:
         return "percentage" if self.metric_kind != "logprob_margin" else "raw"
 
-    def pairwise_unit(self) -> str:
+    def metric_unit(self) -> str:
         return "proportion" if self.metric_kind != "logprob_margin" else "logprob"
 
 

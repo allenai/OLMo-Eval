@@ -188,7 +188,7 @@ class OlmocrBenchCategoryMetric(Metric):
         tests = _page_tests(response) or ()
         return _pass_rate([t for t in tests if t["category"] == self.category])
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False
 
 
@@ -211,7 +211,7 @@ class OlmocrBenchOverallMetric(Metric):
         rates = _category_pass_rates(tests)
         return sum(rates.values()) / len(rates)
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False
 
 
@@ -232,7 +232,7 @@ class OlmocrBenchTestTypeMetric(Metric):
         tests = _page_tests(response) or ()
         return _pass_rate([t for t in tests if t["type"] == self.test_type])
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False
 
 
@@ -254,8 +254,8 @@ class OlmocrBenchTestErrorsMetric(Metric):
         tests = _page_tests(response)
         return float(sum(t.get("raised", False) for t in tests)) if tests is not None else None
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False
 
-    def pairwise_higher_is_better(self) -> bool:
+    def higher_is_better(self) -> bool:
         return False

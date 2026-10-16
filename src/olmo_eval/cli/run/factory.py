@@ -2,32 +2,26 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from olmo_eval.cli.run.config import RunConfig
-from olmo_eval.runners.common.models import S3Config
-from olmo_eval.storage import StorageBackend
+
+if TYPE_CHECKING:
+    from olmo_eval.upload import UploadConfig
 
 
 class RunnerFactory:
     """Factory for creating evaluation runners based on configuration."""
 
-    def __init__(
-        self,
-        config: RunConfig,
-        storages: list[StorageBackend],
-        s3_config: S3Config | None = None,
-    ):
+    def __init__(self, config: RunConfig, upload_config: UploadConfig | None = None):
         """Initialize the factory.
 
         Args:
             config: Parsed run configuration.
-            storages: List of initialized storage backends.
-            s3_config: Optional S3 configuration.
+            upload_config: Dashboard upload settings, or None to skip uploads.
         """
         self.config = config
-        self.storages = storages
-        self.s3_config = s3_config
+        self.upload_config = upload_config
 
     def create(self) -> Any:
         """Create the runner based on configuration.
@@ -45,10 +39,9 @@ class RunnerFactory:
             harness_config=self.config.harness_config,
             task_specs=self.config.task_specs,
             output_dir=self.config.output_dir,
-            storages=self.storages,
             attention_backend=attention_backend,
             task_overrides=self.config.task_overrides,
-            s3_config=self.s3_config,
+            upload_config=self.upload_config,
             experiment_name=self.config.experiment_name,
             experiment_group=self.config.experiment_group,
             save_predictions=self.config.save_predictions,

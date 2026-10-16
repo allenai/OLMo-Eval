@@ -510,8 +510,11 @@ def test_judge_scorer_to_dict_is_stable_and_serializable():
 
     for scorer in (HelmetLongQAJudgeScorer(), HelmetSummJudgeScorer(is_book=True)):
         data = scorer.to_dict()
-        # a live closure must never appear in the serialized form
-        assert data["judge_fn"] == "<configured>"
+        # a live closure must never appear in the serialized form; the judge
+        # is described by its settings instead
+        assert data["judge_fn"]["model"] == scorer.judge_model
+        assert data["judge_fn"]["temperature"] == scorer.judge_temperature
+        assert data["judge_fn"]["max_tokens"] == scorer.judge_max_tokens
         assert json.dumps(data, sort_keys=True)
     # two independent constructions carry distinct closures but must
     # serialize identically, or task hashes would differ run to run

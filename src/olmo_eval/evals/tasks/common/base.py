@@ -10,7 +10,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
 
 from olmo_eval.common.formatters import Formatter
 from olmo_eval.common.metrics import Metric
@@ -264,13 +264,30 @@ class TaskConfig:
         except ValueError:
             return None
 
+    #: Sampling fields added after task hashes were first stored. Each is emitted
+    #: only when it differs from its default, so that tasks which do not use it
+    #: keep the hash they had before the field existed.
+    _SAMPLING_FIELDS_EMITTED_WHEN_SET: ClassVar[dict[str, Any]] = {
+        "fit_max_tokens_to_context": False,
+    }
+
+    def _serialize_sampling_params(self) -> dict[str, Any] | None:
+        from dataclasses import asdict
+
+        if not self.sampling_params:
+            return None
+        serialized = asdict(self.sampling_params)
+        for name, default in self._SAMPLING_FIELDS_EMITTED_WHEN_SET.items():
+            if serialized.get(name) == default:
+                serialized.pop(name, None)
+        return serialized
+
     def to_dict(self) -> dict[str, Any]:
         """Serialize config to a dictionary for hashing and storage.
 
         Returns:
             Dictionary with all config values serialized.
         """
-        from dataclasses import asdict
 
         def serialize_data_source(ds: Any) -> Any:
             if ds is None:
@@ -302,7 +319,7 @@ class TaskConfig:
             "seed": self.seed,
             "split": self.split.value,
             "primary_metric": serialize_primary_metric(self.get_primary_metric()),
-            "sampling_params": asdict(self.sampling_params) if self.sampling_params else None,
+            "sampling_params": self._serialize_sampling_params(),
             "output_score_aggregation": self.output_score_aggregation.value,
             "max_length": self.max_length,
             "answer_extractor": getattr(self.answer_extractor, "__name__", None),
@@ -492,9 +509,13 @@ class Task(ABC):
         yield from self._instances_cache
 
     def get_fewshot(self) -> list[Instance]:
-        """Get few-shot examples (cached after first call)."""
+        """Get few-shot examples (cached after first call).
+
+        Returns no examples when ``num_fewshot`` is 0, whatever pool the task
+        would otherwise draw from.
+        """
         if self._fewshot_cache is None:
-            self._fewshot_cache = self._build_fewshot()
+            self._fewshot_cache = self._build_fewshot() if self.config.num_fewshot else []
         return self._fewshot_cache
 
     # Class attributes for fewshot configuration (can be overridden by subclasses)

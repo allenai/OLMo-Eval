@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -38,12 +39,13 @@ class LaunchConfig:
 
     gpus: int = 0
 
-    s3_bucket: str = "ai2-llm"
-    s3_prefix: str = "olmo-eval"
-    s3_endpoint_url: str | None = None
-    s3_region: str = "us-east-1"
+    # Dashboard upload: resolved at launch so a local OLMO_EVAL_UPLOAD=0 carries over
+    upload: bool = True
+    api_url: str | None = None
+    tags: list[str] = field(default_factory=list)
+    # Shared by every job of one launch; the dashboard groups runs by it
+    launch_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
 
-    store: bool = False
     debug_requests: bool = False
     debug_provider: bool = False
     force_download_model: bool = False
@@ -65,7 +67,7 @@ class LaunchConfig:
     secret_env_overrides: dict[str, str] = field(default_factory=dict)
 
     # User-supplied plain env vars forwarded/set on the job via --env/-e.
-    # These win over infra and store defaults.
+    # These win over infra defaults.
     env_vars: dict[str, str] = field(default_factory=dict)
 
 
@@ -204,11 +206,6 @@ class LaunchConfigLoader:
         assert cluster is not None
         assert workspace is not None
 
-        from olmo_eval.launch.beaker.constants import DEFAULT_S3_BUCKET, DEFAULT_S3_PREFIX
-
-        s3_bucket = self.cli_args.get("s3_bucket") or DEFAULT_S3_BUCKET
-        s3_prefix = self.cli_args.get("s3_prefix") or DEFAULT_S3_PREFIX
-
         effective_groups = list(cli_groups)
         if cfg is not None and cfg.groups:
             for g in cfg.groups:
@@ -232,11 +229,9 @@ class LaunchConfigLoader:
             image=image,
             groups=effective_groups,
             gpus=gpus,
-            s3_bucket=s3_bucket,
-            s3_prefix=s3_prefix,
-            s3_endpoint_url=self.cli_args.get("s3_endpoint_url"),
-            s3_region=self.cli_args.get("s3_region", "us-east-1"),
-            store=self.cli_args.get("store", False),
+            upload=self.cli_args.get("upload", True),
+            api_url=self.cli_args.get("api_url"),
+            tags=list(self.cli_args.get("tags", [])),
             debug_requests=self.cli_args.get("debug_requests", False),
             debug_provider=self.cli_args.get("debug_provider", False),
             force_download_model=self.cli_args.get("force_download_model", False),
