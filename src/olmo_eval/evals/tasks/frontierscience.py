@@ -71,7 +71,7 @@ from typing import Any
 
 from olmo_eval.common.metrics import Metric
 from olmo_eval.common.scorers.base import LogprobScorer, Scorer
-from olmo_eval.common.scorers.llm_judge import JudgeFn, build_openai_judge_fn
+from olmo_eval.common.scorers.llm_judge import JudgeFn, build_openai_judge_fn, parse_judge_spec
 from olmo_eval.common.types import (
     Instance,
     LMOutput,
@@ -233,14 +233,6 @@ def verified_task_group_ids() -> frozenset[str]:
             f"expected {FRONTIERSCIENCE_VERIFIED_COUNT}"
         )
     return ids
-
-
-def _parse_judge_spec(spec: str) -> tuple[str, str | None]:
-    """Split ``model[:reasoning_effort]`` into serialized config values."""
-    model, separator, effort = spec.partition(":")
-    if not model:
-        raise ValueError("OLMO_EVAL_JUDGE must name a judge model")
-    return model, effort if separator and effort else None
 
 
 def build_frontierscience_judge_fn(
@@ -471,7 +463,7 @@ class _FrontierScience(Task, ABC):
         # Preserve the project-wide environment override, but resolve it before
         # hashing/artifact creation rather than consulting it during scoring.
         if spec := os.getenv("OLMO_EVAL_JUDGE"):
-            model, reasoning_effort = _parse_judge_spec(spec)
+            model, reasoning_effort = parse_judge_spec(spec)
             config = replace(
                 config,
                 judge_model=model,

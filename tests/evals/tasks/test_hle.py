@@ -10,12 +10,12 @@ from olmo_eval.common.scorers import ScoringIncompleteError
 from olmo_eval.common.types import LMOutput, RequestType, Response
 from olmo_eval.evals.tasks import hle
 from olmo_eval.evals.tasks.common import OutputScoreAggregation, get_task, task_exists
+from olmo_eval.evals.tasks.common import judge as judge_module
 from olmo_eval.evals.tasks.hle import (
     HLE_DEFAULT_JUDGE_MODEL,
     HLE_SYSTEM_PROMPT,
     calibration_error,
     parse_judge_reply,
-    visible_response,
 )
 from olmo_eval.runners.asynq.preparation import compute_task_metrics
 from olmo_eval.runners.asynq.results import _format_scoring_error, _record_scoring_failure
@@ -87,7 +87,7 @@ def _no_backoff_sleep(monkeypatch):
     async def sleep(_delay):
         return None
 
-    monkeypatch.setattr(hle.asyncio, "sleep", sleep)
+    monkeypatch.setattr(judge_module.asyncio, "sleep", sleep)
 
 
 @pytest.fixture
@@ -96,7 +96,7 @@ def task():
 
 
 def _use_judge(monkeypatch, judge) -> None:
-    monkeypatch.setattr(hle, "build_openai_judge_fn", lambda **_: judge)
+    monkeypatch.setattr(judge_module, "build_openai_judge_fn", lambda **_: judge)
 
 
 def _calibration_metric(task):
@@ -154,7 +154,7 @@ class TestJudgeConfiguration:
             captured.update(kwargs)
             return object()
 
-        monkeypatch.setattr(hle, "build_openai_judge_fn", fake_builder)
+        monkeypatch.setattr(judge_module, "build_openai_judge_fn", fake_builder)
         task = get_task(
             "hle:text",
             config_overrides={"judge_model": "judge-a", "judge_reasoning_effort": "high"},
@@ -226,17 +226,6 @@ def test_request_uses_the_official_system_prompt(task):
         {"role": "user", "content": "What is the answer?"},
     )
     assert request.images is None
-
-
-class TestVisibleResponse:
-    def test_drops_a_closed_reasoning_block(self):
-        assert visible_response("<think>work</think>\nAnswer: 42") == "Answer: 42"
-
-    def test_unclosed_reasoning_block_has_no_final_response(self):
-        assert visible_response("<think>so the answer is probably 41") == ""
-
-    def test_untagged_answers_are_kept(self):
-        assert visible_response("  Answer: 42\n") == "Answer: 42"
 
 
 class TestJudgeParsing:
@@ -341,12 +330,12 @@ class TestScoring:
         with caplog.at_level(logging.WARNING, logger=hle.__name__):
             await task.score_responses([response])
 
-        assert len(calls) == hle.HLE_JUDGE_ATTEMPTS + 1
+        assert len(calls) == judge_module.JUDGE_ATTEMPTS + 1
         failed = [o for o in response.outputs if "scoring_errors" in o.metadata]
         judged = [o for o in response.outputs if "scoring_errors" not in o.metadata]
         assert len(failed) == len(judged) == 1
         error = failed[0].metadata["scoring_errors"]["hle_judge"]
-        assert error["type"] == "HLEJudgeParseError"
+        assert error["type"] == "JudgeParseError"
         assert failed[0].metadata["judge_result"]["parse_error"] is True
         assert failed[0].metadata["judge_result"]["raw_judge_response"] in {"nope", "garbage"}
         assert "score:confidence" not in failed[0].metadata
@@ -358,7 +347,7 @@ class TestScoring:
     @pytest.mark.anyio
     async def test_a_batch_of_malformed_replies_fails_instead_of_scoring(self, task, monkeypatch):
         responses = [_response(task), _response(task)]
-        judge, _ = _scripted_judge(*["garbage"] * (2 * hle.HLE_JUDGE_ATTEMPTS))
+        judge, _ = _scripted_judge(*["garbage"] * (2 * judge_module.JUDGE_ATTEMPTS))
         _use_judge(monkeypatch, judge)
 
         with pytest.raises(ScoringIncompleteError, match="failed for every sample"):
@@ -366,7 +355,7 @@ class TestScoring:
 
         for response in responses:
             output = response.outputs[0]
-            assert output.metadata["scoring_errors"]["hle_judge"]["type"] == "HLEJudgeParseError"
+            assert output.metadata["scoring_errors"]["hle_judge"]["type"] == "JudgeParseError"
             assert output.metadata["judge_result"]["raw_judge_response"] == "garbage"
             assert "accuracy" not in response.scores
 
@@ -444,7 +433,7 @@ class TestScoring:
 
         assert calls == []
         assert response.scores == {"accuracy": 0.0, "truncation_rate": 1.0}
-        assert "no model output for 1 question(s), e.g. abc123" in caplog.text
+        assert "no model output for 1 instance(s), e.g. abc123" in caplog.text
 
 
 async def _score_like_the_runner(task, response: Response) -> Response:
@@ -463,7 +452,7 @@ class TestRunnerFinalization:
     @pytest.mark.anyio
     async def test_judge_failures_mark_the_result_incomplete(self, task, monkeypatch):
         responses = [_response(task), _response(task)]
-        judge, _ = _scripted_judge(*["garbage"] * (2 * hle.HLE_JUDGE_ATTEMPTS))
+        judge, _ = _scripted_judge(*["garbage"] * (2 * judge_module.JUDGE_ATTEMPTS))
         _use_judge(monkeypatch, judge)
 
         scored = [await _score_like_the_runner(task, response) for response in responses]
@@ -478,7 +467,7 @@ class TestRunnerFinalization:
         # One question judged correct, one whose judge never gave a verdict: the
         # unjudged one must not count as a wrong answer, in aggregate or per instance.
         judged, failed = _response(task, category="Physics"), _response(task, category="Physics")
-        judge, _ = _scripted_judge(_reply("yes", "90"), *["garbage"] * hle.HLE_JUDGE_ATTEMPTS)
+        judge, _ = _scripted_judge(_reply("yes", "90"), *["garbage"] * judge_module.JUDGE_ATTEMPTS)
         _use_judge(monkeypatch, judge)
 
         scored = [await _score_like_the_runner(task, judged)]
@@ -499,7 +488,7 @@ class TestRunnerFinalization:
             raise ValueError("judge unavailable")
 
         _use_judge(monkeypatch, judge)
-        monkeypatch.setattr(hle, "retry_with_backoff", lambda call, **_: call())
+        monkeypatch.setattr(judge_module, "retry_with_backoff", lambda call, **_: call())
 
         scored = [await _score_like_the_runner(task, _response(task))]
         result = compute_task_metrics("hle:text", task, scored, {}, 1, 0.0)
