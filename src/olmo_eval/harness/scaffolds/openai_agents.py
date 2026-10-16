@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import functools
 import logging
 from collections.abc import Sequence
 from contextvars import ContextVar
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
+from olmo_eval.common.openai_credentials import resolve_openai_credentials
 from olmo_eval.common.types import LMOutput, LMRequest, SamplingParams
 from olmo_eval.common.types.tools import ToolCall, ToolResult
 from olmo_eval.common.types.trajectory import AgentTrajectory, AgentTurn
@@ -38,6 +40,24 @@ DEFAULT_CHAT_TEMPLATE_KWARGS: dict[str, Any] = {"enable_thinking": False}
 # Sentinel distinguishing "provider does not support chat_template_kwargs" from
 # "provider supports it but has none configured".
 _UNSUPPORTED: Any = object()
+
+
+def _compaction_available() -> bool:
+    """Whether context compaction can run with the available credentials.
+
+    Compaction calls OpenAI's ``responses.compact`` endpoint, which OpenRouter does
+    not serve, so it needs an OpenAI key.
+    """
+    credentials = resolve_openai_credentials()
+    return credentials is not None and not credentials.via_openrouter
+
+
+@functools.cache
+def _warn_compaction_unavailable() -> None:
+    logger.warning(
+        "Context compaction is disabled: it needs OPENAI_API_KEY, because OpenRouter does "
+        "not serve OpenAI's responses.compact endpoint. Long agent runs keep their full history."
+    )
 
 
 def truncate_tool_output(output: str, max_chars: int | None) -> str:
@@ -405,7 +425,9 @@ class OpenAIAgentsScaffold(Scaffold):
 
         # Create compaction session if enabled
         session = None
-        if enable_compaction:
+        if enable_compaction and not _compaction_available():
+            _warn_compaction_unavailable()
+        elif enable_compaction:
             try:
                 from agents import SQLiteSession
                 from agents.memory import (

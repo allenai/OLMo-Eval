@@ -92,6 +92,21 @@ class TestRetryExceptionSurface:
         assert is_retryable_error(rate_limited, openai) is True
         assert is_retryable_error(bad_request, openai) is False
 
+    def test_out_of_credits_is_not_retried(self):
+        import httpx
+        import openai
+
+        from olmo_eval.inference.retry import is_retryable_error
+
+        request = httpx.Request("POST", "https://openrouter.ai/api/v1/chat/completions")
+        out_of_credits = openai.APIStatusError(
+            "Insufficient credits",
+            response=httpx.Response(402, request=request),
+            body=None,
+        )
+
+        assert is_retryable_error(out_of_credits, openai) is False
+
 
 class TestInstrumentedClientUsageAccounting:
     """The metrics wrapper reads usage with getattr, so a shape change zeroes it silently."""

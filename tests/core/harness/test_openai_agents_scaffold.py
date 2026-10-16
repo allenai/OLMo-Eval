@@ -747,3 +747,48 @@ class TestStopAtTools:
         else:
             assert len(requests) >= 3
             assert result.max_turns_reached
+
+
+class TestCompaction:
+    async def _run_kwargs(self, monkeypatch) -> dict[str, Any]:
+        from agents import Agent, Runner
+
+        agent = Agent(name="test-agent", instructions="Answer.")
+        run_calls: list[dict[str, Any]] = []
+
+        async def fake_run(**kwargs):
+            run_calls.append(kwargs)
+            return _FakeRunData(new_items=[], final_output="done")
+
+        _patch_scaffold_agent(monkeypatch, agent)
+        monkeypatch.setattr(Runner, "run", staticmethod(fake_run))
+        await OpenAIAgentsScaffold().run(
+            provider=SimpleNamespace(),
+            config=HarnessConfig(name="test", max_turns=3),
+            request=_agent_request(),
+        )
+        return run_calls[0]
+
+    @pytest.mark.anyio
+    async def test_openai_key_enables_compaction(self, monkeypatch):
+        from agents.memory import OpenAIResponsesCompactionSession
+
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
+
+        kwargs = await self._run_kwargs(monkeypatch)
+
+        assert isinstance(kwargs["session"], OpenAIResponsesCompactionSession)
+
+    @pytest.mark.anyio
+    async def test_openrouter_key_alone_skips_compaction(self, monkeypatch, caplog):
+        from olmo_eval.harness.scaffolds import openai_agents
+
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+        openai_agents._warn_compaction_unavailable.cache_clear()
+
+        with caplog.at_level(logging.WARNING, logger=_SCAFFOLD_LOGGER):
+            kwargs = await self._run_kwargs(monkeypatch)
+
+        assert "session" not in kwargs
+        assert "responses.compact" in caplog.text

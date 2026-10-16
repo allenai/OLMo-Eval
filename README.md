@@ -1649,10 +1649,15 @@ beaker secret write --workspace <workspace> {beaker-username}_OPENROUTER_API_KEY
 External evals run third-party code in a sandbox. There, the OpenRouter key is
 exported as both `OPENROUTER_API_KEY` and `OPENAI_API_KEY`, and `OPENAI_BASE_URL`
 points the OpenAI SDK at OpenRouter. olmo-eval rewrites the model names it passes
-to tau2 and DeepScholar, but it cannot rewrite names hardcoded inside a benchmark,
+to tau2, DeepScholar and AstaBench, but it cannot rewrite names hardcoded inside a benchmark,
 such as AstaBench's scorer models. OpenRouter resolves most bare OpenAI names
 (`gpt-4o-mini`, `o3-mini-2025-01-31`), but rejects dated snapshots it does not list,
 such as `gpt-4-0613`.
+
+The `openai_agents` harness compacts long agent histories through OpenAI's
+`responses.compact` endpoint. OpenRouter does not serve that endpoint, so with
+only an OpenRouter key the harness skips compaction, logs a warning and keeps
+the full history.
 
 ### Secret Environment Overrides
 
