@@ -9,6 +9,11 @@ to 2097152 tokens), so only the single shard a task actually needs is
 downloaded (rather than the whole repo), and it is read with reservoir
 sampling so peak memory scales with the requested sample count rather than
 the shard's full size.
+
+allenai/ruler-plus is private to Ai2, so these tasks are internal-only: the
+haystacks include excerpts of Paul Graham essays, which we can't relicense for
+redistribution. Running them needs an HF_TOKEN with access to the repo, or a
+locally generated copy via OLMO_EVAL_RULER_PLUS_DATA_DIR.
 """
 
 import json
@@ -18,6 +23,7 @@ from typing import Any, NamedTuple
 
 import numpy as np
 from huggingface_hub import hf_hub_download
+from huggingface_hub.errors import RepositoryNotFoundError
 from huggingface_hub.utils import disable_progress_bars as disable_hf_hub_progress_bars
 
 logger = logging.getLogger(__name__)
@@ -68,12 +74,20 @@ def get_ruler_plus_data_file(relative_path: str) -> RulerPlusDataFile:
     disable_hf_hub_progress_bars()
     filename = f"data/{relative_path}"
     logger.info(f"Fetching {filename} from {RULER_PLUS_REPO_ID}@{RULER_PLUS_REVISION}...")
-    path = hf_hub_download(
-        repo_id=RULER_PLUS_REPO_ID,
-        repo_type="dataset",
-        filename=filename,
-        revision=RULER_PLUS_REVISION,
-    )
+    try:
+        path = hf_hub_download(
+            repo_id=RULER_PLUS_REPO_ID,
+            repo_type="dataset",
+            filename=filename,
+            revision=RULER_PLUS_REVISION,
+        )
+    except RepositoryNotFoundError as e:
+        # The Hub reports a private repo the token can't read as not found
+        raise PermissionError(
+            f"Could not read {RULER_PLUS_REPO_ID}, which is private to Ai2 (ruler-plus tasks "
+            f"are internal-only). Set HF_TOKEN to a token with access, or point "
+            f"{RULER_PLUS_DATA_DIR_ENV_VAR} at a locally generated copy."
+        ) from e
     return RulerPlusDataFile(
         path=path, source=f"hf:{RULER_PLUS_REPO_ID}@{RULER_PLUS_REVISION}/{filename}"
     )

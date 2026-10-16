@@ -2,7 +2,8 @@
 
 Mirrors suites/ruler.py's structure (per-category suites plus a combined
 "all" suite per context size, a flat average over all tasks as in the paper)
-for the ruler-plus task family.
+for the ruler-plus task family. Like the tasks, these suites are internal-only
+(see ruler_plus_loader.py).
 """
 
 from olmo_eval.data.ruler_plus_tasks import CONTEXT_SIZES as RULER_PLUS_CONTEXT_SIZES
