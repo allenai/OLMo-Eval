@@ -19,15 +19,16 @@ import asyncio
 import logging
 import os
 from abc import abstractmethod
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, ClassVar, Literal, TypeVar
 
 from olmo_eval.common.metrics import Metric
+from olmo_eval.common.multi_turn import turn_count, turn_replies
 from olmo_eval.common.scorers import ScoringIncompleteError
 from olmo_eval.common.scorers.base import Scorer
 from olmo_eval.common.scorers.llm_judge import JudgeFn, build_openai_judge_fn, parse_judge_spec
-from olmo_eval.common.types import Instance, LMOutput, Response
+from olmo_eval.common.types import TURN_FINISH_REASONS_KEY, Instance, LMOutput, Response
 from olmo_eval.inference.retry import retry_with_backoff
 
 from .base import Task, TaskConfig, _format_scoring_error, _store_output_score
@@ -69,8 +70,12 @@ def visible_response(text: str) -> str:
 
 
 def is_truncated(output: LMOutput) -> bool:
-    """Whether generation stopped at the token limit."""
-    return (output.metadata or {}).get("finish_reason") == "length"
+    """Whether generation stopped at the token limit, on any turn of a conversation."""
+    metadata = output.metadata or {}
+    turn_finish_reasons = metadata.get(TURN_FINISH_REASONS_KEY)
+    if turn_finish_reasons is not None:
+        return "length" in turn_finish_reasons
+    return metadata.get("finish_reason") == "length"
 
 
 @dataclass(frozen=True)
@@ -104,6 +109,8 @@ class JudgedScoreMetric(Metric):
     metadata_key: str | None = None
     metadata_value: str | None = None
     display: DisplayFormat = "percentage"
+    #: Unit family for suite pooling; defaults to the one ``display`` implies.
+    unit: str | None = None
 
     def compute_instance(self, response: Response) -> float | None:
         if (
@@ -127,6 +134,9 @@ class JudgedScoreMetric(Metric):
 
     def display_format(self) -> str:
         return self.display
+
+    def metric_unit(self) -> str:
+        return self.unit or super().metric_unit()
 
 
 @dataclass(frozen=True)
@@ -190,8 +200,9 @@ class JudgedTask(Task):
     Subclasses set ``judge_model`` and ``judge_max_tokens`` (and optionally
     ``judge_reasoning_effort``) as task configuration, name their score channel with
     ``judge_scorer_name``, and implement :meth:`_score_output`. Each instance gets
-    its score under ``judge_score_key``, aggregated over its judged outputs, and
-    ``truncation_rate``.
+    its score under ``judge_score_key``, and each of ``judge_extra_score_keys``,
+    aggregated over its judged outputs, and ``truncation_rate``. An instance with no
+    model output scores ``unanswered_score``.
     """
 
     required_secrets = ("OPENAI_API_KEY",)
@@ -200,18 +211,23 @@ class JudgedTask(Task):
     judge_scorer_name: ClassVar[str] = JudgeScorer.name
     #: Response score that :meth:`_score_output` returns and metrics read.
     judge_score_key: ClassVar[str] = "accuracy"
+    #: Further scores :meth:`_score_output` records, aggregated per instance the same way.
+    judge_extra_score_keys: ClassVar[tuple[str, ...]] = ()
+    #: Every score of an instance the model gave no output for.
+    unanswered_score: ClassVar[float] = 0.0
 
     def __init__(self, config: TaskConfig) -> None:
         # The environment override applies only where the task's own judge model was
-        # left at its default, so ``-o judge_model=...`` wins.
+        # left at its default, so ``-o judge_model=...`` wins. A task's default effort
+        # belongs to its default model, so the override's effort replaces it unless
+        # the effort was overridden too.
         spec = os.getenv("OLMO_EVAL_JUDGE")
-        if spec and config.judge_model == getattr(type(self), "judge_model", None):
+        task_type = type(self)
+        if spec and config.judge_model == getattr(task_type, "judge_model", None):
             model, reasoning_effort = parse_judge_spec(spec)
-            config = replace(
-                config,
-                judge_model=model,
-                judge_reasoning_effort=config.judge_reasoning_effort or reasoning_effort,
-            )
+            if config.judge_reasoning_effort != getattr(task_type, "judge_reasoning_effort", None):
+                reasoning_effort = config.judge_reasoning_effort
+            config = replace(config, judge_model=model, judge_reasoning_effort=reasoning_effort)
         super().__init__(config)
 
     @abstractmethod
@@ -311,6 +327,20 @@ class JudgedTask(Task):
             raise JudgeParseError(f"no parseable verdict after {JUDGE_ATTEMPTS} judge attempts")
         return verdict
 
+    @staticmethod
+    async def _judge_together(*calls: Awaitable[V]) -> list[V]:
+        """Run several judge calls of one output concurrently and return their results.
+
+        Every call settles before the first failure is raised, so none outlives the
+        output's judging slot and the judge result holds every reply.
+        """
+        verdicts: list[V] = []
+        for result in await asyncio.gather(*calls, return_exceptions=True):
+            if isinstance(result, BaseException):
+                raise result
+            verdicts.append(result)
+        return verdicts
+
     def _record_judgement(
         self, output: LMOutput, judge_result: dict[str, Any], scores: dict[str, float]
     ) -> float:
@@ -325,27 +355,38 @@ class JudgedTask(Task):
         _store_output_score(output, scorer_name=self.judge_scorer_name, score=score)
         return score
 
+    @staticmethod
+    def _is_incomplete(response: Response, output: LMOutput) -> bool:
+        """Whether an output hit the token limit or its conversation outgrew the context."""
+        replies = turn_replies(output)
+        cut_short = replies is not None and len(replies) < turn_count(response.request)
+        return is_truncated(output) or cut_short
+
     def _warn_about_missing_responses(self, responses: Sequence[Response]) -> None:
         """Log outputs that score wrong because the model gave no complete response."""
         name = self.config.name
-        truncated = sum(
-            1 for response in responses for output in response.outputs if is_truncated(output)
+        incomplete = sum(
+            1
+            for response in responses
+            for output in response.outputs
+            if self._is_incomplete(response, output)
         )
-        if truncated:
+        if incomplete:
             logger.warning(
-                "%s generation hit the token limit on %d output(s); check truncation_rate "
-                "before reading the score as capability.",
+                "%s generation hit the token or context limit on %d output(s); check "
+                "truncation_rate before reading the score as capability.",
                 name,
-                truncated,
+                incomplete,
             )
         unanswered = [response for response in responses if not response.outputs]
         if unanswered:
             logger.warning(
-                "%s got no model output for %d instance(s), e.g. %s; they score 0. A "
+                "%s got no model output for %d instance(s), e.g. %s; they score %g. A "
                 "prompt longer than the context leaves room for no answer.",
                 name,
                 len(unanswered),
                 unanswered[0].instance.metadata.get("id"),
+                self.unanswered_score,
             )
 
     async def score_responses(
@@ -420,10 +461,20 @@ class JudgedTask(Task):
                 ) from judge_errors[0]
 
         for response, output_scores in zip(responses, scores_by_response, strict=True):
+            if not response.outputs:
+                for key in (self.judge_score_key, *self.judge_extra_score_keys):
+                    response.scores[key] = self.unanswered_score
+                response.scores["truncation_rate"] = 1.0
+                continue
             response.scores[self.judge_score_key] = self._aggregate_output_scores(output_scores)
-            response.scores["truncation_rate"] = (
-                sum(is_truncated(output) for output in response.outputs) / len(response.outputs)
-                if response.outputs
-                else 1.0
-            )
+            for key in self.judge_extra_score_keys:
+                response.scores[key] = self._aggregate_output_scores(
+                    {
+                        index: response.outputs[index].metadata[f"score:{key}"]
+                        for index in output_scores
+                    }
+                )
+            response.scores["truncation_rate"] = sum(
+                self._is_incomplete(response, output) for output in response.outputs
+            ) / len(response.outputs)
         return responses

@@ -28,7 +28,9 @@ from olmo_eval.evals.tasks.mt_bench import (
     parse_rating,
 )
 from olmo_eval.runners.asynq.preparation import compute_task_metrics, prepare_task_items
-from olmo_eval.runners.asynq.results import _format_scoring_error, _record_scoring_failure
+from tests.evals.tasks.judge_stubs import score_like_the_runner, use_judge
+
+pytestmark = pytest.mark.usefixtures("judge_test_env")
 
 QUESTIONS = ["Write a haiku about rain.", "Now make it about snow."]
 REFERENCE = ["Area is 3.", "Area is 5pi."]
@@ -49,13 +51,24 @@ def _response(task, replies: list[str] | None = None, **doc_fields) -> Response:
     return Response(instance=instance, request=task.format_request(instance), outputs=[output])
 
 
-def _scripted_judge(*replies: str):
-    remaining = iter(replies)
-    calls: list[tuple[str | None, str]] = []
+_SECOND_TURN_SYSTEM_PROMPTS = {
+    SECOND_TURN_PROMPT.system_prompt,
+    SECOND_TURN_REFERENCE_PROMPT.system_prompt,
+}
+
+
+def _turn_judge(*replies_by_turn: list[str]):
+    """A judge that answers each turn from its own replies, as the turns run concurrently.
+
+    Returns the judge and the ``(turn, system_prompt, prompt)`` of each call.
+    """
+    remaining = {turn: iter(replies) for turn, replies in enumerate(replies_by_turn, start=1)}
+    calls: list[tuple[int, str | None, str]] = []
 
     async def judge(prompt: str, *, system_prompt: str | None = None) -> str:
-        calls.append((system_prompt, prompt))
-        return next(remaining)
+        turn = 2 if system_prompt in _SECOND_TURN_SYSTEM_PROMPTS else 1
+        calls.append((turn, system_prompt, prompt))
+        return next(remaining[turn])
 
     return judge, calls
 
@@ -64,27 +77,9 @@ def _rated(rating: float) -> str:
     return f"The answer is clear and correct. Rating: [[{rating:g}]]"
 
 
-@pytest.fixture(autouse=True)
-def _no_judge_env(monkeypatch):
-    monkeypatch.delenv("OLMO_EVAL_JUDGE", raising=False)
-
-
-@pytest.fixture(autouse=True)
-def _no_backoff_sleep(monkeypatch):
-    async def sleep(_delay):
-        return None
-
-    monkeypatch.setattr(judge_module.asyncio, "sleep", sleep)
-    monkeypatch.setattr(judge_module, "retry_with_backoff", lambda call, **_: call())
-
-
 @pytest.fixture
 def task():
     return get_task("mt_bench")
-
-
-def _use_judge(monkeypatch, judge) -> None:
-    monkeypatch.setattr(judge_module, "build_openai_judge_fn", lambda **_: judge)
 
 
 class TestRegistration:
@@ -243,129 +238,153 @@ class TestJudgePrompt:
     def test_first_turn_without_a_reference(self, task):
         instance = task.process_doc(_doc())
 
-        prompt = judge_prompt(instance, ["Rain.", "Snow."], 1)
+        system_prompt, prompt = judge_prompt(instance, ["Rain.", "Snow."], 1)
 
-        assert prompt.system_prompt == SINGLE_TURN_PROMPT.system_prompt
-        assert prompt.template == SINGLE_TURN_PROMPT.template.format(
-            question=QUESTIONS[0], answer="Rain."
-        )
+        assert system_prompt == SINGLE_TURN_PROMPT.system_prompt
+        assert prompt == SINGLE_TURN_PROMPT.template.format(question=QUESTIONS[0], answer="Rain.")
 
     def test_first_turn_against_the_reference(self, task):
         instance = task.process_doc(_doc(category="math", reference=REFERENCE))
 
-        prompt = judge_prompt(instance, ["Rain.", "Snow."], 1)
+        system_prompt, prompt = judge_prompt(instance, ["Rain.", "Snow."], 1)
 
-        assert prompt.system_prompt == SINGLE_TURN_REFERENCE_PROMPT.system_prompt
-        assert "[The Start of Reference Answer]\nArea is 3.\n" in prompt.template
-        assert "Area is 5pi." not in prompt.template
+        assert system_prompt == SINGLE_TURN_REFERENCE_PROMPT.system_prompt
+        assert "[The Start of Reference Answer]\nArea is 3.\n" in prompt
+        assert "Area is 5pi." not in prompt
 
     def test_second_turn_shows_the_whole_conversation(self, task):
         instance = task.process_doc(_doc())
 
-        prompt = judge_prompt(instance, ["Rain.", "Snow."], 2)
+        system_prompt, prompt = judge_prompt(instance, ["Rain.", "Snow."], 2)
 
-        assert prompt.system_prompt == SECOND_TURN_PROMPT.system_prompt
-        assert prompt.template == SECOND_TURN_PROMPT.template.format(
+        assert system_prompt == SECOND_TURN_PROMPT.system_prompt
+        assert prompt == SECOND_TURN_PROMPT.template.format(
             question_1=QUESTIONS[0], answer_1="Rain.", question_2=QUESTIONS[1], answer_2="Snow."
         )
 
     def test_second_turn_against_both_references(self, task):
         instance = task.process_doc(_doc(category="coding", reference=REFERENCE))
 
-        prompt = judge_prompt(instance, ["Rain.", "Snow."], 2)
+        system_prompt, prompt = judge_prompt(instance, ["Rain.", "Snow."], 2)
 
-        assert prompt.system_prompt == SECOND_TURN_REFERENCE_PROMPT.system_prompt
-        assert "### Reference answer:\nArea is 3.\n" in prompt.template
-        assert "### Reference answer:\nArea is 5pi.\n" in prompt.template
-        assert "### Assistant A:\nSnow.\n" in prompt.template
+        assert system_prompt == SECOND_TURN_REFERENCE_PROMPT.system_prompt
+        assert "### Reference answer:\nArea is 3.\n" in prompt
+        assert "### Reference answer:\nArea is 5pi.\n" in prompt
+        assert "### Assistant A:\nSnow.\n" in prompt
 
     def test_answers_with_braces_are_kept_verbatim(self, task):
         instance = task.process_doc(_doc())
 
-        prompt = judge_prompt(instance, ["def f(): return {}", "{x}"], 2)
+        _, prompt = judge_prompt(instance, ["def f(): return {}", "{x}"], 2)
 
-        assert "def f(): return {}" in prompt.template
-        assert "### Assistant A:\n{x}\n" in prompt.template
+        assert "def f(): return {}" in prompt
+        assert "### Assistant A:\n{x}\n" in prompt
+
+
+class TestJudgeOverride:
+    def test_an_override_with_an_effort_replaces_the_default_effort(self, monkeypatch):
+        monkeypatch.setenv("OLMO_EVAL_JUDGE", "gpt-5-mini:low")
+
+        config = get_task("mt_bench").config
+
+        assert (config.judge_model, config.judge_reasoning_effort) == ("gpt-5-mini", "low")
+
+    def test_an_override_without_an_effort_drops_the_default_effort(self, monkeypatch):
+        monkeypatch.setenv("OLMO_EVAL_JUDGE", "gpt-4-0613")
+
+        config = get_task("mt_bench").config
+
+        assert (config.judge_model, config.judge_reasoning_effort) == ("gpt-4-0613", None)
 
 
 class TestScoring:
     @pytest.mark.anyio
     async def test_rates_both_turns_with_fastchats_prompts(self, task, monkeypatch):
         response = _response(task, ["<think>hmm</think>Rain falls.", "Snow falls."])
-        judge, calls = _scripted_judge(_rated(8), _rated(5))
-        _use_judge(monkeypatch, judge)
+        judge, calls = _turn_judge([_rated(8)], [_rated(5)])
+        use_judge(monkeypatch, judge)
 
         await task.score_responses([response])
 
         answers = ["Rain falls.", "Snow falls."]
-        expected = [judge_prompt(response.instance, answers, turn) for turn in (1, 2)]
-        assert calls == [(prompt.system_prompt, prompt.template) for prompt in expected]
+        expected = [(turn, *judge_prompt(response.instance, answers, turn)) for turn in (1, 2)]
+        assert sorted(calls) == expected
         assert response.scores == {
             "score": 6.5,
             "turn_1": 8.0,
             "turn_2": 5.0,
             "truncation_rate": 0.0,
         }
-        judge_result = response.outputs[0].metadata["judge_result"]
-        assert judge_result == {
+        assert response.outputs[0].metadata["judge_result"] == {
             "scorer": "mt_bench_judge",
-            "turns": [
-                {
-                    "turn": 1,
-                    "rating": 8.0,
-                    "no_final_response": False,
-                    "raw_judge_response": _rated(8),
-                },
-                {
-                    "turn": 2,
-                    "rating": 5.0,
-                    "no_final_response": False,
-                    "raw_judge_response": _rated(5),
-                },
-            ],
+            "raw_judge_response_turn_1": _rated(8),
+            "rating_turn_1": 8.0,
+            "raw_judge_response_turn_2": _rated(5),
+            "rating_turn_2": 5.0,
             "parse_error": False,
         }
 
     @pytest.mark.anyio
     async def test_a_turn_without_a_visible_answer_gets_the_lowest_rating(self, task, monkeypatch):
         response = _response(task, ["Rain falls.", "<think>the user wants snow"])
-        judge, calls = _scripted_judge(_rated(9))
-        _use_judge(monkeypatch, judge)
+        judge, calls = _turn_judge([_rated(9)], [])
+        use_judge(monkeypatch, judge)
 
         await task.score_responses([response])
 
-        assert len(calls) == 1
+        assert [turn for turn, _, _ in calls] == [1]
         assert response.scores["turn_1"] == 9.0
         assert response.scores["turn_2"] == 1.0
         assert response.scores["score"] == 5.0
-        second = response.outputs[0].metadata["judge_result"]["turns"][1]
-        assert second == {"turn": 2, "rating": 1.0, "no_final_response": True}
+        judge_result = response.outputs[0].metadata["judge_result"]
+        assert judge_result["no_final_response_turn_2"] is True
+        assert judge_result["rating_turn_2"] == 1.0
 
     @pytest.mark.anyio
-    async def test_a_turn_the_conversation_never_reached_gets_the_lowest_rating(
+    async def test_the_second_turn_is_judged_after_a_first_turn_without_an_answer(
+        self, task, monkeypatch
+    ):
+        response = _response(task, ["<think>never closed", "Snow falls."])
+        judge, calls = _turn_judge([], [_rated(6)])
+        use_judge(monkeypatch, judge)
+
+        await task.score_responses([response])
+
+        assert [turn for turn, _, _ in calls] == [2]
+        assert "### Assistant A:\n\n\n### User:" in calls[0][2]
+        assert (response.scores["turn_1"], response.scores["turn_2"]) == (1.0, 6.0)
+
+    @pytest.mark.anyio
+    async def test_a_turn_the_conversation_never_reached_counts_as_truncated(
         self, task, monkeypatch
     ):
         response = _response(task, ["Rain falls."])
-        judge, calls = _scripted_judge(_rated(7))
-        _use_judge(monkeypatch, judge)
+        response.outputs[0].metadata[TURN_FINISH_REASONS_KEY] = ["stop"]
+        judge, calls = _turn_judge([_rated(7)], [])
+        use_judge(monkeypatch, judge)
 
         await task.score_responses([response])
 
         assert len(calls) == 1
         assert response.scores["turn_2"] == 1.0
+        assert response.scores["truncation_rate"] == 1.0
 
     @pytest.mark.anyio
     async def test_a_question_without_output_gets_the_lowest_rating(self, task, monkeypatch):
         response = _response(task)
         response.outputs = []
-        judge, calls = _scripted_judge()
-        _use_judge(monkeypatch, judge)
+        judge, calls = _turn_judge()
+        use_judge(monkeypatch, judge)
 
         await task.score_responses([response])
 
         assert calls == []
-        assert response.scores["score"] == 1.0
-        assert response.scores["turn_1"] == response.scores["turn_2"] == 1.0
+        assert response.scores == {
+            "score": 1.0,
+            "turn_1": 1.0,
+            "turn_2": 1.0,
+            "truncation_rate": 1.0,
+        }
 
     @pytest.mark.anyio
     async def test_samples_are_averaged_per_turn(self, task, monkeypatch):
@@ -373,8 +392,8 @@ class TestScoring:
         response.outputs.append(
             LMOutput(text="", metadata={REPLIES_KEY: ["Drizzle.", "Flurries."]})
         )
-        judge, _ = _scripted_judge(_rated(8), _rated(6), _rated(4), _rated(2))
-        _use_judge(monkeypatch, judge)
+        judge, _ = _turn_judge([_rated(8), _rated(4)], [_rated(6), _rated(2)])
+        use_judge(monkeypatch, judge)
 
         await task.score_responses([response])
 
@@ -383,13 +402,30 @@ class TestScoring:
         assert response.scores["score"] == 5.0
 
     @pytest.mark.anyio
+    async def test_a_sample_that_fails_judging_is_left_out_of_every_turn(self, task, monkeypatch):
+        response = _response(task)
+        response.outputs.append(
+            LMOutput(text="", metadata={REPLIES_KEY: ["Drizzle.", "Flurries."]})
+        )
+        judge, _ = _turn_judge(
+            [_rated(8), *["no rating"] * judge_module.JUDGE_ATTEMPTS], [_rated(6), _rated(2)]
+        )
+        use_judge(monkeypatch, judge)
+
+        await task.score_responses([response])
+
+        assert (response.scores["turn_1"], response.scores["turn_2"]) == (8.0, 6.0)
+        assert response.scores["score"] == 7.0
+        assert "score:turn_1" not in response.outputs[1].metadata
+
+    @pytest.mark.anyio
     async def test_a_truncated_turn_counts_the_question_as_truncated(self, task, monkeypatch):
         truncated = _response(task, question_id=81)
         truncated.outputs[0].metadata[TURN_FINISH_REASONS_KEY] = ["length", "stop"]
         complete = _response(task, question_id=82)
         complete.outputs[0].metadata[TURN_FINISH_REASONS_KEY] = ["stop", "stop"]
-        judge, _ = _scripted_judge(*(_rated(5) for _ in range(4)))
-        _use_judge(monkeypatch, judge)
+        judge, _ = _turn_judge([_rated(5)] * 2, [_rated(5)] * 2)
+        use_judge(monkeypatch, judge)
 
         await task.score_responses([truncated, complete])
 
@@ -401,8 +437,8 @@ class TestScoring:
     @pytest.mark.anyio
     async def test_an_out_of_range_rating_is_retried(self, task, monkeypatch):
         response = _response(task)
-        judge, calls = _scripted_judge("Rating: [[11]]", _rated(7), _rated(6))
-        _use_judge(monkeypatch, judge)
+        judge, calls = _turn_judge(["Rating: [[11]]", _rated(7)], [_rated(6)])
+        use_judge(monkeypatch, judge)
 
         await task.score_responses([response])
 
@@ -413,15 +449,16 @@ class TestScoring:
     @pytest.mark.anyio
     async def test_an_unrated_first_turn_leaves_the_question_unscored(self, task, monkeypatch):
         response = _response(task)
-        judge, _ = _scripted_judge(*["no rating"] * judge_module.JUDGE_ATTEMPTS, _rated(6))
-        _use_judge(monkeypatch, judge)
+        judge, _ = _turn_judge(["no rating"] * judge_module.JUDGE_ATTEMPTS, [_rated(6)])
+        use_judge(monkeypatch, judge)
 
         with pytest.raises(ScoringIncompleteError):
             await task.score_responses([response])
 
         judge_result = response.outputs[0].metadata["judge_result"]
         assert judge_result["parse_error"] is True
-        assert [turn["rating"] for turn in judge_result["turns"]] == [None, 6.0]
+        assert judge_result["raw_judge_response_turn_1"] == "no rating"
+        assert judge_result["rating_turn_2"] == 6.0
         assert "score" not in response.scores
 
     @pytest.mark.anyio
@@ -431,7 +468,7 @@ class TestScoring:
         async def judge(prompt: str, *, system_prompt: str | None = None) -> str:
             raise ConnectionError("judge unavailable")
 
-        _use_judge(monkeypatch, judge)
+        use_judge(monkeypatch, judge)
 
         with pytest.raises(ScoringIncompleteError, match="judge unavailable"):
             await task.score_responses([response])
@@ -444,8 +481,8 @@ class TestScoring:
     async def test_requires_the_multi_turn_chat_scaffold(self, task, monkeypatch):
         response = _response(task)
         response.outputs = [LMOutput(text="Rain falls.")]
-        judge, calls = _scripted_judge()
-        _use_judge(monkeypatch, judge)
+        judge, calls = _turn_judge()
+        use_judge(monkeypatch, judge)
 
         with pytest.raises(ValueError, match="multi_turn_chat"):
             await task.score_responses([response])
@@ -453,7 +490,7 @@ class TestScoring:
 
     @pytest.mark.anyio
     async def test_metrics_average_turns_and_categories(self, task, monkeypatch):
-        # Each turn's answer is its own rating, so the judge can be concurrent.
+        # Each turn's answer is its own rating, so the judge needs no script.
         responses = [
             _response(task, ["10", "8"], category="writing", question_id=81),
             _response(task, ["6", "4"], category="writing", question_id=82),
@@ -465,7 +502,7 @@ class TestScoring:
             answer = re.findall(r"(?:Assistant A:|Assistant's Answer\])\n(\d+)\n", prompt)[-1]
             return _rated(float(answer))
 
-        _use_judge(monkeypatch, judge)
+        use_judge(monkeypatch, judge)
 
         await task.score_responses(responses)
 
@@ -478,29 +515,17 @@ class TestScoring:
         assert metrics["score_coding"] == 0.0
 
 
-async def _score_like_the_runner(task, response: Response) -> Response:
-    """Score one instance the way the async runner does, including its failure path."""
-    try:
-        return (await task.score_responses([response]))[0]
-    except Exception as exc:
-        return _record_scoring_failure(
-            response,
-            scorer_names=list(task._get_scorers()),
-            error=_format_scoring_error(exc, phase="response"),
-        )
-
-
 @pytest.mark.anyio
 async def test_an_unrated_question_is_incomplete_not_scored(task, monkeypatch):
     rated = _response(task, question_id=81)
     unrated = _response(task, question_id=82)
-    judge, _ = _scripted_judge(
-        _rated(8), _rated(6), _rated(7), *["no rating here"] * judge_module.JUDGE_ATTEMPTS
+    judge, _ = _turn_judge(
+        [_rated(8), _rated(7)], [_rated(6), *["no rating here"] * judge_module.JUDGE_ATTEMPTS]
     )
-    _use_judge(monkeypatch, judge)
+    use_judge(monkeypatch, judge)
 
-    scored = [await _score_like_the_runner(task, rated)]
-    scored.append(await _score_like_the_runner(task, unrated))
+    scored = [await score_like_the_runner(task, rated)]
+    scored.append(await score_like_the_runner(task, unrated))
     result = compute_task_metrics("mt_bench", task, scored, {}, len(scored), 0.0)
 
     assert result.error is not None and result.error.startswith("Incomplete: 1 output score(s)")
@@ -508,6 +533,6 @@ async def test_an_unrated_question_is_incomplete_not_scored(task, monkeypatch):
     assert result.metrics["score_turn_2"] == {"mt_bench_judge": 6.0}
     judge_result = unrated.outputs[0].metadata["judge_result"]
     assert judge_result["parse_error"] is True
-    assert judge_result["turns"][1]["raw_judge_response"] == "no rating here"
+    assert judge_result["raw_judge_response_turn_2"] == "no rating here"
     _, unrated_prediction = result.predictions
     assert "score" not in unrated_prediction["instance_metrics"]
