@@ -8,13 +8,14 @@ import os
 from functools import lru_cache
 from typing import Any
 
-from agents import set_trace_processors  # type: ignore[ty:unresolved-import]
-from agents.tracing.processors import BatchTraceProcessor  # type: ignore[ty:unresolved-import]
+from agents import set_trace_processors
+from agents.tracing.processor_interface import TracingExporter
+from agents.tracing.processors import BatchTraceProcessor
 
 logger = logging.getLogger(__name__)
 
 
-class FileSpanExporter:
+class FileSpanExporter(TracingExporter):
     """Exports traces to per-trace JSONL files.
 
     Each unique trace_id gets its own file. Since each agent run has a unique

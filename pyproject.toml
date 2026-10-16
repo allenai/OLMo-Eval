@@ -304,6 +304,8 @@ allowed-unresolved-imports = [
     "torch.**",
     "math_verify.**",
     "openai.**",
+    "agents.**",
+    "litellm.**",
     "smart_open.**",
     "google.cloud.**",
     "scipy.**",
