@@ -39,8 +39,8 @@ TR_COLUMNS = (
     tr.id, tr.run_id, tr.task_name, tr.task_hash, tr.model_id, tr.run_created_at,
     tr.primary_metric, tr.score, tr.stderr, tr.score_is_mean, tr.instance_scale, tr.metric_kind,
     tr.higher_is_better, tr.display_format, tr.metrics, tr.metric_meta, tr.num_instances,
-    tr.instances_processed, tr.instances_failed, tr.instances_stored, tr.error,
-    tr.duration_seconds, tr.updated_at, tr.finalized_at,
+    tr.instances_processed, tr.instances_failed, tr.generation_counts, tr.instances_stored,
+    tr.error, tr.duration_seconds, tr.updated_at, tr.finalized_at,
 """
     + RUNTIME_TR_COLUMNS
 )
