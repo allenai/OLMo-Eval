@@ -44,9 +44,9 @@ Scoring
 -------
 A closed reasoning block is removed before judging. A reasoning block that never
 closes, or a response that hit the generation token limit, scores as a fail without
-calling the judge. A judge call that fails, or gives no parseable verdict after
-three attempts, is recorded as an incomplete score and left out of the metrics; the
-run's result is flagged incomplete. Upstream instead counts a judge error as a fail.
+calling the judge. A judge call that fails, or gives no parseable verdict after its
+retries, is recorded as an incomplete score and left out of the metrics; the run's
+result is flagged incomplete. Upstream instead counts a judge error as a fail.
 
 Metrics:
 
