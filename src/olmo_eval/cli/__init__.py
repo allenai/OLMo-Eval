@@ -22,6 +22,7 @@ from olmo_eval.cli.suite import suite
 from olmo_eval.cli.task import task
 from olmo_eval.cli.utils import console
 from olmo_eval.common.constants import get_model_presets
+from olmo_eval.common.openai_credentials import describe_secret
 from olmo_eval.evals.suites import get_suite, list_suites
 from olmo_eval.evals.tasks.common import list_tasks, list_variants
 
@@ -251,7 +252,7 @@ def external_evals(filter: str) -> None:
 
         # Required secrets
         if eval_instance.required_secrets:
-            secrets_str = ", ".join(eval_instance.required_secrets)
+            secrets_str = ", ".join(describe_secret(s) for s in eval_instance.required_secrets)
             details.add_row("Required Secrets", f"[red]{secrets_str}[/red]")
 
         # Setup commands - only for sandboxed evals
