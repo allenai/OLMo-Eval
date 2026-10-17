@@ -188,6 +188,7 @@ dev = [
     "jsonschema>=4.23",
     "google-api-core>=2.0.0",
     "parameterized>=0.9.0",
+    "pytest-xdist>=3.6",
 ]
 # Mirror of the `vllm` extra as a uv dependency group so it can be enabled by
 # default for GPU/CI workflows while still being installable via pip extras.

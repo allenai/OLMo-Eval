@@ -29,7 +29,7 @@ finish the local code, tests, and launch command before pushing for a remote tri
 uv run ruff check src/ tests/
 uv run ruff format --check src/ tests/
 uv run ty check src/
-uv run pytest tests/ --ignore=tests/integration -v
+uv run pytest tests/ --ignore=tests/integration -v -n 4 --dist worksteal
 ```
 
 - Use `uv run` for everything; `uv add` for dependencies, never `pip install`. Don't

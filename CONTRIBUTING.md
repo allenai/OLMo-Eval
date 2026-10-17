@@ -25,11 +25,14 @@ Run these before opening a PR that changes code:
 uv run ruff check src/ tests/
 uv run ruff format --check src/ tests/
 uv run ty check src/
-uv run pytest tests/ --ignore=tests/integration -v
+uv run pytest tests/ --ignore=tests/integration -v -n 4 --dist worksteal
 ```
 
 - CI runs the same commands as `uv run --frozen --no-group vllm ...` on Python 3.12 and
   3.13. Use those flags to reproduce a CI-only failure.
+- `-n 4 --dist worksteal` runs the unit tests on four pytest-xdist workers. More workers
+  don't finish sooner, because each one imports the heavy dependencies. Drop the flags,
+  or pass `-n0`, when debugging a single test.
 - `./scripts/fix.sh` formats and applies lint fixes. `./scripts/verify.sh` syncs
   dependencies and runs everything, including Docker-backed integration tests
   (`--no-docker` skips them; `--gpu` enables GPU tests).
