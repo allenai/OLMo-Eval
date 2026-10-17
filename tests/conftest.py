@@ -1,5 +1,7 @@
 """Root pytest configuration."""
 
+import contextlib
+
 import pytest
 
 # Register anyio plugin for async tests
@@ -57,6 +59,12 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "integration: mark test as integration test (requires Docker services)"
     )
+
+    # ifbench downloads NLTK data when first imported. Under xdist, import it once in the
+    # controller so the workers don't race to write the same zip files on a fresh machine.
+    if getattr(config.option, "numprocesses", None) and not hasattr(config, "workerinput"):
+        with contextlib.suppress(ImportError):
+            import ifbench.instructions_util  # noqa: F401
 
 
 def pytest_collection_modifyitems(config, items):
