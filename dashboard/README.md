@@ -149,8 +149,8 @@ certificates, Cloud Armor, the `github-actions` service account, Workload Identi
 
 `.github/workflows/terraform.yml` deploys it continuously: pull requests that touch
 `infra/terraform` run `terraform fmt` and `terraform validate`, and merging to `main` runs
-`terraform apply` as Skiff2's `github-actions` service account. Pull requests can't reach the real
-project, so run `terraform plan` locally to preview a change. To apply
+`terraform apply` as Skiff2's `github-actions` service account. Pull request workflows can't
+authenticate to the project, so run `terraform plan` locally to preview a change. To apply
 by hand instead:
 
 ```bash
