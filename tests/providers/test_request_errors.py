@@ -19,6 +19,7 @@ def test_failed_request_carries_exception_and_preserves_successes(provider_type,
     provider = provider_type.__new__(provider_type)
     provider.model_name = "mock"
     provider._tool_calls_parsed = None
+    provider._openai_params = None
     provider.max_concurrency = 1
     provider.max_retries = 1
     requests = [
@@ -47,6 +48,7 @@ def test_loglikelihood_without_continuations_keeps_successful_empty_result(provi
     provider = provider_type.__new__(provider_type)
     provider.model_name = "mock"
     provider._tool_calls_parsed = None
+    provider._openai_params = None
     provider.max_concurrency = 1
     provider.max_retries = 0
     provider._logprobs_single_async = AsyncMock(return_value=[])
@@ -60,6 +62,7 @@ def test_terminal_failure_still_propagates(provider_type) -> None:
     provider = provider_type.__new__(provider_type)
     provider.model_name = "mock"
     provider._tool_calls_parsed = None
+    provider._openai_params = None
     provider.max_concurrency = 1
     provider.max_retries = 1
     provider._generate_single_async = AsyncMock(side_effect=TerminalProviderError("engine died"))
@@ -74,6 +77,7 @@ def test_failed_request_bounds_large_error_bodies(provider_type) -> None:
     provider = provider_type.__new__(provider_type)
     provider.model_name = "mock"
     provider._tool_calls_parsed = None
+    provider._openai_params = None
     provider.max_concurrency = 1
     provider.max_retries = 0
     provider._generate_single_async = AsyncMock(side_effect=ValueError("gateway " + "x" * 10_000))
