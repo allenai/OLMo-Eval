@@ -29,12 +29,18 @@ DEFAULT_MAX_HARD_FAILURE_RATE = 0.05
 #       flight, and a batch's share across its requests by token share. Summed over
 #       workers, so a run with N workers attributes up to N x processing_seconds.
 #       Agent rollouts include their tool and sandbox time.
+#   scoring_seconds: the task's share of the scoring loop's wall time. Time while any
+#       instance is being scored is split evenly across the instances in flight (judge
+#       calls and sandbox runs included), plus the task's metric computation. CPU-bound
+#       scorers block the loop, so their time is shared with whatever else is in flight.
+#       Scoring overlaps inference, so this and the inference time don't sum to wall time.
 TASK_COST_KEYS = (
     "first_request_at",
     "last_completed_at",
     "prompt_tokens_total",
     "completion_tokens_total",
     "attributed_inference_seconds",
+    "scoring_seconds",
 )
 
 # Run-level timing keys written to metrics.json by the async runner.
@@ -78,6 +84,7 @@ class TaskResult:
     prompt_tokens_total: int | None = None
     completion_tokens_total: int | None = None
     attributed_inference_seconds: float | None = None
+    scoring_seconds: float | None = None
 
     @property
     def hard_failure_rate(self) -> float:

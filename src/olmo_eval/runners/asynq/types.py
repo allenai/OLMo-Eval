@@ -68,6 +68,7 @@ class TaskTracker:
     prompt_tokens_total: int | None = 0  # None once any result's count is unknown
     completion_tokens_total: int | None = 0
     attributed_inference_seconds: float | None = 0.0
+    scoring_seconds: float = 0.0  # Scoring-loop time; see TASK_COST_KEYS
 
     def record_usage(self, result: ResultItem) -> None:
         """Fold one worker result into the task's request timing and token totals.

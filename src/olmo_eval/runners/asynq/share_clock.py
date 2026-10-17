@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
+from typing import TypeVar
+
+T = TypeVar("T")
 
 
 class ShareClock:
@@ -41,6 +44,21 @@ class ShareClock:
         self._advance()
         self._active -= 1
         return self._shared - token
+
+    def exclude(self, fn: Callable[[], T]) -> tuple[T, float]:
+        """Run ``fn``, which blocks the event loop, and keep its time out of every share.
+
+        Units in flight make no progress on this event loop while ``fn`` runs, so its
+        span is credited to none of them. Returns ``fn``'s result and its elapsed
+        seconds, for the caller to credit where it belongs. Calls must not nest.
+        """
+        self._advance()
+        started = self._last
+        try:
+            result = fn()
+        finally:
+            self._last = self._now()
+        return result, self._last - started
 
 
 __all__ = ["ShareClock"]

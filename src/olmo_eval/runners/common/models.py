@@ -49,6 +49,7 @@ class TaskMetricsEntry(Serializable):
     prompt_tokens_total: int | None = None
     completion_tokens_total: int | None = None
     attributed_inference_seconds: float | None = None
+    scoring_seconds: float | None = None
 
 
 @dataclass

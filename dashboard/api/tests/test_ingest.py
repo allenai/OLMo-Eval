@@ -81,6 +81,22 @@ async def test_generation_counts_survive_task_result_upserts(
         assert stored.scalar_one() == counts
 
 
+async def test_scoring_seconds_are_stored_and_update_on_reupload(
+    client: httpx.AsyncClient, session: Any
+) -> None:
+    await seed_contract_example_run(client)
+    payload = load_example("ingest/task-result.request.json")
+    for seconds in (12.5, 14.0):
+        payload["scoring_seconds"] = seconds
+        response = await client.post(f"/v1/runs/{RUN_ID}/task-results", json=payload)
+        assert response.status_code == 200, response.text
+        stored = await session.execute(
+            text("SELECT scoring_seconds FROM task_results WHERE id = :id"),
+            {"id": response.json()["task_result_id"]},
+        )
+        assert stored.scalar_one() == seconds
+
+
 async def test_request_id_passthrough(client: httpx.AsyncClient) -> None:
     response = await client.get("/health", headers={"X-Request-Id": "abcdef12-3456"})
     assert response.headers["x-request-id"] == "abcdef12-3456"
@@ -346,7 +362,9 @@ async def test_identical_task_result_reupload_keeps_instances(
     if legacy_hash:
         request = s.TaskResultIn.model_validate(payload)
         legacy_body = {
-            "request": request.model_dump(mode="json", exclude={"generation_counts"}),
+            "request": request.model_dump(
+                mode="json", exclude={"generation_counts", "scoring_seconds"}
+            ),
             "files": {
                 path: None for path in (request.predictions_path, request.requests_path) if path
             },

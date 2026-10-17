@@ -370,6 +370,14 @@ export interface TaskResultIn {
      * recorded.
      */
     attributed_inference_seconds?: number | null;
+    /**
+     * Seconds of the client's scoring loop attributed to this task: wall time while instances are
+     * being scored, split evenly across the instances in flight at each moment (judge calls and
+     * sandbox runs included), plus the task's metric computation. CPU-bound scoring is shared with
+     * whatever else is in flight. Scoring overlaps inference, so this and the inference time don't
+     * sum to wall time. Null unless recorded.
+     */
+    scoring_seconds?: number | null;
     predictions_path: RelativePath | null;
     requests_path: RelativePath | null;
     /** Registered suites that contain this task spec (static membership). */
