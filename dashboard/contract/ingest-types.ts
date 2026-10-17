@@ -147,7 +147,7 @@ export interface EnvironmentInfo {
     hostname: string | null;
     platform: string | null;
     python_version: string | null;
-    /** Installed distribution versions: "olmo-eval", "vllm", "torch", "transformers", "datasets", "litellm" when present. */
+    /** Installed distribution versions: "olmo-eval", "vllm", "torch", "transformers", "datasets", "litellm" when present. When the vLLM server runs from its own venv, that venv's versions appear as "vllm-venv/vllm", "vllm-venv/torch" and "vllm-venv/transformers". */
     packages: { [distribution: string]: string };
     cuda_version: string | null;
     /** e.g. "NVIDIA H100 80GB HBM3". */
