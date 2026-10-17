@@ -1,5 +1,6 @@
 """Tests for the shared judged-task base."""
 
+import asyncio
 import types
 from collections.abc import Iterator
 from typing import Any
@@ -30,6 +31,7 @@ from olmo_eval.evals.tasks.common.judge import (
     visible_response,
 )
 from olmo_eval.evals.tasks.hle import HLEAccuracyMetric, HLETruncationRateMetric
+from olmo_eval.inference.retry import retry_with_backoff
 from tests.evals.tasks.judge_stubs import use_judge
 
 pytestmark = pytest.mark.usefixtures("judge_test_env")
@@ -203,6 +205,13 @@ class TestJudgeConfiguration:
         config = _RatingTask(_config(judge_reasoning_effort="medium")).config
 
         assert (config.judge_model, config.judge_reasoning_effort) == ("gpt-4o", None)
+
+    def test_an_effort_override_equal_to_the_default_counts_as_unset(self, monkeypatch):
+        monkeypatch.setenv("OLMO_EVAL_JUDGE", "gpt-4o")
+
+        config = _RatingTask(_config(judge_reasoning_effort="medium")).config
+
+        assert config.judge_reasoning_effort is None
 
     def test_task_effort_override_wins_over_the_environment(self, monkeypatch):
         monkeypatch.setenv("OLMO_EVAL_JUDGE", "gpt-5:high")
@@ -388,6 +397,80 @@ class TestScoreResponses:
 
         assert calls == []
         assert response.scores == {"accuracy": 0.0, "truncation_rate": 1.0}
+
+
+class TestJudgeCalls:
+    @pytest.mark.anyio
+    async def test_scoring_concurrency_bounds_calls_however_many_each_output_makes(
+        self, monkeypatch
+    ):
+        in_flight = peak = 0
+
+        async def judge(prompt: str, *, system_prompt: str | None = None) -> str:
+            nonlocal in_flight, peak
+            in_flight += 1
+            peak = max(peak, in_flight)
+            # Yield to the event loop so that any other admitted call can start.
+            loop = asyncio.get_running_loop()
+            future = loop.create_future()
+            loop.call_soon(future.set_result, None)
+            await future
+            in_flight -= 1
+            return "5"
+
+        use_judge(monkeypatch, judge)
+        responses = [_response("a", "b"), _response("c", "d", group="b")]
+
+        await _RatingTask(_config()).score_responses(
+            responses, context=types.SimpleNamespace(scoring_concurrency=3)
+        )
+
+        assert peak == 3
+        assert all(response.scores["rating"] == 5.0 for response in responses)
+
+    @pytest.mark.anyio
+    async def test_a_failed_call_waits_for_the_outputs_other_calls(self, monkeypatch):
+        judge, calls = _scripted_judge({"answer (forward)": ["raise"], "answer (reversed)": ["6"]})
+        use_judge(monkeypatch, judge)
+        response = _response("answer")
+
+        with pytest.raises(ScoringIncompleteError, match="judge unavailable"):
+            await _RatingTask(_config()).score_responses([response])
+
+        assert len(calls) == 2
+        error = response.outputs[0].metadata["scoring_errors"]["judge"]
+        assert "ValueError: judge unavailable" in error["message"]
+
+    @pytest.mark.anyio
+    async def test_a_transient_api_error_is_retried(self, monkeypatch):
+        monkeypatch.setattr(judge_module, "retry_with_backoff", retry_with_backoff)
+        replies: list[str | Exception] = [TimeoutError("request timed out"), "PASS"]
+
+        async def judge(prompt: str, *, system_prompt: str | None = None) -> str:
+            reply = replies.pop(0)
+            if isinstance(reply, Exception):
+                raise reply
+            return reply
+
+        use_judge(monkeypatch, judge)
+        response = _response("good")
+
+        await _PassFailTask(_config()).score_responses([response])
+
+        assert replies == []
+        assert response.scores["accuracy"] == 1.0
+
+    @pytest.mark.anyio
+    async def test_an_unrecorded_extra_score_is_named(self, monkeypatch):
+        class _ForgetfulTask(_RatingTask):
+            judge_extra_score_keys = ("forward", "reversed", "consensus")
+
+        judge, _ = _scripted_judge({"answer (forward)": ["8"], "answer (reversed)": ["6"]})
+        use_judge(monkeypatch, judge)
+        response = _response("answer")
+
+        with pytest.raises(ScoringIncompleteError, match="recorded no consensus score"):
+            await _ForgetfulTask(_config()).score_responses([response])
 
 
 class TestMetrics:

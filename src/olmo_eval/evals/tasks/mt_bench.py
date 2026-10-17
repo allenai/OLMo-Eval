@@ -375,11 +375,7 @@ class MTBench(JudgedTask):
         return await super().score_responses(responses, context)
 
     async def _score_output(self, response: Response, output: LMOutput, judge_fn: JudgeFn) -> float:
-        """Rate both turns; a turn without a visible answer gets the lowest rating.
-
-        The turns are judged concurrently, so one judging slot makes up to two judge
-        calls at a time.
-        """
+        """Rate both turns; a turn without a visible answer gets the lowest rating."""
         answers = list(output.extracted_answer or [])
         answers += [""] * (len(MT_BENCH_TURNS) - len(answers))
         judge_result: dict[str, Any] = {"scorer": MT_BENCH_SCORER_NAME}

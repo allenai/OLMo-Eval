@@ -5,7 +5,12 @@ The judge model, reasoning effort, and token budget are task configuration, so t
 are part of the task hash: runs with different judges are stored and compared as
 separate results. ``-o judge_model=<model>`` (and ``-o judge_reasoning_effort=<effort>``)
 changes the judge of one task; ``OLMO_EVAL_JUDGE=<model>[:<effort>]`` changes every
-judged task in a run whose judge was left at its default. A task override wins.
+judged task in a run whose judge was left at its default. A task override wins. A
+task's default reasoning effort goes with its default model, so the environment
+override replaces it; an effort override equal to the task default counts as unset.
+
+``scoring_concurrency`` bounds the judge calls in flight across every judged task in
+a run, however many calls each output needs.
 
 Judge failures are kept apart from low scores. A judge call that fails after its
 retries, or a reply that never parses, is recorded as an incomplete score with the
@@ -211,7 +216,8 @@ class JudgedTask(Task):
     judge_scorer_name: ClassVar[str] = JudgeScorer.name
     #: Response score that :meth:`_score_output` returns and metrics read.
     judge_score_key: ClassVar[str] = "accuracy"
-    #: Further scores :meth:`_score_output` records, aggregated per instance the same way.
+    #: Further scores :meth:`_score_output` records, each aggregated per instance on its
+    #: own, so under ``max`` aggregation they can come from different samples.
     judge_extra_score_keys: ClassVar[tuple[str, ...]] = ()
     #: Every score of an instance the model gave no output for.
     unanswered_score: ClassVar[float] = 0.0
@@ -229,6 +235,7 @@ class JudgedTask(Task):
                 reasoning_effort = config.judge_reasoning_effort
             config = replace(config, judge_model=model, judge_reasoning_effort=reasoning_effort)
         super().__init__(config)
+        self._judge_limiter: asyncio.Semaphore | None = None
 
     @abstractmethod
     async def _score_output(self, response: Response, output: LMOutput, judge_fn: JudgeFn) -> float:
@@ -289,12 +296,16 @@ class JudgedTask(Task):
 
         Returns the parsed verdict, or None if no attempt parsed, with the last raw reply.
         """
+        limiter = self._judge_limiter or self._get_judge_semaphore(None)
+
+        async def call() -> str:
+            # Held for the call only, so backoff waits leave the slot to others.
+            async with limiter:
+                return await judge_fn(prompt, system_prompt=system_prompt)
+
         raw = ""
         for attempt in range(JUDGE_ATTEMPTS):
-            raw = await retry_with_backoff(
-                lambda: judge_fn(prompt, system_prompt=system_prompt),
-                context=f"{self.config.name} judge",
-            )
+            raw = await retry_with_backoff(call, context=f"{self.config.name} judge")
             verdict = parse(raw)
             if verdict is not None:
                 return verdict, raw
@@ -331,8 +342,8 @@ class JudgedTask(Task):
     async def _judge_together(*calls: Awaitable[V]) -> list[V]:
         """Run several judge calls of one output concurrently and return their results.
 
-        Every call settles before the first failure is raised, so none outlives the
-        output's judging slot and the judge result holds every reply.
+        Every call settles before the first failure is raised, so none is left running
+        once the output is given up on.
         """
         verdicts: list[V] = []
         for result in await asyncio.gather(*calls, return_exceptions=True):
@@ -346,8 +357,13 @@ class JudgedTask(Task):
     ) -> float:
         """Store an output's judge details and scores, and return its score.
 
-        ``scores`` must hold ``judge_score_key``; every entry is kept as ``score:<key>``.
+        ``scores`` must hold ``judge_score_key`` and each of ``judge_extra_score_keys``;
+        every entry is kept as ``score:<key>``.
         """
+        missing = {self.judge_score_key, *self.judge_extra_score_keys} - scores.keys()
+        if missing:
+            names = ", ".join(sorted(missing))
+            raise ValueError(f"{type(self).__name__} recorded no {names} score")
         score = scores[self.judge_score_key]
         output.metadata["judge_result"] = judge_result
         for key, value in scores.items():
@@ -397,7 +413,7 @@ class JudgedTask(Task):
         """Judge every output concurrently, then aggregate each instance over its samples."""
         self._extract_answers(responses)
         judge_fn = self._get_judge_fn()
-        semaphore = self._get_judge_semaphore(context)
+        self._judge_limiter = self._get_judge_semaphore(context)
         self._warn_about_missing_responses(responses)
 
         jobs = [
@@ -408,19 +424,16 @@ class JudgedTask(Task):
 
         async def run(response_index: int, output_index: int) -> float:
             response = responses[response_index]
-            async with semaphore:
-                try:
-                    return await self._score_output(
-                        response, response.outputs[output_index], judge_fn
-                    )
-                except ScoringIncompleteError:
-                    raise
-                except Exception as exc:
-                    # A judge call that failed after its retries left the output unscored,
-                    # which the runner must report as incomplete rather than as wrong.
-                    raise ScoringIncompleteError(
-                        f"{self.config.name} judge call failed: {type(exc).__name__}: {exc}"
-                    ) from exc
+            try:
+                return await self._score_output(response, response.outputs[output_index], judge_fn)
+            except ScoringIncompleteError:
+                raise
+            except Exception as exc:
+                # A judge call that failed after its retries left the output unscored,
+                # which the runner must report as incomplete rather than as wrong.
+                raise ScoringIncompleteError(
+                    f"{self.config.name} judge call failed: {type(exc).__name__}: {exc}"
+                ) from exc
 
         results = await asyncio.gather(*(run(*job) for job in jobs), return_exceptions=True)
 
