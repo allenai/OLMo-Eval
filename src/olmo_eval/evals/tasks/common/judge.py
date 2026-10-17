@@ -117,11 +117,15 @@ class JudgedScoreMetric(Metric):
     #: Unit family for suite pooling; defaults to the one ``display`` implies.
     unit: str | None = None
 
+    def in_slice(self, response: Response) -> bool:
+        """Whether the response belongs to the metadata slice this metric reports on."""
+        return (
+            self.metadata_key is None
+            or response.instance.metadata.get(self.metadata_key) == self.metadata_value
+        )
+
     def compute_instance(self, response: Response) -> float | None:
-        if (
-            self.metadata_key is not None
-            and response.instance.metadata.get(self.metadata_key) != self.metadata_value
-        ):
+        if not self.in_slice(response):
             return None
         value = response.scores.get(self.score_key)
         return float(value) if isinstance(value, (int, float)) else None
