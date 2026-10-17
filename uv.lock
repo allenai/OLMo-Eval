@@ -5281,6 +5281,7 @@ dependencies = [
     { name = "rich", version = "14.3.4", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-9-olmo-eval-olmo-core' and extra == 'extra-9-olmo-eval-olmo-core-vlm') or (extra != 'extra-9-olmo-eval-olmo-core-vlm' and extra == 'extra-9-olmo-eval-openhands') or (extra != 'extra-9-olmo-eval-olmo-core' and extra == 'extra-9-olmo-eval-openhands')" },
     { name = "setuptools" },
     { name = "sympy" },
+    { name = "tiktoken" },
     { name = "tree-sitter" },
     { name = "tree-sitter-python" },
 ]
@@ -5399,6 +5400,7 @@ requires-dist = [
     { name = "swe-rex", extras = ["modal"], marker = "extra == 'sandbox'", git = "https://github.com/jdahm/SWE-ReX.git?rev=johannd%2Fai2" },
     { name = "swebench", marker = "extra == 'swebench'", specifier = "==5.0.2" },
     { name = "sympy", specifier = ">=1.12" },
+    { name = "tiktoken", specifier = ">=0.7" },
     { name = "torch-c-dlpack-ext", marker = "sys_platform != 'darwin' and extra == 'vllm'" },
     { name = "torchao", marker = "extra == 'olmo-core'", specifier = "==0.17.0" },
     { name = "torchvision", marker = "sys_platform != 'darwin' and extra == 'hf'" },
