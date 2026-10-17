@@ -72,8 +72,9 @@ terraform plan
 terraform apply
 ```
 
-`.github/workflows/terraform.yml` plans pull requests that touch this directory (the plan is in
-the job summary) and applies on merge to `main`. Applying by hand needs owner (or equivalent) on
+`.github/workflows/terraform.yml` runs `terraform fmt` and `terraform validate` on pull requests
+that touch this directory and applies on merge to `main`. Pull request workflows can't
+authenticate to the project, so run `terraform plan` locally to preview a change. Applying by hand needs owner (or equivalent) on
 `ai2-skiff2-olmo-eval`. Changes to `uploader.tf`'s key rotation only take effect on the next apply,
 so a rotation is due on the first apply after 90 days. Commit `.terraform.lock.hcl` when the provider version changes, and
 lock for every platform CI and developers use:

@@ -20,6 +20,8 @@ def test_finish_reason_survives_logprob_metadata(finish_reason, with_logprobs) -
     provider.model_name = "mock"
     provider.api_base = None
     provider.api_kwargs = {}
+    provider._request_overrides = {}
+    provider._openai_params = None
     logprobs = SimpleNamespace(content=[SimpleNamespace(token="answer", logprob=-0.1)])
     choice = SimpleNamespace(
         message=SimpleNamespace(content="answer"),
