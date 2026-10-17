@@ -16,8 +16,9 @@ logger = logging.getLogger(__name__)
 # HTTP status codes that should trigger a retry
 RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 
-# HTTP status codes that should never be retried
-NON_RETRYABLE_STATUS_CODES = frozenset({400, 401, 403, 404, 422})
+# HTTP status codes that should never be retried. OpenRouter returns 402 when a
+# key is out of credits.
+NON_RETRYABLE_STATUS_CODES = frozenset({400, 401, 402, 403, 404, 422})
 
 # Exception type names that should never be retried (request itself is wrong)
 NEVER_RETRY_EXCEPTION_TYPES = (
