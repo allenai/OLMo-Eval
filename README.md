@@ -347,7 +347,7 @@ outputs = harness.generate(requests)  # No scaffold needed
 
 #### Inference Metrics
 
-Harness configurations can include `MetricsConfig` to collect inference performance metrics during evaluation:
+Harness configurations can include `MetricsConfig` to collect inference performance metrics during evaluation. A run without `--harness` or `--harness-config` collects them with the default `MetricsConfig()`, writing `metrics/<provider>_<model>-inference.jsonl` in the output directory, as the built-in presets do:
 
 ```python
 from olmo_eval.harness import HarnessConfig, ProviderConfig
