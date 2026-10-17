@@ -862,8 +862,7 @@ class CTCContradiction(CTCSuiteTask):
         # sorted low-high because parsed pairs are. The published r64k-r1m rungs store most of
         # their pairs high-low (r64k: 744 of 1,500), and the scorer raises on every such example
         # rather than score it. Sorting here is a no-op on r2k-r32k, which have none.
-        pairs = doc.get("gold_doc_indices") or []
-        doc = {**doc, "gold_doc_indices": [sorted(pair) for pair in pairs]}
+        doc = {**doc, "gold_doc_indices": [sorted(pair) for pair in doc["gold_doc_indices"]]}
         return super().process_doc(doc, index)
 
 
