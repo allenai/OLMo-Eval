@@ -31,9 +31,8 @@ from collections.abc import Iterator
 from typing import Any
 
 from olmo_eval.common.metrics import MultiIFAccuracy
+from olmo_eval.common.multi_turn import scripted_chat_request, turn_replies
 from olmo_eval.common.types import (
-    FOLLOW_UP_TURNS_KEY,
-    REPLIES_KEY,
     Instance,
     LMOutput,
     LMRequest,
@@ -129,22 +128,14 @@ class MultiIF(Task):
 
     def format_request(self, instance: Instance) -> LMRequest:
         turns = instance.metadata["turns"]
-        return LMRequest(
-            request_type=RequestType.CHAT,
-            messages=({"role": "user", "content": turns[0]["prompt"]},),
-            metadata={
-                FOLLOW_UP_TURNS_KEY: [
-                    {"role": "user", "content": turn["prompt"]} for turn in turns[1:]
-                ]
-            },
-        )
+        return scripted_chat_request([turn["prompt"] for turn in turns])
 
     def extract_answer(self, output: LMOutput) -> list[str] | None:
         """The reply to each turn, trimmed as the reference implementation does.
 
         Each reply's reasoning trace is dropped first when ``strip_thinking`` is set.
         """
-        replies = (output.metadata or {}).get(REPLIES_KEY)
+        replies = turn_replies(output)
         if replies is None:
             return None
         if self.config.strip_thinking:

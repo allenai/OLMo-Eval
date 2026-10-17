@@ -783,15 +783,9 @@ class FrontierScienceOlympiadMC(Task):
 
     def _load_verified_rows(self) -> list[Instance]:
         """Read the curated release, keeping the rows the verified index names."""
-        instances: list[Instance] = []
-        resource = files(__package__).joinpath(FRONTIERSCIENCE_VERIFIED_MC_FILE)
-        with resource.open(encoding="utf-8") as handle:
-            for index, line in enumerate(handle):
-                if not line.strip():
-                    continue
-                instance = self.process_doc(json.loads(line), index)
-                if instance is not None:
-                    instances.append(instance)
+        instances = list(
+            self._load_packaged_instances(__package__, FRONTIERSCIENCE_VERIFIED_MC_FILE)
+        )
 
         missing = sorted(
             verified_task_group_ids()

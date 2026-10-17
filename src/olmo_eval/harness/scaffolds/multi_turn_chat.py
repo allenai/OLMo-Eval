@@ -17,6 +17,7 @@ from typing import Any
 from olmo_eval.common.types import (
     FOLLOW_UP_TURNS_KEY,
     REPLIES_KEY,
+    TURN_FINISH_REASONS_KEY,
     LMOutput,
     LMRequest,
     RequestType,
@@ -52,6 +53,7 @@ class MultiTurnChatScaffold(Scaffold):
         messages: list[dict[str, Any]] = [dict(m) for m in request.messages]
         system_prompt = config.system_prompt or request.system_prompt
         replies: list[str] = []
+        finish_reasons: list[str | None] = []
         last_output = LMOutput(text="")
 
         for turn_index in range(len(follow_ups) + 1):
@@ -82,7 +84,9 @@ class MultiTurnChatScaffold(Scaffold):
                 break
             last_output = first_output(generated)
             replies.append(last_output.text)
+            finish_reasons.append((last_output.metadata or {}).get("finish_reason"))
 
         final = LMOutput(text=last_output.text, metadata=dict(last_output.metadata or {}))
         final.metadata[REPLIES_KEY] = replies
+        final.metadata[TURN_FINISH_REASONS_KEY] = finish_reasons
         return HarnessResult(final_output=final, metadata={"turns": len(replies)})

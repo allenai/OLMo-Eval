@@ -7,6 +7,7 @@ import pytest
 from olmo_eval.common.types import (
     FOLLOW_UP_TURNS_KEY,
     REPLIES_KEY,
+    TURN_FINISH_REASONS_KEY,
     LMOutput,
     LMRequest,
     RequestType,
@@ -95,6 +96,21 @@ async def test_replies_are_returned_in_turn_order() -> None:
     assert result.final_output.metadata[REPLIES_KEY] == ["a", "b", "c"]
     assert result.final_output.text == "c"
     assert result.metadata == {"turns": 3}
+
+
+@pytest.mark.anyio
+async def test_each_turns_finish_reason_is_kept() -> None:
+    provider = ScriptedProvider(
+        [
+            LMOutput(text="a", metadata={"finish_reason": "length"}),
+            LMOutput(text="b", metadata={"finish_reason": "stop"}),
+            LMOutput(text="c"),
+        ]
+    )
+
+    result = await run(provider, request_for("1", "2", "3"))
+
+    assert result.final_output.metadata[TURN_FINISH_REASONS_KEY] == ["length", "stop", None]
 
 
 @pytest.mark.anyio
