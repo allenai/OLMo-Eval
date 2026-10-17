@@ -24,7 +24,11 @@ DEFAULT_MAX_HARD_FAILURE_RATE = 0.05
 #   last_completed_at: when the task's last instance finished (inference and scoring)
 #   prompt_tokens_total / completion_tokens_total: summed over every request of the
 #       task as the provider reported them (rules in runners/common/usage.py)
-#   attributed_inference_seconds: per-batch inference wall time split by token share
+#   attributed_inference_seconds: the task's share of inference worker time. Each
+#       worker's busy time is split evenly across the batches and agent rollouts in
+#       flight, and a batch's share across its requests by token share. Summed over
+#       workers, so a run with N workers attributes up to N x processing_seconds.
+#       Agent rollouts include their tool and sandbox time.
 TASK_COST_KEYS = (
     "first_request_at",
     "last_completed_at",

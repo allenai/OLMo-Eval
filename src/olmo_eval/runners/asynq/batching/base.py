@@ -15,14 +15,22 @@ if TYPE_CHECKING:
     from olmo_eval.harness import Harness
     from olmo_eval.runners.asynq.types import QueueItem, ResultItem
 
+from olmo_eval.runners.asynq.share_clock import ShareClock
+
 from .config import BatchConfig
 
 
 class BatchingStrategy(ABC):
-    """Abstract base class for batching strategies."""
+    """Abstract base class for batching strategies.
+
+    Each inference worker builds its own strategy, so ``clock`` is the worker's: every
+    batch and rollout the worker runs shares it, and overlapping work splits the
+    worker's time.
+    """
 
     def __init__(self, config: BatchConfig):
         self.config = config
+        self.clock = ShareClock()
 
     @abstractmethod
     async def run(

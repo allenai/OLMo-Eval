@@ -73,7 +73,7 @@ class TaskTracker:
         """Fold one worker result into the task's request timing and token totals.
 
         Hard-failed results (no outputs) add no tokens. A result whose outputs do
-        not report a count, or that has no batch attribution, makes that total None.
+        not report a count, or that carries no attributed time, makes that total None.
         """
         from olmo_eval.common.types import RequestType
         from olmo_eval.runners.common.usage import request_token_usage
@@ -137,8 +137,9 @@ class ResultItem:
     request_trace: dict[str, Any] | None = None
     # When the worker sent the request to the provider (POSIX seconds)
     sent_at: float | None = None
-    # This request's share of its batch's inference wall time, from batch metrics.
-    # None when metrics are disabled or the batch could not be attributed.
+    # This request's share of its worker's busy time (see ShareClock): its batch's or
+    # rollout's share, split across a batch's requests by token share. None only for
+    # fatal error signals.
     attributed_seconds: float | None = None
 
 

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from olmo_eval.common.logging import get_logger
 from olmo_eval.inference.errors import classify_terminal_provider_error, request_error
 from olmo_eval.inference.metrics.core.stats import compute_batch_hash
+from olmo_eval.runners.asynq.share_clock import ShareClock
 from olmo_eval.runners.asynq.types import QueueItem, ResultItem
 
 if TYPE_CHECKING:
@@ -35,23 +36,22 @@ def _flush_batch_metrics(harness: Harness, items: list[QueueItem], log: logging.
         return None
 
 
-def attribute_batch_seconds(batch: object, num_requests: int) -> list[float | None]:
-    """Split a batch's inference wall time across its requests by token share.
+def attribute_batch_seconds(seconds: float, batch: object, num_requests: int) -> list[float]:
+    """Split a batch's share of worker time across its requests.
 
-    Each request gets wall_clock_time_s * (its prompt + completion tokens) / (the
-    batch's tokens), using the per-request metrics the provider recorded for this
-    batch. Returns all None when there are no metrics or they do not line up one
-    to one with the batch's requests.
+    Each request gets seconds * (its prompt + completion tokens) / (the batch's
+    tokens), using the per-request metrics the provider recorded for this batch.
+    Without such metrics, or when they do not line up one to one with the batch's
+    requests, every request gets an equal share.
     """
     from olmo_eval.inference.metrics.core.schema import BatchMetrics
 
-    if not isinstance(batch, BatchMetrics) or len(batch.requests) != num_requests:
-        return [None] * num_requests
-    tokens = [r.prompt_tokens + r.completion_tokens for r in batch.requests]
-    total = sum(tokens)
-    if total <= 0:
-        return [batch.wall_clock_time_s / num_requests] * num_requests
-    return [batch.wall_clock_time_s * count / total for count in tokens]
+    if isinstance(batch, BatchMetrics) and len(batch.requests) == num_requests:
+        tokens = [r.prompt_tokens + r.completion_tokens for r in batch.requests]
+        total = sum(tokens)
+        if total > 0:
+            return [seconds * count / total for count in tokens]
+    return [seconds / num_requests] * num_requests
 
 
 def _format_cause(cause: BaseException) -> str:
@@ -108,6 +108,7 @@ async def process_chat_request(
     harness: Harness,
     result_queue: mp.Queue,
     worker_logger: logging.Logger | None = None,
+    clock: ShareClock | None = None,
 ) -> None:
     """Process a single CHAT request via harness.run().
 
@@ -119,6 +120,8 @@ async def process_chat_request(
         harness: Harness instance for execution.
         result_queue: Queue to put results.
         worker_logger: Logger with worker identification.
+        clock: The worker's clock; the result carries the rollout's share of
+            worker time. Without one the rollout is timed on its own.
     """
     log = worker_logger or logger
     from dataclasses import replace as dataclass_replace
@@ -133,11 +136,17 @@ async def process_chat_request(
     prepared_request = harness._apply_config(item.request)
     request_trace = harness.provider.describe_request(prepared_request, item.sampling_params)
     sent_at = time.time()
+    clock = clock or ShareClock()
+    token = clock.start()
+    seconds: float | None = None
 
     try:
-        harness_result = await harness.run(
-            item.request, item.sampling_params, trace_metadata=trace_metadata
-        )
+        try:
+            harness_result = await harness.run(
+                item.request, item.sampling_params, trace_metadata=trace_metadata
+            )
+        finally:
+            seconds = clock.stop(token)
         final_output = harness_result.final_output
 
         if harness_result.trajectory is not None:
@@ -167,6 +176,7 @@ async def process_chat_request(
                 error=provider_error or harness_result.error,
                 attempt=item.attempt,
                 sent_at=sent_at,
+                attributed_seconds=seconds,
             )
         )
 
@@ -193,6 +203,7 @@ async def process_chat_request(
                 error=error_detail,
                 attempt=item.attempt,
                 sent_at=sent_at,
+                attributed_seconds=seconds,
             )
         )
 
@@ -202,6 +213,7 @@ async def process_batch(
     harness: Harness,
     result_queue: mp.Queue,
     worker_logger: logging.Logger | None = None,
+    clock: ShareClock | None = None,
 ) -> None:
     """Process a batch of COMPLETION or LOGLIKELIHOOD requests.
 
@@ -214,6 +226,8 @@ async def process_batch(
         harness: Harness instance for execution.
         result_queue: Queue to put results.
         worker_logger: Logger with worker identification.
+        clock: The worker's clock; each result carries its share of the batch's
+            share of worker time. Without one the batch is timed on its own.
     """
     from olmo_eval.common.types import RequestType
 
@@ -230,10 +244,12 @@ async def process_batch(
         harness.provider.describe_request(request, sampling_params) for request in prepared_requests
     ]
 
-    # Results are queued after the batch metrics are flushed, so each one can carry
-    # its share of the batch's inference time.
+    # Results are queued after the batch ends, so each one can carry its share of
+    # the batch's worker time.
     results: list[ResultItem] = []
     sent_at = time.time()
+    clock = clock or ShareClock()
+    token = clock.start()
     try:
         if request_type == RequestType.LOGLIKELIHOOD:
             all_outputs = await harness.provider.alogprobs(prepared_requests, sampling_params)
@@ -263,12 +279,17 @@ async def process_batch(
             )
 
     except Exception as e:
+        # A failed batch still took worker time; split it evenly across its items.
+        share = clock.stop(token) / len(items)
         terminal_error = classify_terminal_provider_error(e)
         if terminal_error is not None:
             raise terminal_error from e
+        # Drop any metrics the failed call recorded so they don't skew the next batch.
+        _flush_batch_metrics(harness, items, log)
 
         # Batch failed - report the results already built, then errors for the rest
         for result in results:
+            result.attributed_seconds = share
             result_queue.put(result)
         reported = len(results)
         error_detail = _format_error_detail(e)
@@ -291,14 +312,19 @@ async def process_batch(
                     error=error_detail,
                     attempt=item.attempt,
                     sent_at=sent_at,
+                    attributed_seconds=share,
                 )
             )
+    except BaseException:
+        clock.stop(token)
+        raise
     else:
+        batch_seconds = clock.stop(token)
         batch = _flush_batch_metrics(harness, items, log)
-        for result, seconds in zip(
-            results, attribute_batch_seconds(batch, len(results)), strict=True
+        for result, share in zip(
+            results, attribute_batch_seconds(batch_seconds, batch, len(results)), strict=True
         ):
-            result.attributed_seconds = seconds
+            result.attributed_seconds = share
             result_queue.put(result)
 
 
@@ -309,6 +335,7 @@ async def process_items(
     max_concurrency: int | None = None,
     worker_logger: logging.Logger | None = None,
     show_progress: bool = True,
+    clock: ShareClock | None = None,
 ) -> None:
     """Process queue items, batching where possible.
 
@@ -323,10 +350,14 @@ async def process_items(
         max_concurrency: Maximum concurrent CHAT requests.
         worker_logger: Logger with worker identification.
         show_progress: Whether to show progress logging (disable for streaming).
+        clock: The worker's clock, shared by every batch and rollout the worker
+            runs so overlapping work splits worker time. Defaults to a clock for
+            these items alone.
     """
     from olmo_eval.common.types import RequestType, SamplingParams
 
     log = worker_logger or logger
+    clock = clock or ShareClock()
 
     chat_items: list[QueueItem] = []
     batchable_items: list[QueueItem] = []
@@ -348,13 +379,13 @@ async def process_items(
             batches[key].append(item)
 
         for batch in batches.values():
-            await process_batch(batch, harness, result_queue, log)
+            await process_batch(batch, harness, result_queue, log, clock)
 
     if chat_items:
         from olmo_eval.inference.dispatch import dispatch_concurrent
 
         async def process(item: QueueItem) -> None:
-            await process_chat_request(item, harness, result_queue, log)
+            await process_chat_request(item, harness, result_queue, log, clock)
 
         if show_progress:
             from olmo_eval.common.progress import ProgressLogger

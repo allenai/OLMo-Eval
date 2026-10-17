@@ -63,7 +63,14 @@ class BatchedStrategy(BatchingStrategy):
                     f"with {batch_size} item(s)"
                 )
                 start_time = time.perf_counter()
-                await process_items(batch, harness, result_queue, max_concurrency, worker_logger)
+                await process_items(
+                    batch,
+                    harness,
+                    result_queue,
+                    max_concurrency,
+                    worker_logger,
+                    clock=self.clock,
+                )
 
                 elapsed = time.perf_counter() - start_time
                 rate = batch_size / elapsed if elapsed > 0 else 0

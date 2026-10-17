@@ -4923,7 +4923,7 @@
       "type": "object"
     },
     "RuntimeBasis": {
-      "description": "How inference_seconds was obtained:\n- measured: the run contained only this task, so its processing time is the task's time.\n- attributed: from per-batch inference metrics split by the task's share of each batch.\n- estimated: the run's processing time times the task's share of the run's tokens.\n- not_recorded: the run predates runtime recording or lacks token counts.",
+      "description": "How inference_seconds was obtained:\n- measured: the run contained only this task, so its processing time is the task's time.\n- attributed: the client's attributed_inference_seconds, the task's share of worker time.\n- estimated: the run's processing time times the task's share of the run's tokens.\n- not_recorded: the run predates runtime recording or lacks token counts.",
       "enum": [
         "measured",
         "attributed",
