@@ -4,12 +4,8 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
-import uuid
-from pathlib import Path
 from typing import Any
 
-from olmo_eval.common.constants.infrastructure import BEAKER_RESULT_DIR
 from olmo_eval.common.logging import get_logger
 from olmo_eval.runners.common.models import (
     MetricsOutput,
@@ -289,70 +285,6 @@ def write_metrics_json(
         json.dump(metrics_output.to_dict(), f, indent=2)
 
     logger.info(f"Metrics written to {metrics_file}")
-    copy_metrics_to_result_dir(output_dir, experiment_id)
-
-
-RESULT_DIR_METRICS_SUBDIR = "olmo-eval-runs"
-"""Subdirectory of the Beaker result dir that holds copies of metrics.json from runs whose
-output dir was elsewhere. Each run gets ``<subdir>/<experiment_id>/metrics.json``."""
-
-
-def beaker_result_dir() -> Path | None:
-    """The directory Beaker saves as the job's result dataset, or None off Beaker.
-
-    ``OLMO_RESULT_DIR`` is set by the olmo-eval launcher and ``RESULTS_DIR`` by gantry;
-    otherwise the Beaker default ``/results`` is assumed.
-    """
-    if not os.environ.get("BEAKER_JOB_ID"):
-        return None
-    for var in ("OLMO_RESULT_DIR", "RESULTS_DIR"):
-        value = os.environ.get(var)
-        if value:
-            return Path(value)
-    return Path(BEAKER_RESULT_DIR)
-
-
-def copy_metrics_to_result_dir(output_dir: str, experiment_id: str | None) -> Path | None:
-    """On Beaker, copy metrics.json into the result dataset when -O points elsewhere.
-
-    A run that writes to Weka or /tmp otherwise leaves nothing in the job's result
-    dataset, and a /tmp output dir is lost when the container exits. Only metrics.json
-    is copied; predictions can be large. Each run gets its own subdirectory keyed by
-    experiment ID, so several runs in one job never overwrite each other, and the
-    top-level metrics.json of a run that writes to the result dir directly is left
-    alone. A failed copy is logged and never fails the run.
-
-    Returns:
-        The path of the copy, or None when no copy was made.
-    """
-    result_dir = beaker_result_dir()
-    if result_dir is None:
-        return None
-    source = Path(output_dir) / "metrics.json"
-    try:
-        if Path(output_dir).resolve().is_relative_to(result_dir.resolve()):
-            return None
-        if not result_dir.is_dir():
-            logger.warning(
-                f"metrics.json is only at {source}: the Beaker result dir {result_dir} "
-                "does not exist, so the result dataset will not include it"
-            )
-            return None
-        run_dir = result_dir / RESULT_DIR_METRICS_SUBDIR / (experiment_id or uuid.uuid4().hex[:12])
-        run_dir.mkdir(parents=True, exist_ok=True)
-        target = run_dir / "metrics.json"
-        if target.exists():
-            logger.warning(f"Not copying metrics.json: {target} already exists")
-            return None
-        shutil.copyfile(source, target)
-    except OSError as e:
-        logger.warning(
-            f"Could not copy metrics.json into the Beaker result dir {result_dir}: {e}. "
-            f"It is only at {source}."
-        )
-        return None
-    logger.info(f"Output dir is outside the Beaker result dir; copied metrics.json to {target}")
-    return target
 
 
 def log_summary(results: dict[str, Any], multi_model: bool = False) -> None:
