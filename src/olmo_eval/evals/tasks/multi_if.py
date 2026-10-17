@@ -78,6 +78,7 @@ def _parse_turn(doc: dict[str, Any], turn: int) -> dict[str, Any] | None:
 class MultiIF(Task):
     data_source = DataSource(path=_DATASET_PATH, split="train", revision=_DATASET_REVISION)
     split = Split.TRAIN
+    required_scaffold = "multi_turn_chat"
     metrics = (
         _PRIMARY_METRIC,
         *(

@@ -8,11 +8,11 @@ import pytest
 from olmo_eval.common.scorers import ScoringIncompleteError
 from olmo_eval.common.types import (
     FOLLOW_UP_TURNS_KEY,
-    REPLIES_KEY,
-    TURN_FINISH_REASONS_KEY,
+    TURNS_KEY,
     LMOutput,
     RequestType,
     Response,
+    SamplingParams,
 )
 from olmo_eval.evals.tasks import mt_bench
 from olmo_eval.evals.tasks.common import OutputScoreAggregation, get_task, task_exists
@@ -27,8 +27,11 @@ from olmo_eval.evals.tasks.mt_bench import (
     judge_prompt,
     parse_rating,
 )
+from olmo_eval.harness.config import HarnessConfig
+from olmo_eval.harness.scaffolds import get_scaffold
 from olmo_eval.runners.asynq.preparation import compute_task_metrics, prepare_task_items
 from tests.evals.tasks.judge_stubs import score_like_the_runner, use_judge
+from tests.harness.test_multi_turn_chat_scaffold import OVERFLOW, ScriptedProvider
 
 pytestmark = pytest.mark.usefixtures("judge_test_env")
 
@@ -43,11 +46,15 @@ def _doc(category: str = "writing", question_id: int = 81, reference=None) -> di
     return doc
 
 
+def _turns(*replies: str) -> list[dict[str, str]]:
+    return [{"text": reply} for reply in replies]
+
+
 def _response(task, replies: list[str] | None = None, **doc_fields) -> Response:
     instance = task.process_doc(_doc(**doc_fields))
     assert instance is not None
     replies = ["Rain falls.", "Snow falls."] if replies is None else replies
-    output = LMOutput(text=(replies or [""])[-1], metadata={REPLIES_KEY: replies})
+    output = LMOutput(text=(replies or [""])[-1], metadata={TURNS_KEY: _turns(*replies)})
     return Response(instance=instance, request=task.format_request(instance), outputs=[output])
 
 
@@ -208,7 +215,7 @@ class TestProcessDoc:
 class TestExtractAnswer:
     def test_returns_each_turns_visible_answer(self, task):
         output = LMOutput(
-            text="", metadata={REPLIES_KEY: ["<think>plan</think>\n\nRain.", "<think>never"]}
+            text="", metadata={TURNS_KEY: _turns("<think>plan</think>\n\nRain.", "<think>never")}
         )
         assert task.extract_answer(output) == ["Rain.", ""]
 
@@ -359,7 +366,7 @@ class TestScoring:
         self, task, monkeypatch
     ):
         response = _response(task, ["Rain falls."])
-        response.outputs[0].metadata[TURN_FINISH_REASONS_KEY] = ["stop"]
+        response.outputs[0].metadata["finish_reason"] = "stop"
         judge, calls = _turn_judge([_rated(7)], [])
         use_judge(monkeypatch, judge)
 
@@ -390,7 +397,7 @@ class TestScoring:
     async def test_samples_are_averaged_per_turn(self, task, monkeypatch):
         response = _response(task)
         response.outputs.append(
-            LMOutput(text="", metadata={REPLIES_KEY: ["Drizzle.", "Flurries."]})
+            LMOutput(text="", metadata={TURNS_KEY: _turns("Drizzle.", "Flurries.")})
         )
         judge, _ = _turn_judge([_rated(8), _rated(4)], [_rated(6), _rated(2)])
         use_judge(monkeypatch, judge)
@@ -405,7 +412,7 @@ class TestScoring:
     async def test_a_sample_that_fails_judging_is_left_out_of_every_turn(self, task, monkeypatch):
         response = _response(task)
         response.outputs.append(
-            LMOutput(text="", metadata={REPLIES_KEY: ["Drizzle.", "Flurries."]})
+            LMOutput(text="", metadata={TURNS_KEY: _turns("Drizzle.", "Flurries.")})
         )
         judge, _ = _turn_judge(
             [_rated(8), *["no rating"] * judge_module.JUDGE_ATTEMPTS], [_rated(6), _rated(2)]
@@ -419,20 +426,34 @@ class TestScoring:
         assert "score:turn_1" not in response.outputs[1].metadata
 
     @pytest.mark.anyio
-    async def test_a_truncated_turn_counts_the_question_as_truncated(self, task, monkeypatch):
-        truncated = _response(task, question_id=81)
-        truncated.outputs[0].metadata[TURN_FINISH_REASONS_KEY] = ["length", "stop"]
-        complete = _response(task, question_id=82)
-        complete.outputs[0].metadata[TURN_FINISH_REASONS_KEY] = ["stop", "stop"]
-        judge, _ = _turn_judge([_rated(5)] * 2, [_rated(5)] * 2)
+    async def test_the_scaffolds_conversations_are_counted_as_truncated(self, task, monkeypatch):
+        # Each question is played through the scaffold: the first stops at the token limit
+        # on turn 1 only, the second outgrows the context on turn 2, the third finishes.
+        def stop(text: str, finish_reason: str = "stop") -> LMOutput:
+            return LMOutput(text=text, metadata={"finish_reason": finish_reason})
+
+        conversations = {
+            81: [stop("Rain falls.", "length"), stop("Snow falls.")],
+            82: [stop("Rain falls."), OVERFLOW],
+            83: [stop("Rain falls."), stop("Snow falls.")],
+        }
+        responses = []
+        for question_id, replies in conversations.items():
+            response = _response(task, question_id=question_id)
+            scaffold = get_scaffold("multi_turn_chat")
+            config = HarnessConfig(name="test")
+            provider = ScriptedProvider(replies)
+            result = await scaffold.run(provider, config, response.request, SamplingParams())
+            response.outputs = [result.final_output]
+            responses.append(response)
+        judge, _ = _turn_judge([_rated(5)] * 3, [_rated(5)] * 2)
         use_judge(monkeypatch, judge)
 
-        await task.score_responses([truncated, complete])
+        await task.score_responses(responses)
 
-        assert truncated.scores["truncation_rate"] == 1.0
-        assert complete.scores["truncation_rate"] == 0.0
+        assert [r.scores["truncation_rate"] for r in responses] == [1.0, 1.0, 0.0]
         metrics = {metric.name: metric for metric in task.config.metrics}
-        assert metrics["truncation_rate"].compute([truncated, complete]) == 0.5
+        assert metrics["truncation_rate"].compute(responses) == pytest.approx(2 / 3)
 
     @pytest.mark.anyio
     async def test_an_out_of_range_rating_is_retried(self, task, monkeypatch):

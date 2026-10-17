@@ -11,6 +11,7 @@ import pytest
 
 from olmo_eval.common.metrics import AccuracyMetric
 from olmo_eval.common.types import (
+    TURNS_KEY,
     Function,
     Instance,
     LMOutput,
@@ -127,6 +128,20 @@ def test_counts_each_outcome() -> None:
         "unclosed_think": 1,
         "finish_reason_unknown": 0,
     }
+
+
+def test_an_unclosed_trace_on_an_earlier_turn_counts_the_conversation_once() -> None:
+    response = _response(("Answer.", "stop"))
+    response.outputs[0].metadata[TURNS_KEY] = [
+        {"text": "<think>still reasoning", "finish_reason": "length"},
+        {"text": "<think>also unfinished", "finish_reason": "length"},
+        {"text": "Answer.", "finish_reason": "stop"},
+    ]
+
+    counts = count_generations([response])
+
+    assert counts is not None
+    assert (counts["generations"], counts["unclosed_think"]) == (1, 1)
 
 
 def test_closed_trace_opened_by_the_template_is_not_unclosed() -> None:

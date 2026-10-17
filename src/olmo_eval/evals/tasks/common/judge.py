@@ -33,7 +33,7 @@ from olmo_eval.common.multi_turn import turn_count, turn_replies
 from olmo_eval.common.scorers import ScoringIncompleteError
 from olmo_eval.common.scorers.base import Scorer
 from olmo_eval.common.scorers.llm_judge import JudgeFn, build_openai_judge_fn, parse_judge_spec
-from olmo_eval.common.types import TURN_FINISH_REASONS_KEY, Instance, LMOutput, Response
+from olmo_eval.common.types import Instance, LMOutput, Response
 from olmo_eval.inference.retry import retry_with_backoff
 
 from .base import Task, TaskConfig, _format_scoring_error, _store_output_score
@@ -75,12 +75,12 @@ def visible_response(text: str) -> str:
 
 
 def is_truncated(output: LMOutput) -> bool:
-    """Whether generation stopped at the token limit, on any turn of a conversation."""
-    metadata = output.metadata or {}
-    turn_finish_reasons = metadata.get(TURN_FINISH_REASONS_KEY)
-    if turn_finish_reasons is not None:
-        return "length" in turn_finish_reasons
-    return metadata.get("finish_reason") == "length"
+    """Whether generation stopped at the token limit.
+
+    The ``multi_turn_chat`` scaffold reports ``"length"`` for a conversation if any
+    of its turns hit the limit.
+    """
+    return (output.metadata or {}).get("finish_reason") == "length"
 
 
 @dataclass(frozen=True)

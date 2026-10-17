@@ -282,6 +282,7 @@ class MTBench(JudgedTask):
 
     data_source = DataSource(path=MT_BENCH_DATA_FILE, split="test")
     split = Split.TEST
+    required_scaffold = "multi_turn_chat"
     metrics = MT_BENCH_METRICS
     primary_metric = MT_BENCH_SCORE
     # max_tokens=None: generate up to the context limit.
