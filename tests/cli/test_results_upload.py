@@ -30,7 +30,8 @@ def test_dry_run_validates_without_network(tmp_path: Path) -> None:
 def test_dry_run_reports_unusable_directories(tmp_path: Path) -> None:
     result = CliRunner().invoke(main, ["results", "upload", str(tmp_path), "--dry-run"])
     assert result.exit_code == 1
-    assert "neither manifest.json nor metrics.json" in result.output
+    # Rich wraps the message, and where depends on the length of the tmp path.
+    assert "neither manifest.json nor metrics.json" in " ".join(result.output.split())
 
 
 def test_upload_passes_flags_and_reports_the_dashboard_url(tmp_path: Path) -> None:
