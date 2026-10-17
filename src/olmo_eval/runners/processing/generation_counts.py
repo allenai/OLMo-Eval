@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from olmo_eval.common.multi_turn import turn_replies
 from olmo_eval.common.types import RequestType, Response
 
 GENERATION_COUNT_KEYS = (
@@ -19,8 +20,15 @@ _THINK_OPEN = "<think>"
 _THINK_CLOSE = "</think>"
 
 
+def _unclosed_think(text: str) -> bool:
+    return text.rfind(_THINK_OPEN) > text.rfind(_THINK_CLOSE)
+
+
 def count_generations(responses: Sequence[Response]) -> dict[str, int] | None:
-    """Count generation outcomes after scoring; None if there are no generations."""
+    """Count generation outcomes after scoring; None if there are no generations.
+
+    A scripted conversation counts once, as unclosed if any of its turns is.
+    """
     counts = dict.fromkeys(GENERATION_COUNT_KEYS, 0)
     for response in responses:
         if response.request.request_type == RequestType.LOGLIKELIHOOD:
@@ -39,7 +47,8 @@ def count_generations(responses: Sequence[Response]) -> dict[str, int] | None:
             empty = metadata.get("scoring_text_empty", not text.strip())
             if empty and not output.has_tool_calls:
                 counts["empty"] += 1
-            if raw.rfind(_THINK_OPEN) > raw.rfind(_THINK_CLOSE):
+            replies = turn_replies(output) or [raw]
+            if any(_unclosed_think(reply) for reply in replies):
                 counts["unclosed_think"] += 1
 
     if counts["generations"] == 0:

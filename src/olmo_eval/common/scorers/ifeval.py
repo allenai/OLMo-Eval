@@ -19,6 +19,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from olmo_eval.common.multi_turn import missing_replies_error
 from olmo_eval.common.scorers.base import Scorer, set_scorer_result
 from olmo_eval.common.types import Instance, LMOutput
 
@@ -169,10 +170,7 @@ class MultiIFScorer(Scorer):
     def score(self, instance: Instance, output: LMOutput) -> float:
         replies = output.extracted_answer
         if not isinstance(replies, list):
-            raise ValueError(
-                "A Multi-IF reply has no per-turn replies. The task has to run under a "
-                "harness with scaffold=multi_turn_chat, for example `--harness multi_turn_chat`."
-            )
+            raise missing_replies_error("Multi-IF")
         from olmo_eval.common.scorers.multilingual_instructions import MULTI_IF_INSTRUCTIONS
 
         turns: list[dict[str, Any]] = instance.metadata["turns"]

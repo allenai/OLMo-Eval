@@ -3,7 +3,14 @@ from __future__ import annotations
 import math
 
 from olmo_eval.common.metrics import LogprobPerTokenMCAccuracyMetric
-from olmo_eval.common.types import Instance, LMOutput, LMRequest, RequestType, Response
+from olmo_eval.common.types import (
+    TURNS_KEY,
+    Instance,
+    LMOutput,
+    LMRequest,
+    RequestType,
+    Response,
+)
 from olmo_eval.runners.io.builders import build_predictions
 
 
@@ -231,3 +238,21 @@ def test_build_predictions_includes_answer_format_correct() -> None:
     output = build_predictions([response])[0]["model_output"][0]
 
     assert output["answer_format_correct"] == 0.5
+
+
+def test_build_predictions_keeps_every_turn_of_a_conversation() -> None:
+    turns = [
+        {"text": "First reply.", "finish_reason": "stop", "completion_tokens": 3},
+        {"text": "Second reply.", "finish_reason": "stop", "completion_tokens": 3},
+    ]
+    response = Response(
+        instance=Instance(question="Q"),
+        request=LMRequest(
+            request_type=RequestType.CHAT, messages=({"role": "user", "content": "Q"},)
+        ),
+        outputs=[LMOutput(text="Second reply.", metadata={TURNS_KEY: turns})],
+    )
+
+    output = build_predictions([response])[0]["model_output"][0]
+
+    assert output[TURNS_KEY] == turns
