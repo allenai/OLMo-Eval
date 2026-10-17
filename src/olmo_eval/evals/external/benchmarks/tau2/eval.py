@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
+from olmo_eval.common.openai_credentials import litellm_model_name
 from olmo_eval.evals.external.base import SandboxedExternalEval
 from olmo_eval.evals.external.result import ExternalEvalResult
 
@@ -248,7 +249,7 @@ class Tau2ExternalEval(SandboxedExternalEval):
         tau2_args: Tau2Args,
     ) -> str:
         """Build the tau2 run command."""
-        agent_model = f"hosted_vllm/{model_name}" if is_local else model_name
+        agent_model = f"hosted_vllm/{model_name}" if is_local else litellm_model_name(model_name)
         repo = f"{self.working_dir}/tau2-bench"
 
         # Use wrapper for local providers (registers model with litellm)
@@ -271,7 +272,7 @@ class Tau2ExternalEval(SandboxedExternalEval):
             parts.extend(["--agent-llm-args", shlex.quote(json.dumps(agent_llm_args))])
 
         # User LLM
-        parts.extend(["--user-llm", shlex.quote(tau2_args.user_llm)])
+        parts.extend(["--user-llm", shlex.quote(litellm_model_name(tau2_args.user_llm))])
         if tau2_args.user_temperature is not None:
             user_args = json.dumps({"temperature": tau2_args.user_temperature})
             parts.extend(["--user-llm-args", shlex.quote(user_args)])

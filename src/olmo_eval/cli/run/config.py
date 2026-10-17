@@ -450,7 +450,11 @@ class RunConfigBuilder:
                 raise SystemExit(1) from None
 
         else:
-            harness_config = HarnessConfig(name="default")
+            from olmo_eval.inference.metrics import MetricsConfig
+
+            # Collect inference metrics as the presets do, so per-task cost fields
+            # (attributed_inference_seconds) are filled for runs without --harness.
+            harness_config = HarnessConfig(name="default", metrics=MetricsConfig())
 
         # Apply CLI overrides to harness config
         if self.cli_harness_overrides:

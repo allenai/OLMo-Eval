@@ -11,7 +11,8 @@ Two tasks mirror the official CharXiv evaluation (https://charxiv.github.io, por
 
 Only the ``validation`` split is supported (the leaderboard split; ``test`` answers are withheld).
 Question texts and grading prompts are byte-identical to the official pipeline. Grading needs
-``OPENAI_API_KEY``; judge replies are cached under ``CHARXIV_GPT_CACHE_DIR`` (or a temp dir).
+``OPENAI_API_KEY`` or ``OPENROUTER_API_KEY``; judge replies are cached under
+``CHARXIV_GPT_CACHE_DIR`` (or a temp dir).
 Metrics are 0-1 (the leaderboard reports x100); the official protocol counts failed grades
 (score -1) as 0 while ``n_invalid`` tracks them.
 """
