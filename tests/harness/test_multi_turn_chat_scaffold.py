@@ -157,6 +157,32 @@ async def test_a_turn_at_the_token_limit_marks_the_conversation_truncated() -> N
 
 
 @pytest.mark.anyio
+async def test_a_conversation_cut_short_by_the_context_is_truncated() -> None:
+    provider = ScriptedProvider(
+        [
+            turn("a", prompt_tokens=10, completion_tokens=5),
+            turn("b", prompt_tokens=20, completion_tokens=6),
+            OVERFLOW,
+        ]
+    )
+
+    result = await run(provider, request_for("1", "2", "3"))
+
+    metadata = result.final_output.metadata
+    assert metadata["finish_reason"] == "length"
+    assert (metadata["prompt_tokens"], metadata["completion_tokens"]) == (30, 11)
+    assert [t["finish_reason"] for t in metadata[TURNS_KEY]] == ["stop", "stop"]
+
+
+@pytest.mark.anyio
+async def test_an_overflow_on_the_first_turn_is_truncated() -> None:
+    result = await run(ScriptedProvider([OVERFLOW]), request_for("1", "2"))
+
+    assert result.final_output.metadata["finish_reason"] == "length"
+    assert "completion_tokens" not in result.final_output.metadata
+
+
+@pytest.mark.anyio
 async def test_the_last_turns_finish_reason_stands_when_no_turn_hit_the_limit() -> None:
     provider = ScriptedProvider([turn("a", "stop"), turn("b", None)])
 

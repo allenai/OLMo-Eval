@@ -12,6 +12,7 @@ from olmo_eval.common.types import (
     LMOutput,
     RequestType,
     Response,
+    SamplingParams,
 )
 from olmo_eval.evals.tasks import mt_bench
 from olmo_eval.evals.tasks.common import OutputScoreAggregation, get_task, task_exists
@@ -26,8 +27,11 @@ from olmo_eval.evals.tasks.mt_bench import (
     judge_prompt,
     parse_rating,
 )
+from olmo_eval.harness.config import HarnessConfig
+from olmo_eval.harness.scaffolds import get_scaffold
 from olmo_eval.runners.asynq.preparation import compute_task_metrics, prepare_task_items
 from tests.evals.tasks.judge_stubs import score_like_the_runner, use_judge
+from tests.harness.test_multi_turn_chat_scaffold import OVERFLOW, ScriptedProvider
 
 pytestmark = pytest.mark.usefixtures("judge_test_env")
 
@@ -422,20 +426,34 @@ class TestScoring:
         assert "score:turn_1" not in response.outputs[1].metadata
 
     @pytest.mark.anyio
-    async def test_a_truncated_turn_counts_the_question_as_truncated(self, task, monkeypatch):
-        truncated = _response(task, question_id=81)
-        truncated.outputs[0].metadata["finish_reason"] = "length"
-        complete = _response(task, question_id=82)
-        complete.outputs[0].metadata["finish_reason"] = "stop"
-        judge, _ = _turn_judge([_rated(5)] * 2, [_rated(5)] * 2)
+    async def test_the_scaffolds_conversations_are_counted_as_truncated(self, task, monkeypatch):
+        # Each question is played through the scaffold: the first stops at the token limit
+        # on turn 1 only, the second outgrows the context on turn 2, the third finishes.
+        def stop(text: str, finish_reason: str = "stop") -> LMOutput:
+            return LMOutput(text=text, metadata={"finish_reason": finish_reason})
+
+        conversations = {
+            81: [stop("Rain falls.", "length"), stop("Snow falls.")],
+            82: [stop("Rain falls."), OVERFLOW],
+            83: [stop("Rain falls."), stop("Snow falls.")],
+        }
+        responses = []
+        for question_id, replies in conversations.items():
+            response = _response(task, question_id=question_id)
+            scaffold = get_scaffold("multi_turn_chat")
+            config = HarnessConfig(name="test")
+            provider = ScriptedProvider(replies)
+            result = await scaffold.run(provider, config, response.request, SamplingParams())
+            response.outputs = [result.final_output]
+            responses.append(response)
+        judge, _ = _turn_judge([_rated(5)] * 3, [_rated(5)] * 2)
         use_judge(monkeypatch, judge)
 
-        await task.score_responses([truncated, complete])
+        await task.score_responses(responses)
 
-        assert truncated.scores["truncation_rate"] == 1.0
-        assert complete.scores["truncation_rate"] == 0.0
+        assert [r.scores["truncation_rate"] for r in responses] == [1.0, 1.0, 0.0]
         metrics = {metric.name: metric for metric in task.config.metrics}
-        assert metrics["truncation_rate"].compute([truncated, complete]) == 0.5
+        assert metrics["truncation_rate"].compute(responses) == pytest.approx(2 / 3)
 
     @pytest.mark.anyio
     async def test_an_out_of_range_rating_is_retried(self, task, monkeypatch):

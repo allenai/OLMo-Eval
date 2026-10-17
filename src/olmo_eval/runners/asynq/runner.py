@@ -17,6 +17,7 @@ from rich.console import Console
 from olmo_eval.common.configs import expand_tasks
 from olmo_eval.common.constants.infrastructure import BEAKER_RESULT_DIR
 from olmo_eval.common.logging import configure_worker_logging, get_logger
+from olmo_eval.evals.tasks.common import get_task
 from olmo_eval.harness.config import HarnessConfig, ProviderConfig
 from olmo_eval.runners.asynq.monitoring import (
     terminate_workers,
@@ -954,13 +955,14 @@ class AsyncEvalRunner(RunnerResultsMixin, BaseEvalRunner):
         def prepare_one(spec: str) -> tuple[str, TaskTracker, list[QueueItem]]:
             try:
                 overrides, sampling_overrides = self._build_task_overrides(spec)
+                # Before prepare_task_items, which loads the data.
+                self._check_scaffold(spec, get_task(spec))
                 task, task_items = prepare_task_items(
                     spec,
                     self.model_name,
                     overrides or None,
                     sampling_overrides=sampling_overrides or None,
                 )
-                self._check_scaffold(spec, task)
                 tracker = TaskTracker(
                     model_name=self.model_name,
                     spec=spec,

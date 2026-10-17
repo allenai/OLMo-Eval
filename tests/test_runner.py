@@ -109,6 +109,15 @@ class TestRequiredScaffold:
         with pytest.raises(RuntimeError, match="harness 'test' has scaffold=openai_agents"):
             self._runner(scaffold="openai_agents")._prepare_tasks()
 
+    def test_the_scaffold_is_checked_before_the_data_loads(self, monkeypatch):
+        def load_data(*args, **kwargs):
+            raise AssertionError("the data was loaded")
+
+        monkeypatch.setattr("olmo_eval.runners.asynq.runner.prepare_task_items", load_data)
+
+        with pytest.raises(RuntimeError, match="mt_bench has to run under a harness with scaffold"):
+            self._runner(scaffold=None)._prepare_tasks()
+
     def test_the_required_scaffold_is_accepted(self):
         _, trackers, items = self._runner(scaffold="multi_turn_chat")._prepare_tasks()
 
