@@ -17,8 +17,8 @@ uv python install 3.12
 # lockfile so builds are reproducible. Run `uv lock` to update the lockfile.
 uv sync --frozen
 
-# Install git hooks
-uv run pre-commit install
+# Install git hooks (ruff, ty, file sizes)
+make setup
 
 # Browse a few suites
 uv run olmo-eval suite inspect mmlu

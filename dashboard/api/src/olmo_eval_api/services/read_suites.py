@@ -22,6 +22,22 @@ from olmo_eval_api.services.suites import (
 SuiteDefs = dict[str, tuple[str, list[dict], str | None, str]]
 
 
+def suite_generation_counts(
+    node: SuiteNode, tasks: Mapping[str, Mapping[Any, Any]]
+) -> dict[str, int] | None:
+    """Sum generation diagnostics over the suite's contributing task results."""
+    total: dict[str, int] = {}
+    for name in leaves(node):
+        task = tasks.get(name)
+        if task is None or task.get("score") is None:
+            continue
+        counts = task.get("generation_counts")
+        if counts is not None:
+            for key, value in counts.items():
+                total[key] = total.get(key, 0) + value
+    return total or None
+
+
 async def load_defs(session: AsyncSession) -> SuiteDefs:
     """Current definition of every suite: name -> (aggregation, children, description, hash)."""
     return await current_suite_defs(session)

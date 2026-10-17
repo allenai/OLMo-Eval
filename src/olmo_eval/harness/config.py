@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import copy
-import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, fields, replace
 from typing import TYPE_CHECKING, Any, Literal
 
+from olmo_eval.common.openai_credentials import secret_available
 from olmo_eval.common.repr import hide_unset
 from olmo_eval.inference.providers.config import ProviderConfig
 
@@ -117,11 +117,7 @@ class HarnessConfig:
         Returns:
             List of missing secret names (empty if all present).
         """
-        missing = []
-        for secret in self.required_secrets:
-            if not os.getenv(secret):
-                missing.append(secret)
-        return missing
+        return [secret for secret in self.required_secrets if not secret_available(secret)]
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization.

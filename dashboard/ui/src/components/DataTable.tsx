@@ -279,6 +279,10 @@ export function DataTable<T>(props: DataTableProps<T>) {
     initialRect: { width: 1200, height: typeof maxHeight === "number" ? maxHeight : 720 },
   });
 
+  useEffect(() => {
+    virtualizer.measure();
+  }, [virtualizer, rowH]);
+
   const virtualItems = virtualizer.getVirtualItems();
   const lastVirtual = virtualItems[virtualItems.length - 1];
   useEffect(() => {

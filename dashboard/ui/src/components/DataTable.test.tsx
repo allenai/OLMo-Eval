@@ -65,6 +65,14 @@ describe("DataTable", () => {
     expect(screen.getByText("Nothing here")).toBeInTheDocument();
   });
 
+  it("repositions virtual rows when their height changes", () => {
+    const { rerender } = render(<DataTable tableId="height" columns={columns} rows={rows} getRowId={(r) => r.id} rowHeight={30} />);
+    const grid = screen.getByRole("grid");
+    expect(within(grid).getAllByRole("row")[2]).toHaveStyle({ top: "30px", height: "30px" });
+    rerender(<DataTable tableId="height" columns={columns} rows={rows} getRowId={(r) => r.id} rowHeight={72} />);
+    expect(within(grid).getAllByRole("row")[2]).toHaveStyle({ top: "72px", height: "72px" });
+  });
+
   it("puts row actions in their own trailing column", () => {
     // Regression: the actions used to be placed across every column, which pushed the row's
     // cells into a second grid row on hover and covered the links in the last column.

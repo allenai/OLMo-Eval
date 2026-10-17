@@ -1,13 +1,13 @@
 # Multi-model comparison config
-# Evaluates multiple models on the same tasks
-# Usage: olmo-eval beaker launch -f examples/configs/model_comparison.yaml --dry-run
+# Evaluates multiple models on the same tasks, one experiment per model
+# Usage: olmo-eval beaker launch -f examples/beaker/configs/model_comparison.yaml \
+#            -w <workspace> [-B <budget>] --dry-run
 
 name: eval-model-comparison
 models:
   - llama3.1-8b
   - olmo-2-7b
   - mistral-7b
-
 tasks:
   - mmlu
   - gsm8k
@@ -15,8 +15,8 @@ tasks:
   - arc_challenge
   - winogrande
 
-cluster: ai2/ceres
+cluster: h100
 gpus: 1
 priority: normal
-preemptible: true
+min_runtime: 2h
 timeout: 24h
