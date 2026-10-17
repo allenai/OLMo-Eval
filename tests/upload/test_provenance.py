@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from importlib.metadata import PackageNotFoundError
 from pathlib import Path
@@ -149,9 +150,14 @@ ISOLATED_OUTPUT = '{"vllm": "0.19.0", "torch": "2.10.0", "transformers": "5.9.0"
 
 @pytest.fixture
 def fake_vllm_python(tmp_path: Path) -> str:
-    """A stand-in for /opt/vllm-venv/bin/python that is not the running interpreter."""
-    path = tmp_path / "python"
-    path.write_text("")
+    """A stand-in for /opt/vllm-venv/bin/python in a venv other than the running one.
+
+    Like a real venv interpreter, it is a symlink to the same base Python as the running
+    interpreter, so only the venv directory tells the two apart.
+    """
+    path = tmp_path / "vllm-venv" / "bin" / "python"
+    path.parent.mkdir(parents=True)
+    path.symlink_to(os.path.realpath(sys.executable))
     return str(path)
 
 
@@ -195,13 +201,13 @@ def test_package_versions_records_the_separate_vllm_venv(monkeypatch, fake_vllm_
     }
 
 
-def test_package_versions_keeps_the_main_env_vllm(monkeypatch, fake_vllm_python) -> None:
+def test_package_versions_records_the_serving_vllm(monkeypatch, fake_vllm_python) -> None:
     monkeypatch.setattr(provenance, "_run", lambda *a, **k: ISOLATED_OUTPUT)
     _main_env(monkeypatch, {"vllm": "0.18.0"})
 
     versions = package_versions({"VLLM_PYTHON": fake_vllm_python})
 
-    assert versions["vllm"] == "0.18.0"
+    assert versions["vllm"] == "0.19.0"
     assert versions["vllm-venv/vllm"] == "0.19.0"
 
 

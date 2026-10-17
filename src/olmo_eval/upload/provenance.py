@@ -84,8 +84,11 @@ def _separate_vllm_python(env: Mapping[str, str]) -> str | None:
     vllm_python = env.get("VLLM_PYTHON")
     if not vllm_python or not os.path.exists(vllm_python):
         return None
+    # Compare environments, not binaries: venv interpreters are symlinks to a shared
+    # base Python, so two venvs on the same version resolve to the same file.
+    venv_dir = os.path.dirname(os.path.dirname(os.path.abspath(vllm_python)))
     try:
-        if os.path.samefile(vllm_python, sys.executable):
+        if os.path.samefile(venv_dir, sys.prefix):
             return None
     except OSError:
         return None
@@ -96,7 +99,8 @@ def package_versions(env: Mapping[str, str] | None = None) -> dict[str, str]:
     """Installed versions of the packages that most affect results.
 
     When the vLLM server runs from a separate venv, that venv's versions are added
-    under ``vllm-venv/<name>``, and its vLLM fills ``vllm`` if the main env has none.
+    under ``vllm-venv/<name>``, and its vLLM is recorded as ``vllm`` because that venv
+    is the one serving.
     """
     env = os.environ if env is None else env
     versions: dict[str, str] = {}
@@ -113,7 +117,7 @@ def package_versions(env: Mapping[str, str] | None = None) -> dict[str, str]:
         for name, value in isolated.items():
             versions[VLLM_VENV_PREFIX + name] = value
         if "vllm" in isolated:
-            versions.setdefault("vllm", isolated["vllm"])
+            versions["vllm"] = isolated["vllm"]
     return versions
 
 
