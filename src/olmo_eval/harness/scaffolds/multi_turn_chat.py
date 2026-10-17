@@ -6,7 +6,12 @@ the conversation. This scaffold sends the request's messages, then each
 follow-up user message in turn, carrying every reply forward as an assistant
 message. Each reply goes back as the model wrote it, so the chat template
 decides what an earlier turn shows, such as whether a reasoning trace is kept.
-The replies are returned in order for the task to score.
+
+The final output records each turn under ``turns``, in order, for the task to
+score and the predictions file to keep. Its own fields describe the whole
+conversation: ``prompt_tokens`` and ``completion_tokens`` add up every turn
+(left out if any turn did not report them), and ``finish_reason`` is
+``"length"`` if any turn hit the token limit, else the last turn's.
 """
 
 from __future__ import annotations
@@ -16,8 +21,7 @@ from typing import Any
 
 from olmo_eval.common.types import (
     FOLLOW_UP_TURNS_KEY,
-    REPLIES_KEY,
-    TURN_FINISH_REASONS_KEY,
+    TURNS_KEY,
     LMOutput,
     LMRequest,
     RequestType,
@@ -30,6 +34,29 @@ from olmo_eval.inference.base import InferenceProvider
 from olmo_eval.inference.errors import first_output, is_context_overflow_output, request_error
 
 logger = logging.getLogger(__name__)
+
+_TOKEN_KEYS = ("prompt_tokens", "completion_tokens")
+
+
+def _turn_record(output: LMOutput) -> dict[str, Any]:
+    """What the predictions keep of one turn: its reply, finish reason and token counts."""
+    metadata = output.metadata or {}
+    record: dict[str, Any] = {"text": output.text, "finish_reason": metadata.get("finish_reason")}
+    record.update({key: metadata[key] for key in _TOKEN_KEYS if key in metadata})
+    return record
+
+
+def _conversation_metadata(last: LMOutput, turns: list[dict[str, Any]]) -> dict[str, Any]:
+    """The final output's metadata, with token counts and finish reason for every turn."""
+    metadata = dict(last.metadata or {})
+    for key in _TOKEN_KEYS:
+        metadata.pop(key, None)
+        if turns and all(isinstance(turn.get(key), int) for turn in turns):
+            metadata[key] = sum(turn[key] for turn in turns)
+    if any(turn["finish_reason"] == "length" for turn in turns):
+        metadata["finish_reason"] = "length"
+    metadata[TURNS_KEY] = turns
+    return metadata
 
 
 @register_scaffold("multi_turn_chat")
@@ -52,8 +79,7 @@ class MultiTurnChatScaffold(Scaffold):
         )
         messages: list[dict[str, Any]] = [dict(m) for m in request.messages]
         system_prompt = config.system_prompt or request.system_prompt
-        replies: list[str] = []
-        finish_reasons: list[str | None] = []
+        turns: list[dict[str, Any]] = []
         last_output = LMOutput(text="")
 
         for turn_index in range(len(follow_ups) + 1):
@@ -83,10 +109,7 @@ class MultiTurnChatScaffold(Scaffold):
                 )
                 break
             last_output = first_output(generated)
-            replies.append(last_output.text)
-            finish_reasons.append((last_output.metadata or {}).get("finish_reason"))
+            turns.append(_turn_record(last_output))
 
-        final = LMOutput(text=last_output.text, metadata=dict(last_output.metadata or {}))
-        final.metadata[REPLIES_KEY] = replies
-        final.metadata[TURN_FINISH_REASONS_KEY] = finish_reasons
-        return HarnessResult(final_output=final, metadata={"turns": len(replies)})
+        final = LMOutput(text=last_output.text, metadata=_conversation_metadata(last_output, turns))
+        return HarnessResult(final_output=final, metadata={"turns": len(turns)})

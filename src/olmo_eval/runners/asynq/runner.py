@@ -960,6 +960,7 @@ class AsyncEvalRunner(RunnerResultsMixin, BaseEvalRunner):
                     overrides or None,
                     sampling_overrides=sampling_overrides or None,
                 )
+                self._check_scaffold(spec, task)
                 tracker = TaskTracker(
                     model_name=self.model_name,
                     spec=spec,
@@ -1045,6 +1046,17 @@ class AsyncEvalRunner(RunnerResultsMixin, BaseEvalRunner):
             )
 
         return expanded_tasks, trackers, items
+
+    def _check_scaffold(self, spec: str, task: Task) -> None:
+        """Fail before generation if the task needs a scaffold this run's harness lacks."""
+        required = task.required_scaffold
+        scaffold = self.harness_config.scaffold
+        if required is not None and scaffold != required:
+            raise ValueError(
+                f"{spec} has to run under a harness with scaffold={required}, for example "
+                f"`--harness {required}`; harness {self.harness_config.name!r} has "
+                f"{f'scaffold={scaffold}' if scaffold else 'no scaffold'}."
+            )
 
     def _build_task_overrides(self, spec: str) -> tuple[dict[str, Any], dict[str, Any]]:
         """Build task and sampling overrides for a given task spec.

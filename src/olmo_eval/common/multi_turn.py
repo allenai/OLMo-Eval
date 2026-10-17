@@ -2,7 +2,7 @@
 
 A task that writes every user turn in advance sends the first turn as the request
 and the rest as follow-ups; the ``multi_turn_chat`` scaffold asks each one with the
-model's own earlier replies in the conversation and returns the replies in order.
+model's own earlier replies in the conversation and records one entry per turn.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from collections.abc import Sequence
 
 from olmo_eval.common.types import (
     FOLLOW_UP_TURNS_KEY,
-    REPLIES_KEY,
+    TURNS_KEY,
     LMOutput,
     LMRequest,
     RequestType,
@@ -35,8 +35,8 @@ def turn_count(request: LMRequest) -> int:
 
 def turn_replies(output: LMOutput) -> list[str] | None:
     """The model's reply to each turn it reached, or None if the output has no replies."""
-    replies = (output.metadata or {}).get(REPLIES_KEY)
-    return None if replies is None else list(replies)
+    turns = (output.metadata or {}).get(TURNS_KEY)
+    return None if turns is None else [turn["text"] for turn in turns]
 
 
 def missing_replies_error(benchmark: str) -> ValueError:

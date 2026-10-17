@@ -12,7 +12,7 @@ from olmo_eval.common.scorers import MultiIFScorer
 from olmo_eval.common.scorers.base import get_scorer_result
 from olmo_eval.common.types import (
     FOLLOW_UP_TURNS_KEY,
-    REPLIES_KEY,
+    TURNS_KEY,
     Instance,
     LMOutput,
     RequestType,
@@ -60,7 +60,7 @@ def _instance(**kwargs: Any) -> Instance:
 def _response(instance: Instance, replies: list[str] | None) -> Response:
     """A response scored the way the pipeline does: extract, then score."""
     task = get_task("multi_if")
-    metadata = {} if replies is None else {REPLIES_KEY: replies}
+    metadata = {} if replies is None else {TURNS_KEY: [{"text": r} for r in replies]}
     output = LMOutput(text=(replies or [""])[-1], metadata=metadata)
     output.extracted_answer = task.extract_answer(output)
     response = Response(instance=instance, request=task.format_request(instance), outputs=[output])
@@ -74,6 +74,7 @@ FOLLOWS_ALL = ["Rain on the roof", "Rain on the roof. Done.", '"Rain on the roof
 def test_registered() -> None:
     task = get_task("multi_if")
     assert task.request_type == RequestType.CHAT
+    assert task.required_scaffold == "multi_turn_chat"
     assert task.config.strip_thinking
     params = task.config.sampling_params
     assert params.max_tokens is None
@@ -132,7 +133,9 @@ def test_format_request_sends_the_first_turn_and_scripts_the_rest() -> None:
 
 
 def test_extract_answer_strips_each_turns_reasoning_and_whitespace() -> None:
-    output = LMOutput(text="", metadata={REPLIES_KEY: ["<think>plan</think>\n\na", " b\n"]})
+    output = LMOutput(
+        text="", metadata={TURNS_KEY: [{"text": "<think>plan</think>\n\na"}, {"text": " b\n"}]}
+    )
     assert get_task("multi_if").extract_answer(output) == ["a", "b"]
 
 
@@ -143,7 +146,7 @@ def test_extraction_reads_replies_after_trace_stripping() -> None:
     instance = _instance(turns=2)
     output = LMOutput(
         text="<think>b</think>Done.",
-        metadata={REPLIES_KEY: ["<think>a</think>Rain", "<think>b</think>Done."]},
+        metadata={TURNS_KEY: [{"text": "<think>a</think>Rain"}, {"text": "<think>b</think>Done."}]},
     )
     response = Response(instance=instance, request=task.format_request(instance), outputs=[output])
     task.strip_thinking_traces([response])

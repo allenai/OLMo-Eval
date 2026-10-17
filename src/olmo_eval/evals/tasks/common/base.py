@@ -392,6 +392,10 @@ class Task(ABC):
         ...         yield from self._load_instances()
     """
 
+    #: Scaffold the task's requests need, such as ``"multi_turn_chat"``. The runner
+    #: refuses to start the task under a harness with a different scaffold.
+    required_scaffold: str | None = None
+
     def __init__(self, config: TaskConfig) -> None:
         self.config = config
         self._fewshot_cache: list[Instance] | None = None

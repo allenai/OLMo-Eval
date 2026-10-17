@@ -8,8 +8,7 @@ import pytest
 from olmo_eval.common.scorers import ScoringIncompleteError
 from olmo_eval.common.types import (
     FOLLOW_UP_TURNS_KEY,
-    REPLIES_KEY,
-    TURN_FINISH_REASONS_KEY,
+    TURNS_KEY,
     LMOutput,
     RequestType,
     Response,
@@ -43,11 +42,15 @@ def _doc(category: str = "writing", question_id: int = 81, reference=None) -> di
     return doc
 
 
+def _turns(*replies: str) -> list[dict[str, str]]:
+    return [{"text": reply} for reply in replies]
+
+
 def _response(task, replies: list[str] | None = None, **doc_fields) -> Response:
     instance = task.process_doc(_doc(**doc_fields))
     assert instance is not None
     replies = ["Rain falls.", "Snow falls."] if replies is None else replies
-    output = LMOutput(text=(replies or [""])[-1], metadata={REPLIES_KEY: replies})
+    output = LMOutput(text=(replies or [""])[-1], metadata={TURNS_KEY: _turns(*replies)})
     return Response(instance=instance, request=task.format_request(instance), outputs=[output])
 
 
@@ -208,7 +211,7 @@ class TestProcessDoc:
 class TestExtractAnswer:
     def test_returns_each_turns_visible_answer(self, task):
         output = LMOutput(
-            text="", metadata={REPLIES_KEY: ["<think>plan</think>\n\nRain.", "<think>never"]}
+            text="", metadata={TURNS_KEY: _turns("<think>plan</think>\n\nRain.", "<think>never")}
         )
         assert task.extract_answer(output) == ["Rain.", ""]
 
@@ -359,7 +362,7 @@ class TestScoring:
         self, task, monkeypatch
     ):
         response = _response(task, ["Rain falls."])
-        response.outputs[0].metadata[TURN_FINISH_REASONS_KEY] = ["stop"]
+        response.outputs[0].metadata["finish_reason"] = "stop"
         judge, calls = _turn_judge([_rated(7)], [])
         use_judge(monkeypatch, judge)
 
@@ -390,7 +393,7 @@ class TestScoring:
     async def test_samples_are_averaged_per_turn(self, task, monkeypatch):
         response = _response(task)
         response.outputs.append(
-            LMOutput(text="", metadata={REPLIES_KEY: ["Drizzle.", "Flurries."]})
+            LMOutput(text="", metadata={TURNS_KEY: _turns("Drizzle.", "Flurries.")})
         )
         judge, _ = _turn_judge([_rated(8), _rated(4)], [_rated(6), _rated(2)])
         use_judge(monkeypatch, judge)
@@ -405,7 +408,7 @@ class TestScoring:
     async def test_a_sample_that_fails_judging_is_left_out_of_every_turn(self, task, monkeypatch):
         response = _response(task)
         response.outputs.append(
-            LMOutput(text="", metadata={REPLIES_KEY: ["Drizzle.", "Flurries."]})
+            LMOutput(text="", metadata={TURNS_KEY: _turns("Drizzle.", "Flurries.")})
         )
         judge, _ = _turn_judge(
             [_rated(8), *["no rating"] * judge_module.JUDGE_ATTEMPTS], [_rated(6), _rated(2)]
@@ -421,9 +424,9 @@ class TestScoring:
     @pytest.mark.anyio
     async def test_a_truncated_turn_counts_the_question_as_truncated(self, task, monkeypatch):
         truncated = _response(task, question_id=81)
-        truncated.outputs[0].metadata[TURN_FINISH_REASONS_KEY] = ["length", "stop"]
+        truncated.outputs[0].metadata["finish_reason"] = "length"
         complete = _response(task, question_id=82)
-        complete.outputs[0].metadata[TURN_FINISH_REASONS_KEY] = ["stop", "stop"]
+        complete.outputs[0].metadata["finish_reason"] = "stop"
         judge, _ = _turn_judge([_rated(5)] * 2, [_rated(5)] * 2)
         use_judge(monkeypatch, judge)
 

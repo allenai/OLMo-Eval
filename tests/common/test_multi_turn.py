@@ -10,7 +10,7 @@ from olmo_eval.common.multi_turn import (
 )
 from olmo_eval.common.types import (
     FOLLOW_UP_TURNS_KEY,
-    REPLIES_KEY,
+    TURNS_KEY,
     LMOutput,
     LMRequest,
     RequestType,
@@ -40,7 +40,12 @@ def test_a_single_turn_request_has_no_follow_ups():
 
 
 def test_turn_replies_reads_the_scaffolds_replies():
-    assert turn_replies(LMOutput(text="b", metadata={REPLIES_KEY: ["a", "b"]})) == ["a", "b"]
+    assert turn_replies(
+        LMOutput(text="b", metadata={TURNS_KEY: [{"text": "a"}, {"text": "b"}]})
+    ) == [
+        "a",
+        "b",
+    ]
     assert turn_replies(LMOutput(text="b")) is None
 
 

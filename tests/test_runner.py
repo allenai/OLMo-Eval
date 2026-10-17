@@ -90,6 +90,32 @@ def _make_process_tracker(
     )
 
 
+class TestRequiredScaffold:
+    """A task that needs a scaffold fails while tasks are prepared, before generation."""
+
+    def _runner(self, scaffold: str | None) -> AsyncEvalRunner:
+        harness = replace(make_harness_config(), scaffold=scaffold)
+        return AsyncEvalRunner(
+            harness_config=harness,
+            task_specs=["mt_bench"],
+            task_overrides={"mt_bench": {"limit": 2}},
+        )
+
+    def test_a_harness_without_the_scaffold_is_refused(self):
+        with pytest.raises(RuntimeError, match="mt_bench has to run under a harness with scaffold"):
+            self._runner(scaffold=None)._prepare_tasks()
+
+    def test_a_harness_with_another_scaffold_is_refused(self):
+        with pytest.raises(RuntimeError, match="harness 'test' has scaffold=openai_agents"):
+            self._runner(scaffold="openai_agents")._prepare_tasks()
+
+    def test_the_required_scaffold_is_accepted(self):
+        _, trackers, items = self._runner(scaffold="multi_turn_chat")._prepare_tasks()
+
+        assert trackers["mt_bench"].error is None
+        assert len(items) == 2
+
+
 class TestAsyncEvalRunnerValidation:
     """Tests for AsyncEvalRunner.validate method."""
 

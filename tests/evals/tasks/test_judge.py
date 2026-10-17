@@ -11,8 +11,7 @@ from olmo_eval.common.multi_turn import scripted_chat_request
 from olmo_eval.common.scorers import ScoringIncompleteError
 from olmo_eval.common.scorers.llm_judge import parse_judge_spec
 from olmo_eval.common.types import (
-    REPLIES_KEY,
-    TURN_FINISH_REASONS_KEY,
+    TURNS_KEY,
     Instance,
     LMOutput,
     LMRequest,
@@ -165,14 +164,6 @@ class TestHelpers:
         assert is_truncated(LMOutput(text="x", metadata={"finish_reason": "length"}))
         assert not is_truncated(LMOutput(text="x", metadata={"finish_reason": "stop"}))
         assert not is_truncated(LMOutput(text="x"))
-
-    def test_is_truncated_reads_every_turn_of_a_conversation(self):
-        def output(*reasons: str | None) -> LMOutput:
-            metadata = {"finish_reason": reasons[-1], TURN_FINISH_REASONS_KEY: list(reasons)}
-            return LMOutput(text="x", metadata=metadata)
-
-        assert is_truncated(output("length", "stop"))
-        assert not is_truncated(output("stop", None))
 
 
 class TestJudgeConfiguration:
@@ -378,7 +369,7 @@ class TestScoreResponses:
         cut_short, finished = _response("first"), _response("both")
         for response, replies in ((cut_short, ["first"]), (finished, ["one", "both"])):
             response.request = scripted_chat_request(["turn 1", "turn 2"])
-            response.outputs[0].metadata[REPLIES_KEY] = replies
+            response.outputs[0].metadata[TURNS_KEY] = [{"text": r} for r in replies]
 
         with caplog.at_level("WARNING", logger=judge_module.__name__):
             await _PassFailTask(_config()).score_responses([cut_short, finished])

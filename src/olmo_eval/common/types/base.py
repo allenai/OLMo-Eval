@@ -222,11 +222,10 @@ class Instance:
 #: conversation sends after each of the model's replies.
 FOLLOW_UP_TURNS_KEY = "follow_up_turns"
 
-#: ``LMOutput.metadata`` key holding the model's reply to each user turn, in order.
-REPLIES_KEY = "replies"
-
-#: ``LMOutput.metadata`` key holding each reply's finish reason, in turn order.
-TURN_FINISH_REASONS_KEY = "turn_finish_reasons"
+#: ``LMOutput.metadata`` key holding one record per user turn the model answered, in
+#: order: the reply as ``text``, plus the ``finish_reason``, ``prompt_tokens`` and
+#: ``completion_tokens`` the provider reported for that turn.
+TURNS_KEY = "turns"
 
 
 @dataclass(frozen=True, slots=True)

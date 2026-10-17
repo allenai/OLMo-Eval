@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import pytest
 
+from olmo_eval.common.multi_turn import turn_replies
 from olmo_eval.common.types import (
     FOLLOW_UP_TURNS_KEY,
-    REPLIES_KEY,
-    TURN_FINISH_REASONS_KEY,
+    TURNS_KEY,
     LMOutput,
     LMRequest,
     RequestType,
@@ -93,24 +93,76 @@ async def test_replies_are_returned_in_turn_order() -> None:
 
     result = await run(provider, request_for("1", "2", "3"))
 
-    assert result.final_output.metadata[REPLIES_KEY] == ["a", "b", "c"]
+    assert turn_replies(result.final_output) == ["a", "b", "c"]
     assert result.final_output.text == "c"
     assert result.metadata == {"turns": 3}
 
 
+def turn(text: str, finish_reason: str | None = "stop", **tokens: int) -> LMOutput:
+    return LMOutput(text=text, metadata={"finish_reason": finish_reason, **tokens})
+
+
 @pytest.mark.anyio
-async def test_each_turns_finish_reason_is_kept() -> None:
+async def test_each_turn_is_recorded_with_its_finish_reason_and_tokens() -> None:
     provider = ScriptedProvider(
         [
-            LMOutput(text="a", metadata={"finish_reason": "length"}),
-            LMOutput(text="b", metadata={"finish_reason": "stop"}),
+            turn("a", "length", prompt_tokens=10, completion_tokens=500),
+            turn("b", prompt_tokens=520, completion_tokens=7),
             LMOutput(text="c"),
         ]
     )
 
     result = await run(provider, request_for("1", "2", "3"))
 
-    assert result.final_output.metadata[TURN_FINISH_REASONS_KEY] == ["length", "stop", None]
+    assert result.final_output.metadata[TURNS_KEY] == [
+        {"text": "a", "finish_reason": "length", "prompt_tokens": 10, "completion_tokens": 500},
+        {"text": "b", "finish_reason": "stop", "prompt_tokens": 520, "completion_tokens": 7},
+        {"text": "c", "finish_reason": None},
+    ]
+
+
+@pytest.mark.anyio
+async def test_the_conversation_reports_the_tokens_of_every_turn() -> None:
+    provider = ScriptedProvider(
+        [
+            turn("a", prompt_tokens=10, completion_tokens=500),
+            turn("b", prompt_tokens=520, completion_tokens=7),
+        ]
+    )
+
+    result = await run(provider, request_for("1", "2"))
+
+    metadata = result.final_output.metadata
+    assert (metadata["prompt_tokens"], metadata["completion_tokens"]) == (530, 507)
+
+
+@pytest.mark.anyio
+async def test_a_turn_without_token_counts_leaves_the_conversation_total_unknown() -> None:
+    provider = ScriptedProvider([turn("a"), turn("b", prompt_tokens=520, completion_tokens=7)])
+
+    result = await run(provider, request_for("1", "2"))
+
+    assert "prompt_tokens" not in result.final_output.metadata
+    assert "completion_tokens" not in result.final_output.metadata
+
+
+@pytest.mark.anyio
+async def test_a_turn_at_the_token_limit_marks_the_conversation_truncated() -> None:
+    provider = ScriptedProvider([turn("a", "length"), turn("b", "stop")])
+
+    result = await run(provider, request_for("1", "2"))
+
+    assert result.final_output.metadata["finish_reason"] == "length"
+    assert result.final_output.text == "b"
+
+
+@pytest.mark.anyio
+async def test_the_last_turns_finish_reason_stands_when_no_turn_hit_the_limit() -> None:
+    provider = ScriptedProvider([turn("a", "stop"), turn("b", None)])
+
+    result = await run(provider, request_for("1", "2"))
+
+    assert result.final_output.metadata["finish_reason"] is None
 
 
 @pytest.mark.anyio
@@ -119,7 +171,7 @@ async def test_a_request_without_follow_ups_is_one_turn() -> None:
 
     result = await run(provider, LMRequest(request_type=RequestType.CHAT, messages=(user("Hi"),)))
 
-    assert result.final_output.metadata[REPLIES_KEY] == ["only"]
+    assert turn_replies(result.final_output) == ["only"]
     assert len(provider.requests) == 1
 
 
@@ -130,7 +182,7 @@ async def test_an_overflow_ends_the_conversation_without_failing_it() -> None:
     result = await run(provider, request_for("1", "2", "3"))
 
     assert len(provider.requests) == 2
-    assert result.final_output.metadata[REPLIES_KEY] == ["a"]
+    assert turn_replies(result.final_output) == ["a"]
     assert REQUEST_ERROR_KEY not in result.final_output.metadata
 
 
@@ -141,7 +193,7 @@ async def test_an_overflow_on_the_first_turn_leaves_no_replies() -> None:
     result = await run(provider, request_for("1", "2"))
 
     assert len(provider.requests) == 1
-    assert result.final_output.metadata[REPLIES_KEY] == []
+    assert turn_replies(result.final_output) == []
     assert result.final_output.text == ""
     assert REQUEST_ERROR_KEY not in result.final_output.metadata
 
