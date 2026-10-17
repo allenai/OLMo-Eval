@@ -891,8 +891,8 @@ interface RunSim {
 
 /**
  * Runtime of one run: startup, then the tasks sharing inference workers. Runs older than two
- * weeks predate runtime recording; single-task runs are measured; recent runs have per-batch
- * metrics (attributed); the rest are estimated from the task's token share.
+ * weeks predate runtime recording; single-task runs are measured; recent runs record attributed
+ * worker time; the rest are estimated from the task's token share.
  */
 function simulateRun(plan: RunPlan, runId: string, taskNames: string[]): RunSim {
   const a100 = plan.gpuType.includes("A100");

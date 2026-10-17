@@ -1579,7 +1579,7 @@
       "description": "Create or replace one task result. Upsert key: (run_id, task_name, task_hash). Replacing deletes the task result's stored instances; the client then sends all instances again.",
       "properties": {
         "attributed_inference_seconds": {
-          "description": "Inference seconds attributed to this task from per-batch inference metrics (each batch's wall time split by the task's share of the batch's tokens). Null unless recorded.",
+          "description": "Inference worker seconds attributed to this task. Each worker's busy time is split evenly across the batches and agent rollouts in flight, and a batch's share across its requests by token share. Agent rollouts include their tool and sandbox time. Summed over workers, so a run with N inference workers attributes up to N times its processing time. Null unless recorded.",
           "type": [
             "number",
             "null"

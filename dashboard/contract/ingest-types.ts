@@ -363,8 +363,11 @@ export interface TaskResultIn {
     /** Completion tokens over every request of the task, including failed instances. */
     completion_tokens_total?: NonNegativeInteger | null;
     /**
-     * Inference seconds attributed to this task from per-batch inference metrics (each batch's
-     * wall time split by the task's share of the batch's tokens). Null unless recorded.
+     * Inference worker seconds attributed to this task. Each worker's busy time is split evenly
+     * across the batches and agent rollouts in flight, and a batch's share across its requests by
+     * token share. Agent rollouts include their tool and sandbox time. Summed over workers, so a
+     * run with N inference workers attributes up to N times its processing time. Null unless
+     * recorded.
      */
     attributed_inference_seconds?: number | null;
     predictions_path: RelativePath | null;

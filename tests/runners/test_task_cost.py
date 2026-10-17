@@ -1,10 +1,10 @@
-"""Per-task cost in the async runner: request timing, token totals and batch attribution."""
+"""Per-task cost in the async runner: request timing, token totals and time attribution."""
 
 from __future__ import annotations
 
 import asyncio
 import queue
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -15,9 +15,16 @@ from olmo_eval.common.execution.environment import ScoringContext
 from olmo_eval.common.types import Instance, LMOutput, LMRequest, RequestType, Response
 from olmo_eval.evals.tasks.common import Task, TaskConfig
 from olmo_eval.inference.metrics.core.schema import BatchMetrics, RequestMetrics
-from olmo_eval.runners.asynq.processing import attribute_batch_seconds, process_batch
+from olmo_eval.runners.asynq.batching import BatchConfig, BatchedStrategy, StreamingStrategy
+from olmo_eval.runners.asynq.processing import (
+    attribute_batch_seconds,
+    process_batch,
+    process_chat_request,
+    process_items,
+)
 from olmo_eval.runners.asynq.results import aggregate_results, process_results, utc_iso
 from olmo_eval.runners.asynq.runner import _processing_seconds
+from olmo_eval.runners.asynq.share_clock import ShareClock
 from olmo_eval.runners.asynq.types import QueueItem, ResultItem, TaskTracker
 from olmo_eval.runners.common.types import RUN_TIMING_KEYS, TASK_COST_KEYS, TaskResult
 from olmo_eval.runners.common.usage import (
@@ -159,8 +166,47 @@ def test_tracker_total_becomes_null_when_any_count_is_unknown() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Batch attribution in the worker
+# Worker time attribution
 # ---------------------------------------------------------------------------
+
+
+class _FakeTime:
+    """A settable stand-in for time.monotonic."""
+
+    def __init__(self) -> None:
+        self.t = 0.0
+
+    def __call__(self) -> float:
+        return self.t
+
+
+def test_share_clock_gives_a_lone_unit_its_wall_time() -> None:
+    now = _FakeTime()
+    clock = ShareClock(now)
+    token = clock.start()
+    now.t = 2.5
+    assert clock.stop(token) == pytest.approx(2.5)
+
+
+def test_share_clock_splits_overlap_and_skips_idle_time() -> None:
+    now = _FakeTime()
+    clock = ShareClock(now)
+    a = clock.start()
+    now.t = 2.0
+    b = clock.start()  # a alone for 2s
+    now.t = 6.0
+    share_a = clock.stop(a)  # 4s shared by two
+    now.t = 7.0
+    share_b = clock.stop(b)  # b alone for 1s
+    now.t = 20.0  # idle: credited to no one
+    c = clock.start()
+    now.t = 21.0
+    share_c = clock.stop(c)
+
+    assert share_a == pytest.approx(4.0)
+    assert share_b == pytest.approx(3.0)
+    assert share_c == pytest.approx(1.0)
+    assert share_a + share_b + share_c == pytest.approx(8.0)  # busy time, not 21s
 
 
 def _request_metrics(prompt: int, completion: int) -> RequestMetrics:
@@ -187,37 +233,51 @@ def _batch(wall: float, requests: Sequence[RequestMetrics]) -> BatchMetrics:
     )
 
 
-def test_attribution_splits_wall_time_by_token_share() -> None:
-    batch = _batch(4.0, [_request_metrics(30, 10), _request_metrics(10, 10)])
-    assert attribute_batch_seconds(batch, 2) == [pytest.approx(8 / 3), pytest.approx(4 / 3)]
+def test_attribution_splits_batch_time_by_token_share() -> None:
+    # The batch's own wall time in its metrics is ignored; the worker clock's share is split.
+    batch = _batch(99.0, [_request_metrics(30, 10), _request_metrics(10, 10)])
+    assert attribute_batch_seconds(4.0, batch, 2) == [pytest.approx(8 / 3), pytest.approx(4 / 3)]
 
 
-def test_attribution_needs_matching_request_metrics() -> None:
+def test_attribution_splits_evenly_without_matching_request_metrics() -> None:
     batch = _batch(4.0, [_request_metrics(30, 10)])
-    assert attribute_batch_seconds(batch, 2) == [None, None]
-    assert attribute_batch_seconds(None, 2) == [None, None]
-    assert attribute_batch_seconds(Mock(), 1) == [None]
+    assert attribute_batch_seconds(4.0, batch, 2) == [2.0, 2.0]
+    assert attribute_batch_seconds(4.0, None, 2) == [2.0, 2.0]
+    assert attribute_batch_seconds(4.0, Mock(), 1) == [4.0]
     empty = _batch(3.0, [_request_metrics(0, 0), _request_metrics(0, 0)])
-    assert attribute_batch_seconds(empty, 2) == [1.5, 1.5]
+    assert attribute_batch_seconds(3.0, empty, 2) == [1.5, 1.5]
 
 
-def _queue_item(idx: int, task_id: str) -> QueueItem:
+def _queue_item(
+    idx: int, task_id: str, request_type: RequestType = RequestType.COMPLETION
+) -> QueueItem:
     return QueueItem(
         model_name="m",
         task_id=task_id,
         instance_idx=idx,
         instance=Instance(question=f"q{idx}", gold_answer="a"),
-        request=LMRequest(request_type=RequestType.COMPLETION, prompt=f"q{idx}"),
+        request=LMRequest(request_type=request_type, prompt=f"q{idx}"),
     )
+
+
+def _timed(now: _FakeTime, seconds: float, value: object) -> AsyncMock:
+    """An async callable that advances the fake clock by ``seconds`` and returns ``value``."""
+
+    async def call(*_args: object, **_kwargs: object) -> object:
+        now.t += seconds
+        return value
+
+    return AsyncMock(side_effect=call)
 
 
 def test_process_batch_stamps_send_time_and_attribution(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("olmo_eval.runners.asynq.processing.time.time", lambda: 1000.0)
-    batch = _batch(6.0, [_request_metrics(10, 10), _request_metrics(30, 10)])
+    now = _FakeTime()
+    batch = _batch(99.0, [_request_metrics(10, 10), _request_metrics(30, 10)])
     harness = SimpleNamespace(
         provider=SimpleNamespace(
             describe_request=Mock(return_value=None),
-            agenerate=AsyncMock(return_value=[[LMOutput("a")], [LMOutput("b")]]),
+            agenerate=_timed(now, 6.0, [[LMOutput("a")], [LMOutput("b")]]),
         ),
         _apply_config=lambda request: request,
         flush_metrics=Mock(return_value=batch),
@@ -225,11 +285,224 @@ def test_process_batch_stamps_send_time_and_attribution(monkeypatch: pytest.Monk
     result_queue: queue.Queue[ResultItem] = queue.Queue()
 
     items = [_queue_item(0, "easy"), _queue_item(1, "hard")]
-    asyncio.run(process_batch(items, harness, result_queue))  # type: ignore[arg-type]
+    asyncio.run(process_batch(items, harness, result_queue, clock=ShareClock(now)))  # type: ignore[arg-type]
 
     results = [result_queue.get_nowait() for _ in range(2)]
     assert [r.sent_at for r in results] == [1000.0, 1000.0]
     assert [r.attributed_seconds for r in results] == [2.0, 4.0]
+
+
+def test_failed_batch_still_attributes_its_time() -> None:
+    now = _FakeTime()
+
+    async def fail(*_args: object, **_kwargs: object) -> None:
+        now.t += 3.0
+        raise RuntimeError("server hiccup")
+
+    harness = SimpleNamespace(
+        provider=SimpleNamespace(
+            describe_request=Mock(return_value=None), agenerate=AsyncMock(side_effect=fail)
+        ),
+        _apply_config=lambda request: request,
+        flush_metrics=Mock(return_value=None),
+    )
+    result_queue: queue.Queue[ResultItem] = queue.Queue()
+
+    items = [_queue_item(0, "t"), _queue_item(1, "t"), _queue_item(2, "t")]
+    asyncio.run(process_batch(items, harness, result_queue, clock=ShareClock(now)))  # type: ignore[arg-type]
+
+    results = [result_queue.get_nowait() for _ in range(3)]
+    assert all(r.error for r in results)
+    assert [r.attributed_seconds for r in results] == [1.0, 1.0, 1.0]
+
+
+async def _until(condition: Callable[[], bool]) -> None:
+    """Yield to the event loop until ``condition`` holds (fails instead of hanging)."""
+    for _ in range(1000):
+        if condition():
+            return
+        await asyncio.sleep(0)
+    raise AssertionError("condition never held")
+
+
+def _rollout(text: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        final_output=LMOutput(text),
+        trajectory=None,
+        error=None,
+        max_turns_reached=False,
+        total_tool_calls=0,
+        num_turns=1,
+    )
+
+
+def test_chat_rollout_carries_its_time_on_success_and_failure() -> None:
+    now = _FakeTime()
+    clock = ShareClock(now)
+    result_queue: queue.Queue[ResultItem] = queue.Queue()
+
+    async def broken(*_args: object, **_kwargs: object) -> None:
+        now.t += 2.0
+        raise RuntimeError("sandbox lost")
+
+    for run in (_timed(now, 5.0, _rollout("ok")), AsyncMock(side_effect=broken)):
+        harness = SimpleNamespace(
+            provider=SimpleNamespace(describe_request=Mock(return_value=None)),
+            _apply_config=lambda request: request,
+            run=run,
+        )
+        item = _queue_item(0, "t", RequestType.CHAT)
+        asyncio.run(process_chat_request(item, harness, result_queue, clock=clock))  # type: ignore[arg-type]
+
+    ok, failed = result_queue.get_nowait(), result_queue.get_nowait()
+    assert ok.error is None and ok.attributed_seconds == pytest.approx(5.0)
+    assert failed.error and failed.attributed_seconds == pytest.approx(2.0)
+
+
+def test_concurrent_rollouts_split_worker_time() -> None:
+    """Overlapping rollouts share the worker's time instead of each claiming its latency."""
+    now = _FakeTime()
+    finish = [asyncio.Event() for _ in range(3)]
+    started: list[int] = []
+
+    async def run(request: LMRequest, *_args: object, **_kwargs: object) -> SimpleNamespace:
+        idx = int(request.prompt[1:])
+        started.append(idx)
+        await finish[idx].wait()
+        return _rollout("done")
+
+    harness = SimpleNamespace(
+        config=SimpleNamespace(scaffold="multi_turn_chat"),
+        provider=SimpleNamespace(describe_request=Mock(return_value=None)),
+        _apply_config=lambda request: request,
+        run=run,
+        flush_metrics=Mock(return_value=None),
+    )
+    result_queue: queue.Queue[ResultItem] = queue.Queue()
+    items = [_queue_item(i, f"task{i}", RequestType.CHAT) for i in range(3)]
+
+    async def drive() -> None:
+        processing = asyncio.create_task(
+            process_items(items, harness, result_queue, clock=ShareClock(now))  # type: ignore[arg-type]
+        )
+        await _until(lambda: len(started) == 3)  # all three rollouts start at t=0
+        for idx, t in enumerate((3.0, 5.0, 9.0)):
+            now.t = t
+            finish[idx].set()
+            await _until(lambda idx=idx: result_queue.qsize() == idx + 1)
+        await processing
+
+    asyncio.run(drive())
+
+    results = sorted((result_queue.get_nowait() for _ in range(3)), key=lambda r: r.instance_idx)
+    # 0-3s: three in flight (1s each); 3-5s: two (1s each); 5-9s: one (4s).
+    assert [r.attributed_seconds for r in results] == [
+        pytest.approx(1.0),
+        pytest.approx(2.0),
+        pytest.approx(6.0),
+    ]
+    assert sum(r.attributed_seconds or 0.0 for r in results) == pytest.approx(9.0)
+
+
+def test_overlapping_batches_split_worker_time() -> None:
+    """Streaming runs single-item batches concurrently; their shares sum to busy time."""
+    now = _FakeTime()
+    clock = ShareClock(now)
+    release = [asyncio.Event() for _ in range(2)]
+
+    async def agenerate(requests: list[LMRequest], *_args: object) -> list[list[LMOutput]]:
+        await release[int(requests[0].prompt[1:])].wait()
+        return [[LMOutput("x")]]
+
+    harness = SimpleNamespace(
+        provider=SimpleNamespace(describe_request=Mock(return_value=None), agenerate=agenerate),
+        _apply_config=lambda request: request,
+        flush_metrics=Mock(return_value=None),
+    )
+    result_queue: queue.Queue[ResultItem] = queue.Queue()
+
+    async def drive() -> None:
+        batches = [
+            asyncio.create_task(
+                process_batch([_queue_item(i, "t")], harness, result_queue, clock=clock)  # type: ignore[arg-type]
+            )
+            for i in range(2)
+        ]
+        await _until(lambda: clock._active == 2)
+        now.t = 4.0
+        release[0].set()
+        await _until(lambda: result_queue.qsize() == 1)
+        now.t = 6.0
+        release[1].set()
+        await asyncio.gather(*batches)
+
+    asyncio.run(drive())
+
+    shares = sorted(result_queue.get_nowait().attributed_seconds or 0.0 for _ in range(2))
+    # Each call took 4s or 6s on its own, but the worker was busy for 6s in total.
+    assert shares == [pytest.approx(2.0), pytest.approx(4.0)]
+
+
+def test_cancelled_batch_leaves_the_clock() -> None:
+    now = _FakeTime()
+    clock = ShareClock(now)
+
+    async def hang(*_args: object) -> None:
+        await asyncio.Event().wait()
+
+    harness = SimpleNamespace(
+        provider=SimpleNamespace(describe_request=Mock(return_value=None), agenerate=hang),
+        _apply_config=lambda request: request,
+    )
+
+    async def drive() -> None:
+        batch = asyncio.create_task(
+            process_batch([_queue_item(0, "t")], harness, queue.Queue(), clock=clock)  # type: ignore[arg-type]
+        )
+        await _until(lambda: clock._active == 1)
+        batch.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await batch
+
+    asyncio.run(drive())
+    # A later unit alone gets its full wall time, so the cancelled one no longer counts.
+    token = clock.start()
+    now.t += 2.0
+    assert clock.stop(token) == pytest.approx(2.0)
+
+
+@pytest.mark.parametrize(
+    "strategy",
+    [
+        BatchedStrategy(BatchConfig(chunk_size=2, chunk_timeout=0.05)),
+        StreamingStrategy(BatchConfig.streaming()),
+    ],
+)
+def test_strategies_share_one_clock_per_worker(
+    strategy: BatchedStrategy | StreamingStrategy, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clocks: list[ShareClock | None] = []
+
+    async def capture(*_args: object, clock: ShareClock | None = None, **_kwargs: object) -> None:
+        clocks.append(clock)
+
+    monkeypatch.setattr("olmo_eval.runners.asynq.processing.process_items", capture)
+    item_queue: queue.Queue[QueueItem | None] = queue.Queue()
+    for i in range(3):
+        item_queue.put(_queue_item(i, "t"))
+    item_queue.put(None)
+
+    asyncio.run(
+        strategy.run(
+            item_queue=item_queue,  # type: ignore[arg-type]
+            harness=object(),  # type: ignore[arg-type]
+            result_queue=queue.Queue(),  # type: ignore[arg-type]
+            max_concurrency=None,
+            worker_logger=Mock(),
+            total_instances=3,
+        )
+    )
+    assert clocks and all(clock is strategy.clock for clock in clocks)
 
 
 # ---------------------------------------------------------------------------
