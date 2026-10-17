@@ -252,6 +252,7 @@
   "prompt_tokens_total": 61234,
   "completion_tokens_total": 398112,
   "attributed_inference_seconds": null,
+  "scoring_seconds": null,
   "predictions_path": "predictions/meta-llama_Llama-3.1-8B-Instruct/omniscience_judge_afd898-predictions.jsonl",
   "requests_path": "requests/meta-llama_Llama-3.1-8B-Instruct/omniscience_judge_afd898-requests.jsonl",
   "suites": [],

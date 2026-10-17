@@ -611,16 +611,31 @@ def test_share_clock_keeps_blocking_work_out_of_every_share() -> None:
 
 
 class _TimedTask(_LLTask):
-    """Scoring advances a fake clock by ``score_s`` per instance; metrics by ``metrics_s``."""
+    """Scoring advances a fake clock by ``score_s`` per instance; metrics by ``metrics_s``.
 
-    def __init__(self, now: _FakeTime, score_s: float, metrics_s: float = 0.0, fail: bool = False):
+    Scoring first waits for ``release`` when given, and yields to the event loop after
+    advancing the clock, so other instances can be in flight meanwhile.
+    """
+
+    def __init__(
+        self,
+        now: _FakeTime,
+        score_s: float,
+        metrics_s: float = 0.0,
+        fail: bool = False,
+        release: asyncio.Event | None = None,
+    ):
         super().__init__(TaskConfig(name="timed", data_source="test/dataset"))
         self.now, self.score_s, self.metrics_s, self.fail = now, score_s, metrics_s, fail
+        self.release = release
 
     async def score_responses(
         self, responses: Sequence[Response], context: ScoringContext | None = None
     ) -> Sequence[Response]:
+        if self.release is not None:
+            await self.release.wait()
         self.now.t += self.score_s
+        await asyncio.sleep(0)
         if self.fail:
             raise RuntimeError("judge unavailable")
         return await super().score_responses(responses, context)
@@ -691,19 +706,46 @@ def test_failed_scoring_still_counts_its_time(monkeypatch: pytest.MonkeyPatch) -
     assert results["t"].scoring_seconds == pytest.approx(3.0)
 
 
+def test_concurrent_scoring_splits_loop_time_without_double_counting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = _FakeTime()
+    tasks: dict[str, Task] = {
+        "fast": _TimedTask(now, score_s=1.0),
+        "judged": _TimedTask(now, score_s=3.0, metrics_s=2.0),
+    }
+    results = _score(monkeypatch, tasks, now, scoring_concurrency=8)
+
+    fast, judged = results["fast"].scoring_seconds, results["judged"].scoring_seconds
+    assert fast is not None and judged is not None
+    # Overlapping instances share the loop's time; together they account for all of it.
+    assert fast + judged == pytest.approx(2 * 1.0 + 2 * 3.0 + 2.0)
+    assert judged > fast
+
+
 def test_writing_predictions_is_not_scoring_time(monkeypatch: pytest.MonkeyPatch) -> None:
     now = _FakeTime()
+    release = asyncio.Event()
 
     def write(*_args: object) -> None:
         now.t += 100.0
+        release.set()  # "late" is still scoring while "early" writes its predictions
 
-    tasks: dict[str, Task] = {"a": _TimedTask(now, 1.0), "b": _TimedTask(now, 1.0)}
-    results = _score(monkeypatch, tasks, now, save_predictions=True, write_predictions_fn=write)
+    tasks: dict[str, Task] = {
+        "late": _TimedTask(now, 3.0, release=release),
+        "early": _TimedTask(now, 1.0),
+    }
+    results = _score(
+        monkeypatch,
+        tasks,
+        now,
+        scoring_concurrency=8,
+        save_predictions=True,
+        write_predictions_fn=write,
+    )
 
-    assert [results[spec].scoring_seconds for spec in ("a", "b")] == [
-        pytest.approx(2.0),
-        pytest.approx(2.0),
-    ]
+    total = sum(r.scoring_seconds or 0.0 for r in results.values())
+    assert total == pytest.approx(2 * 3.0 + 2 * 1.0)
 
 
 def test_processing_seconds_falls_back_without_task_end_times() -> None:

@@ -29,10 +29,11 @@ DEFAULT_MAX_HARD_FAILURE_RATE = 0.05
 #       flight, and a batch's share across its requests by token share. Summed over
 #       workers, so a run with N workers attributes up to N x processing_seconds.
 #       Agent rollouts include their tool and sandbox time.
-#   scoring_seconds: the task's share of the scoring loop's time. The loop's busy time
-#       is split evenly across the instances being scored at once (judge calls and
-#       sandbox runs included), plus the task's metric computation. Scoring runs in the
-#       main process alongside inference, so this does not add to the inference time.
+#   scoring_seconds: the task's share of the scoring loop's wall time. Time while any
+#       instance is being scored is split evenly across the instances in flight (judge
+#       calls and sandbox runs included), plus the task's metric computation. CPU-bound
+#       scorers block the loop, so their time is shared with whatever else is in flight.
+#       Scoring overlaps inference, so this and the inference time don't sum to wall time.
 TASK_COST_KEYS = (
     "first_request_at",
     "last_completed_at",

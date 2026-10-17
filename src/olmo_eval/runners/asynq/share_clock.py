@@ -50,14 +50,15 @@ class ShareClock:
 
         Units in flight make no progress while ``fn`` runs, so its span is credited to
         none of them. Returns ``fn``'s result and its elapsed seconds, for the caller to
-        credit where it belongs.
+        credit where it belongs. Calls must not nest.
         """
         self._advance()
         started = self._last
         try:
-            return fn(), self._now() - started
+            result = fn()
         finally:
             self._last = self._now()
+        return result, self._last - started
 
 
 __all__ = ["ShareClock"]
