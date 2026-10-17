@@ -128,7 +128,7 @@ class OpenHandsScaffold(Scaffold):
         client = provider.get_openai_client()
 
         if isinstance(provider, LiteLLMProvider):
-            model_name = provider.model_name
+            model_name = provider.request_model_name
             api_key = client.api_key
             base_url = str(client.base_url) if client.base_url else None
             is_self_hosted = False

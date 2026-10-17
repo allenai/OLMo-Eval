@@ -173,6 +173,11 @@ class InferenceProvider(ABC):
         """
         raise NotImplementedError(f"{type(self).__name__} does not provide tokenizer access")
 
+    @property
+    def openai_client_model_name(self) -> str:
+        """Model name to send with the client from ``get_openai_client``."""
+        return self.model_name
+
     def get_openai_client(self) -> AsyncOpenAI:
         """Get an AsyncOpenAI client for this provider.
 
