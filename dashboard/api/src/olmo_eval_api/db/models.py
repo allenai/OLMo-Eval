@@ -286,6 +286,8 @@ class TaskResult(SQLModel, table=True):
     first_request_at: datetime | None = _ts(nullable=True)
     last_completed_at: datetime | None = _ts(nullable=True)
     attributed_inference_seconds: float | None = _float()
+    # The task's share of the client's scoring loop time; null for older clients.
+    scoring_seconds: float | None = _float()
     # Task-level token totals as the client reported them (every request, including failed
     # instances); null for older clients.
     reported_prompt_tokens_total: int | None = _int(BigInteger)

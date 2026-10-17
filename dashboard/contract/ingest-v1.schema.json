@@ -1761,6 +1761,13 @@
             }
           ]
         },
+        "scoring_seconds": {
+          "description": "Seconds of the client's scoring loop attributed to this task: the loop's busy time split evenly across the instances being scored at once (judge calls and sandbox runs included), plus the task's metric computation. Scoring runs alongside inference, so this does not add to the inference time. Null unless recorded.",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
         "split": {
           "type": [
             "string",

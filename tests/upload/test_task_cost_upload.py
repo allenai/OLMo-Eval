@@ -16,6 +16,7 @@ TASK_KEYS = (
     "prompt_tokens_total",
     "completion_tokens_total",
     "attributed_inference_seconds",
+    "scoring_seconds",
 )
 
 
@@ -34,6 +35,7 @@ def _add_cost(out: Path) -> None:
             prompt_tokens_total=4321,
             completion_tokens_total=0,
             attributed_inference_seconds=6.75,
+            scoring_seconds=2.5,
         )
     path.write_text(json.dumps(metrics))
 
@@ -58,6 +60,7 @@ def test_new_fields_map_into_the_payload(tmp_path: Path) -> None:
         "prompt_tokens_total": 4321,
         "completion_tokens_total": 0,
         "attributed_inference_seconds": 6.75,
+        "scoring_seconds": 2.5,
     }
 
 
@@ -88,7 +91,9 @@ def test_malformed_values_become_null(tmp_path: Path) -> None:
     path = out / "metrics.json"
     metrics = json.loads(path.read_text())
     metrics.update(startup_seconds="soon", processing_started_at="not a date")
-    metrics["tasks"][0].update(prompt_tokens_total=-3, attributed_inference_seconds=float("inf"))
+    metrics["tasks"][0].update(
+        prompt_tokens_total=-3, attributed_inference_seconds=float("inf"), scoring_seconds=-1.0
+    )
     path.write_text(json.dumps(metrics))
 
     report = dry_run(out)
@@ -99,6 +104,7 @@ def test_malformed_values_become_null(tmp_path: Path) -> None:
     first = report.plan.tasks[0].payload
     assert first["prompt_tokens_total"] is None
     assert first["attributed_inference_seconds"] is None
+    assert first["scoring_seconds"] is None
 
 
 def _rows(tmp_path: Path, records: list[dict]) -> list[dict]:

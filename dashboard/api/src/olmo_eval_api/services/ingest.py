@@ -555,6 +555,7 @@ async def upsert_task_result(
         "first_request_at": req.first_request_at,
         "last_completed_at": req.last_completed_at,
         "attributed_inference_seconds": derive.finite_or_none(req.attributed_inference_seconds),
+        "scoring_seconds": derive.finite_or_none(req.scoring_seconds),
         "reported_prompt_tokens_total": req.prompt_tokens_total,
         "reported_completion_tokens_total": req.completion_tokens_total,
         # Replaced when the run completes (finalize_task_result).
@@ -641,6 +642,9 @@ async def upsert_task_result(
     )
 
 
+_HASH_OPTIONAL_FIELDS = ("generation_counts", "scoring_seconds")
+
+
 async def _content_hash(session: AsyncSession, run_id: str, req: s.TaskResultIn) -> str:
     """Hash of the request and the checksums of the files it points to."""
     paths = [p for p in (req.predictions_path, req.requests_path) if p]
@@ -652,8 +656,11 @@ async def _content_hash(session: AsyncSession, run_id: str, req: s.TaskResultIn)
         )
         checksums = {path: md5 for path, md5 in rows}
     request = req.model_dump(mode="json")
-    if req.generation_counts is None:
-        request.pop("generation_counts", None)
+    # Fields added after content hashes were first stored count only when set, so an
+    # unchanged re-upload from an older client keeps its hash.
+    for field in _HASH_OPTIONAL_FIELDS:
+        if request.get(field) is None:
+            request.pop(field, None)
     body = {"request": request, "files": {p: checksums.get(p) for p in paths}}
     return hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
 

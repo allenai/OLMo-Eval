@@ -57,6 +57,16 @@ def test_every_ingest_definition_is_exercised() -> None:
     assert set(MODELS) <= covered | {"WhoAmIResponse"}
 
 
+def test_scoring_seconds_are_optional() -> None:
+    payload = load_example("ingest/task-result.request.json")
+    assert s.TaskResultIn.model_validate(payload).scoring_seconds is None
+    payload["scoring_seconds"] = 7.25
+    assert schema_errors("TaskResultIn", payload) == []
+    assert s.TaskResultIn.model_validate(payload).scoring_seconds == 7.25
+    payload["scoring_seconds"] = "slow"
+    assert schema_errors("TaskResultIn", payload)
+
+
 def test_generation_counts_are_optional_and_nonnegative() -> None:
     payload = load_example("ingest/task-result.request.json")
     assert s.TaskResultIn.model_validate(payload).generation_counts is None

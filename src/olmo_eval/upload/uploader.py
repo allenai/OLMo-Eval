@@ -343,6 +343,7 @@ def _task_payload(
         "prompt_tokens_total": _nonneg_int(row.get("prompt_tokens_total")),
         "completion_tokens_total": _nonneg_int(row.get("completion_tokens_total")),
         "attributed_inference_seconds": _nonneg_float(row.get("attributed_inference_seconds")),
+        "scoring_seconds": _nonneg_float(row.get("scoring_seconds")),
         "predictions_path": predictions.relative_to(output_dir).as_posix() if predictions else None,
         "requests_path": requests.relative_to(output_dir).as_posix() if requests else None,
         "suites": suites,
