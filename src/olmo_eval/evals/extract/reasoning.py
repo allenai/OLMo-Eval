@@ -11,10 +11,11 @@ def _after_last_think(text: str) -> str:
     """Text after the last ``</think>``, with ``<answer>`` tags removed.
 
     Equivalent to the reference harness's ``r1_style`` regexes
-    (``re.sub("(?ms).*</think>", "", text)`` then the tag strips) but linear
-    in the thinking prefix. Missing answer tags are checked literally before
-    substitution. An answer tag after a long blank prefix can still make the
-    whitespace substitution quadratic.
+    (``re.sub("(?ms).*</think>", "", text)`` then the tag strips). The trace
+    is dropped in linear time, where the greedy regex is quadratic in the text
+    after the last ``</think>``. Each tag strip is skipped when its literal tag
+    is absent. When ``<answer>`` is present, a long run of blank lines that
+    does not lead to it can still make the opening-tag strip quadratic.
     """
     answer = text.rpartition(_THINK_END)[2] if _THINK_END in text else text
     # A multiline whitespace prefix can rescan long runs of blank lines when

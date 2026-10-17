@@ -20,10 +20,12 @@ from typing import NamedTuple
 
 # Answer-regex templates used by the OLMO 3 post-training regime. ``$ANS$`` is
 # substituted with a task-specific answer regex by ``extract_answer_with_format``.
-# Mirrors the reference implementation's order, including its repeated entry.
-# Any match of the final greedy `.*\b(X)\b` template implies a match of
-# the preceding `\b(X)\b` template for MC tasks' nonempty letter patterns.
-# Omitting that unreachable fallback avoids a quadratic scan on a miss.
+# Mirrors the reference implementation's list, including its repeated entry,
+# except for its final `(?i).*\b($ANS$)\b` fallback. Wherever that greedy
+# template matches, the earlier `\b($ANS$)\b` template matches too and returns
+# first, provided the answer regex cannot match an empty string. The fallback
+# is then unreachable, and it scanned quadratically on a miss. Pass these
+# templates only answer regexes that cannot match an empty string.
 OLMO_3_ANSWER_REGEX_TEMPLATES = (
     r"(?i)therefore,?\s*the\s*answer\s*is:?\s*\(?($ANS$)\b",  # "Therefore, the answer is ..." style
     r"(?i)so\s+the\s+answer\s+is:?\s*($ANS$)\.?",  # "So the answer is ..." style
