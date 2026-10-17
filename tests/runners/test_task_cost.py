@@ -232,6 +232,27 @@ def test_process_batch_stamps_send_time_and_attribution(monkeypatch: pytest.Monk
     assert [r.attributed_seconds for r in results] == [2.0, 4.0]
 
 
+def test_run_without_harness_attributes_batch_seconds() -> None:
+    """A bare run (no --harness) instruments the provider, so batches get attribution.
+
+    The bare default harness used to have metrics off, which left
+    attributed_inference_seconds null for every task in the run.
+    """
+    from olmo_eval.cli.run.config import RunConfigBuilder
+    from olmo_eval.harness import Harness
+
+    config = RunConfigBuilder(model="mock", task=("gsm8k",), output_dir="/tmp/results").build()
+    harness = Harness(config.harness_config)
+    result_queue: queue.Queue[ResultItem] = queue.Queue()
+
+    items = [_queue_item(0, "a"), _queue_item(1, "b")]
+    asyncio.run(process_batch(items, harness, result_queue))
+
+    results = [result_queue.get_nowait() for _ in range(2)]
+    assert [r.error for r in results] == [None, None]
+    assert all(r.attributed_seconds is not None and r.attributed_seconds >= 0 for r in results)
+
+
 # ---------------------------------------------------------------------------
 # Task timing through process_results, metrics.json and run-level timing
 # ---------------------------------------------------------------------------
