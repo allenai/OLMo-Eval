@@ -10,7 +10,8 @@ inference time and the basis it rests on, in this order of precedence:
 - ``attributed``: the client recorded ``attributed_inference_seconds``, the task's share of
   inference worker time summed over the run's workers. It is divided by the number of workers
   (one ``provider_init_seconds`` entry each) so that, like the other bases, it is wall time on
-  the run's hardware.
+  the run's hardware. This assumes the work within each worker is not counted twice; clients
+  from before per-worker fair-share attribution could overcount streaming runs.
 - ``estimated``: ``processing_seconds`` is known and every task result of the run has prompt and
   completion token totals: processing_seconds x (task tokens / run tokens), where tokens are
   prompt plus completion tokens.

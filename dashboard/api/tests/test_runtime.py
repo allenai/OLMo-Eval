@@ -256,6 +256,21 @@ async def runtime_runs(client: httpx.AsyncClient, session: Any) -> dict[str, str
     return ids
 
 
+async def test_attributed_runtime_divides_by_the_run_workers(
+    client: httpx.AsyncClient, session: Any, runtime_runs: dict[str, str]
+) -> None:
+    await session.execute(
+        text("UPDATE runs SET provider_init_seconds = CAST(:init AS jsonb) WHERE run_id = :r"),
+        {"init": '{"m-w0": 30.0, "m-w1": 31.0}', "r": runtime_runs["C"]},
+    )
+    await _set_task(session, runtime_runs["C"], "arc", attributed_inference_seconds=80.0)
+    await session.commit()
+
+    c = await get(client, f"/api/runs/{runtime_runs['C']}/task-results", "RunTaskResultsResponse")
+    by_task = {item["task_name"]: item["runtime"] for item in c["items"]}
+    assert by_task["arc"]["basis"] == "attributed" and by_task["arc"]["inference_seconds"] == 40.0
+
+
 async def test_task_results_include_runtime(
     client: httpx.AsyncClient, runtime_runs: dict[str, str]
 ) -> None:
