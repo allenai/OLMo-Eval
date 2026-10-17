@@ -7,8 +7,11 @@ inference time and the basis it rests on, in this order of precedence:
 
 - ``measured``: the run has exactly one task result and ``processing_seconds`` is known, so the
   run's processing time is the task's time.
-- ``attributed``: the client recorded ``attributed_inference_seconds`` (per-batch wall time split
-  by the task's share of each batch's tokens).
+- ``attributed``: the client recorded ``attributed_inference_seconds``, the task's share of
+  inference worker time summed over the run's workers. It is divided by the number of workers
+  (one ``provider_init_seconds`` entry each) so that, like the other bases, it is wall time on
+  the run's hardware. This assumes the work within each worker is not counted twice; clients
+  from before per-worker fair-share attribution could overcount streaming runs.
 - ``estimated``: ``processing_seconds`` is known and every task result of the run has prompt and
   completion token totals: processing_seconds x (task tokens / run tokens), where tokens are
   prompt plus completion tokens.
@@ -73,6 +76,8 @@ class RunTiming:
     processing_started_at: datetime | None = None
     processing_seconds: float | None = None
     n_task_results: int = 0
+    # Inference workers that shared the run's work; attributed seconds are summed over them.
+    inference_workers: int = 1
     # Every task result of the run has prompt and completion token totals.
     all_have_tokens: bool = False
     total_tokens: int | None = None
@@ -96,6 +101,7 @@ def run_timing_from_row(row: Mapping[Any, Any]) -> RunTiming:
         processing_started_at=row["processing_started_at"],
         processing_seconds=_finite(row["processing_seconds"]),
         n_task_results=int(row["n"] or 0),
+        inference_workers=len(row["provider_init_seconds"] or {}) or 1,
         all_have_tokens=bool(row["all_tokens"]),
         total_tokens=int(tokens) if tokens is not None else None,
     )
@@ -134,6 +140,8 @@ def derive_runtime(tr: Mapping[Any, Any], run: RunTiming) -> a.TaskRuntime:
 
     processing = run.processing_seconds
     attributed = _finite(tr["attributed_inference_seconds"])
+    if attributed is not None:
+        attributed /= run.inference_workers
     inference: float | None = None
     basis: a.RuntimeBasis = "not_recorded"
     if run.n_task_results == 1 and processing is not None:
