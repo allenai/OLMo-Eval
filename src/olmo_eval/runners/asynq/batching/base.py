@@ -9,13 +9,13 @@ import time
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
+from olmo_eval.runners.asynq.share_clock import ShareClock
+
 if TYPE_CHECKING:
     import multiprocessing as mp
 
     from olmo_eval.harness import Harness
     from olmo_eval.runners.asynq.types import QueueItem, ResultItem
-
-from olmo_eval.runners.asynq.share_clock import ShareClock
 
 from .config import BatchConfig
 

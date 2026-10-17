@@ -136,7 +136,8 @@ async def process_chat_request(
     prepared_request = harness._apply_config(item.request)
     request_trace = harness.provider.describe_request(prepared_request, item.sampling_params)
     sent_at = time.time()
-    clock = clock or ShareClock()
+    if clock is None:
+        clock = ShareClock()
     token = clock.start()
     seconds: float | None = None
 
@@ -248,7 +249,8 @@ async def process_batch(
     # the batch's worker time.
     results: list[ResultItem] = []
     sent_at = time.time()
-    clock = clock or ShareClock()
+    if clock is None:
+        clock = ShareClock()
     token = clock.start()
     try:
         if request_type == RequestType.LOGLIKELIHOOD:
@@ -284,8 +286,6 @@ async def process_batch(
         terminal_error = classify_terminal_provider_error(e)
         if terminal_error is not None:
             raise terminal_error from e
-        # Drop any metrics the failed call recorded so they don't skew the next batch.
-        _flush_batch_metrics(harness, items, log)
 
         # Batch failed - report the results already built, then errors for the rest
         for result in results:
@@ -357,7 +357,8 @@ async def process_items(
     from olmo_eval.common.types import RequestType, SamplingParams
 
     log = worker_logger or logger
-    clock = clock or ShareClock()
+    if clock is None:
+        clock = ShareClock()
 
     chat_items: list[QueueItem] = []
     batchable_items: list[QueueItem] = []

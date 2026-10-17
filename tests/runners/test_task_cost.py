@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import queue
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -316,6 +316,15 @@ def test_failed_batch_still_attributes_its_time() -> None:
     assert [r.attributed_seconds for r in results] == [1.0, 1.0, 1.0]
 
 
+async def _until(condition: Callable[[], bool]) -> None:
+    """Yield to the event loop until ``condition`` holds (fails instead of hanging)."""
+    for _ in range(1000):
+        if condition():
+            return
+        await asyncio.sleep(0)
+    raise AssertionError("condition never held")
+
+
 def _rollout(text: str) -> SimpleNamespace:
     return SimpleNamespace(
         final_output=LMOutput(text),
@@ -354,9 +363,12 @@ def test_concurrent_rollouts_split_worker_time() -> None:
     """Overlapping rollouts share the worker's time instead of each claiming its latency."""
     now = _FakeTime()
     finish = [asyncio.Event() for _ in range(3)]
+    started: list[int] = []
 
     async def run(request: LMRequest, *_args: object, **_kwargs: object) -> SimpleNamespace:
-        await finish[int(request.prompt[1:])].wait()
+        idx = int(request.prompt[1:])
+        started.append(idx)
+        await finish[idx].wait()
         return _rollout("done")
 
     harness = SimpleNamespace(
@@ -373,13 +385,11 @@ def test_concurrent_rollouts_split_worker_time() -> None:
         processing = asyncio.create_task(
             process_items(items, harness, result_queue, clock=ShareClock(now))  # type: ignore[arg-type]
         )
-        for _ in range(5):
-            await asyncio.sleep(0)  # let all three rollouts start at t=0
+        await _until(lambda: len(started) == 3)  # all three rollouts start at t=0
         for idx, t in enumerate((3.0, 5.0, 9.0)):
             now.t = t
             finish[idx].set()
-            for _ in range(5):
-                await asyncio.sleep(0)
+            await _until(lambda idx=idx: result_queue.qsize() == idx + 1)
         await processing
 
     asyncio.run(drive())
@@ -418,10 +428,10 @@ def test_overlapping_batches_split_worker_time() -> None:
             )
             for i in range(2)
         ]
-        await asyncio.sleep(0)
+        await _until(lambda: clock._active == 2)
         now.t = 4.0
         release[0].set()
-        await asyncio.sleep(0)
+        await _until(lambda: result_queue.qsize() == 1)
         now.t = 6.0
         release[1].set()
         await asyncio.gather(*batches)
@@ -431,6 +441,34 @@ def test_overlapping_batches_split_worker_time() -> None:
     shares = sorted(result_queue.get_nowait().attributed_seconds or 0.0 for _ in range(2))
     # Each call took 4s or 6s on its own, but the worker was busy for 6s in total.
     assert shares == [pytest.approx(2.0), pytest.approx(4.0)]
+
+
+def test_cancelled_batch_leaves_the_clock() -> None:
+    now = _FakeTime()
+    clock = ShareClock(now)
+
+    async def hang(*_args: object) -> None:
+        await asyncio.Event().wait()
+
+    harness = SimpleNamespace(
+        provider=SimpleNamespace(describe_request=Mock(return_value=None), agenerate=hang),
+        _apply_config=lambda request: request,
+    )
+
+    async def drive() -> None:
+        batch = asyncio.create_task(
+            process_batch([_queue_item(0, "t")], harness, queue.Queue(), clock=clock)  # type: ignore[arg-type]
+        )
+        await _until(lambda: clock._active == 1)
+        batch.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await batch
+
+    asyncio.run(drive())
+    # A later unit alone gets its full wall time, so the cancelled one no longer counts.
+    token = clock.start()
+    now.t += 2.0
+    assert clock.stop(token) == pytest.approx(2.0)
 
 
 @pytest.mark.parametrize(
