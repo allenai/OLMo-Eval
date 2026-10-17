@@ -314,6 +314,8 @@ def test_failed_batch_still_attributes_its_time() -> None:
     results = [result_queue.get_nowait() for _ in range(3)]
     assert all(r.error for r in results)
     assert [r.attributed_seconds for r in results] == [1.0, 1.0, 1.0]
+    # A failed batch is not reported to the metrics reporters.
+    harness.flush_metrics.assert_not_called()
 
 
 async def _until(condition: Callable[[], bool]) -> None:
