@@ -426,6 +426,9 @@ class LLMJudgeScorer(ContextScorer):
         )
         results = await provider.alogprobs([request], SamplingParams(temperature=0, top_p=1))
         outputs = results[0] if results else []
+        from olmo_eval.inference.errors import first_output
+
+        first_output(outputs)
 
         return {
             output.text: sum(entry["logprob"] for entry in output.logprobs)

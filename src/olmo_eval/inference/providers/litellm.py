@@ -346,7 +346,7 @@ class LiteLLMProvider(InferenceProvider):
             List of output lists, one per request.
         """
         from olmo_eval.common.progress import ProgressLogger
-        from olmo_eval.inference.dispatch import dispatch_concurrent
+        from olmo_eval.inference.utils import dispatch_requests
 
         logger.info(
             f"Sending {len(requests)} requests for {self.model_name}"
@@ -367,7 +367,7 @@ class LiteLLMProvider(InferenceProvider):
         def on_progress(done: int, total: int) -> None:
             progress.update(1)
 
-        results = await dispatch_concurrent(
+        results = await dispatch_requests(
             requests,
             process,
             max_in_flight=self.max_concurrency,
@@ -375,7 +375,7 @@ class LiteLLMProvider(InferenceProvider):
             on_progress=on_progress,
         )
         progress.close()
-        return [r if r is not None else [] for r in results]
+        return results
 
     def generate(
         self,
@@ -484,7 +484,7 @@ class LiteLLMProvider(InferenceProvider):
             List of output lists with logprobs populated.
         """
         from olmo_eval.common.progress import ProgressLogger
-        from olmo_eval.inference.dispatch import dispatch_concurrent
+        from olmo_eval.inference.utils import dispatch_requests
 
         if self._openai_params is not None and "logprobs" not in self._openai_params:
             raise ValueError(
@@ -508,7 +508,7 @@ class LiteLLMProvider(InferenceProvider):
         def on_progress(done: int, total: int) -> None:
             progress.update(1)
 
-        results = await dispatch_concurrent(
+        results = await dispatch_requests(
             requests,
             lambda request: self._logprobs_single_async(request, params),
             max_in_flight=self.max_concurrency,
@@ -516,7 +516,7 @@ class LiteLLMProvider(InferenceProvider):
             on_progress=on_progress,
         )
         progress.close()
-        return [r if r is not None else [] for r in results]
+        return results
 
     def logprobs(
         self,
