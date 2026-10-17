@@ -148,14 +148,22 @@ class TestRequiredSandbox:
         return AsyncEvalRunner(harness_config=harness, task_specs=[spec])
 
     def test_a_harness_without_sandboxes_is_refused_before_the_data_loads(self, loaded):
-        with pytest.raises(RuntimeError, match=f"{self.SPEC} scores by running code"):
+        with pytest.raises(RuntimeError, match=f"{self.SPEC} scores by running code") as exc:
             self._runner()._prepare_tasks()
 
+        assert "--harness codex_universal" in str(exc.value)
+        assert "harness 'test' has none" in str(exc.value)
         assert loaded == []
 
-    def test_the_message_names_the_harness(self, loaded):
-        with pytest.raises(RuntimeError, match="harness 'test' has none"):
-            self._runner()._prepare_tasks()
+    def test_only_the_task_that_runs_code_is_named(self, loaded):
+        runner = self._runner()
+        runner.task_specs = [self.SPEC, "gsm8k"]
+
+        with pytest.raises(RuntimeError, match="Failed to prepare 1 task") as exc:
+            runner._prepare_tasks()
+
+        assert self.SPEC in str(exc.value)
+        assert "gsm8k" not in str(exc.value)
 
     def test_a_harness_with_a_sandbox_is_accepted(self, loaded):
         _, trackers, _ = self._runner(sandboxes=(self.SANDBOX,))._prepare_tasks()

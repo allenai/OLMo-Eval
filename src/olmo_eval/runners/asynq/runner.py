@@ -1072,7 +1072,7 @@ class AsyncEvalRunner(RunnerResultsMixin, BaseEvalRunner):
             return
         raise ValueError(
             f"{spec} scores by running code, so it has to run under a harness with sandboxes, "
-            f"for example `--harness codex_python`; harness {self.harness_config.name!r} "
+            f"for example `--harness codex_universal`; harness {self.harness_config.name!r} "
             "has none."
         )
 
