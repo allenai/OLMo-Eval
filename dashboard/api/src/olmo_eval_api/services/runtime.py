@@ -7,8 +7,8 @@ inference time and the basis it rests on, in this order of precedence:
 
 - ``measured``: the run has exactly one task result and ``processing_seconds`` is known, so the
   run's processing time is the task's time.
-- ``attributed``: the client recorded ``attributed_inference_seconds`` (the task's share of each
-  inference worker's busy time, summed over workers).
+- ``attributed``: the client recorded ``attributed_inference_seconds`` (per-batch wall time split
+  by the task's share of each batch's tokens).
 - ``estimated``: ``processing_seconds`` is known and every task result of the run has prompt and
   completion token totals: processing_seconds x (task tokens / run tokens), where tokens are
   prompt plus completion tokens.

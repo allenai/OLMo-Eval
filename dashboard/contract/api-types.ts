@@ -417,7 +417,7 @@ export interface RunDetail extends RunSummary {
 /**
  * How inference_seconds was obtained:
  * - measured: the run contained only this task, so its processing time is the task's time.
- * - attributed: the client's attributed_inference_seconds, the task's share of worker time.
+ * - attributed: from per-batch inference metrics split by the task's share of each batch.
  * - estimated: the run's processing time times the task's share of the run's tokens.
  * - not_recorded: the run predates runtime recording or lacks token counts.
  */
