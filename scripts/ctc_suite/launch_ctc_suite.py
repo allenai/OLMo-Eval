@@ -410,6 +410,8 @@ def submit(args, bins: list[list[Cell]], only: set[int] | None = None) -> None:
             "32GiB",
             "--yes",
         ]
+        if args.min_runtime not in ("", "0", "0s"):
+            argv += ["--min-runtime", args.min_runtime]
         if branch:
             argv += ["--branch", branch]
         # gantry refuses --hostname together with --cluster; the hosts already pin the cluster
@@ -461,6 +463,7 @@ def submit(args, bins: list[list[Cell]], only: set[int] | None = None) -> None:
         "workspace",
         "budget",
         "priority",
+        "min_runtime",
         "image",
     )
     manifest = {k: getattr(args, k) for k in keep}
@@ -672,6 +675,13 @@ def main() -> None:
     ap.add_argument("--workspace", default="ai2/flex2")
     ap.add_argument("--budget", default="ai2/oe-other")
     ap.add_argument("--priority", default="urgent")
+    ap.add_argument(
+        "--min-runtime",
+        default="1h",
+        help="gantry --min-runtime. Default 1h: on jupiter, urgent jobs with minRuntime=0 effectively "
+        "never schedule (2026-10-19: 0 of ~2,250 urgent 1-7-GPU jobs scheduled in 3 days had it; "
+        "pending 0s jobs were days old). '0' opts back into always-preemptible.",
+    )
     ap.add_argument("--image", default="tylerr/olmo-core-tch291cu128-2025-11-25")
     ap.add_argument(
         "--out-root",
