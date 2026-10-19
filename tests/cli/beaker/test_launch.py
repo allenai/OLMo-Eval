@@ -814,3 +814,62 @@ class TestWekaBucketForwarding:
         buckets = [b.bucket for b in job_config.weka_buckets]
         assert buckets[-1] == "olmo-3p5-post-checkpoints"
         assert "oe-adapt-default" in buckets
+
+    def test_loader_carries_extra_buckets(self):
+        from olmo_eval.cli.beaker.config_loader import LaunchConfigLoader
+
+        loader = LaunchConfigLoader(
+            config_path=None,
+            cli_args={
+                "model": ("test-model",),
+                "task": ("humaneval",),
+                "cluster": "h100",
+                "workspace": "ai2/test",
+                "budget": "ai2/test",
+                "gpus": 1,
+                "weka_buckets": ["olmo-3p5-post-checkpoints", "olmo-3p5-checkpoints"],
+            },
+        )
+
+        config = loader.load()
+
+        assert config.weka_buckets == ["olmo-3p5-post-checkpoints", "olmo-3p5-checkpoints"]
+
+    def test_cli_option_reaches_external_evals(self):
+        from unittest.mock import patch
+
+        from click.testing import CliRunner
+
+        from olmo_eval.cli.beaker.launch import launch
+
+        captured = {}
+        with patch(
+            "olmo_eval.cli.beaker.launch._launch_external_evals",
+            side_effect=lambda **kwargs: captured.update(kwargs),
+        ):
+            result = CliRunner().invoke(
+                launch,
+                [
+                    "-m", "test-model", "-E", "tau2_bench", "-c", "h100", "--no-upload",
+                    "--weka-bucket", "a", "--weka-bucket", "b",
+                ],
+            )  # fmt: skip
+
+        assert result.exit_code == 0, result.output
+        assert captured["weka_buckets"] == ["a", "b"]
+
+    @pytest.mark.parametrize(
+        "bucket", ["", "/weka/olmo-3p5-post-checkpoints", "olmo-3p5-post-checkpoints:/mnt"]
+    )
+    def test_cli_rejects_non_bucket_names(self, bucket):
+        from click.testing import CliRunner
+
+        from olmo_eval.cli.beaker.launch import launch
+
+        result = CliRunner().invoke(
+            launch, ["-m", "test-model", "-E", "tau2_bench", "-c", "h100", "--weka-bucket", bucket]
+        )
+
+        assert result.exit_code == 2
+        assert "is not a bucket name" in result.output
+        assert "--weka-bucket olmo-3p5-post-checkpoints" in result.output

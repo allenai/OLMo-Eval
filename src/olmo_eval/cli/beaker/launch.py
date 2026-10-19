@@ -34,6 +34,19 @@ from olmo_eval.cli.utils import (
 from olmo_eval.common.constants.infrastructure import BEAKER_RESULT_DIR, BEAKER_UV_CACHE_DIR
 
 
+def _validate_weka_buckets(
+    _ctx: click.Context, _param: click.Parameter, buckets: tuple[str, ...]
+) -> tuple[str, ...]:
+    """Reject anything that is not a bare bucket name, such as a /weka/... path."""
+    for bucket in buckets:
+        if not bucket or "/" in bucket or ":" in bucket:
+            raise click.BadParameter(
+                f"{bucket!r} is not a bucket name; pass the bucket name, "
+                "e.g. --weka-bucket olmo-3p5-post-checkpoints"
+            )
+    return buckets
+
+
 @click.command()
 @click.option(
     "--config",
@@ -234,6 +247,7 @@ from olmo_eval.common.constants.infrastructure import BEAKER_RESULT_DIR, BEAKER_
     "--weka-bucket",
     "weka_buckets",
     multiple=True,
+    callback=_validate_weka_buckets,
     help="Extra Weka bucket to mount at /weka/<bucket>, on top of the defaults (repeatable)",
 )
 @click.option(

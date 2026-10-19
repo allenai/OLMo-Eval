@@ -35,6 +35,7 @@ from olmo_eval.common.constants.infrastructure import (
     BEAKER_DEFAULT_IMAGE,
     BEAKER_DEFAULT_WORKSPACE,
     BEAKER_KNOWN_CLUSTERS,
+    DEFAULT_WEKA_BUCKETS,
     NEW_CLUSTER_ALIASES,
 )
 from olmo_eval.common.repr import hide_unset
@@ -324,14 +325,6 @@ class BeakerWekaBucket:
     def __post_init__(self) -> None:
         if self.mount is None:
             self.mount = f"/weka/{self.bucket}"
-
-
-DEFAULT_WEKA_BUCKETS: tuple[str, ...] = (
-    "oe-training-default",
-    "oe-eval-default",
-    "oe-adapt-default",
-)
-"""Weka buckets mounted on every eval job."""
 
 
 def weka_buckets_with(extra: Iterable[str] = ()) -> list[BeakerWekaBucket]:
