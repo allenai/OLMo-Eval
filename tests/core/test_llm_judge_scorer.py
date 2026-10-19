@@ -153,6 +153,33 @@ class TestBuildOpenAIJudgeFn:
             "reasoning_effort": "low",
         }
 
+    @pytest.mark.anyio
+    async def test_sends_content_parts_and_a_response_format(self, monkeypatch):
+        reply = []
+
+        async def create(**kwargs):
+            return reply[0]
+
+        calls, make_message = _stub_openai(monkeypatch, create)
+        reply.append(make_message('{"passed": true}'))
+        response_format = {"type": "json_object"}
+        judge = build_openai_judge_fn(model="gpt-5", response_format=response_format)
+        content = [
+            {"type": "text", "text": "grade this"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}},
+        ]
+
+        assert await judge(content, system_prompt="be strict") == '{"passed": true}'
+        assert calls[0]["messages"] == [
+            {"role": "system", "content": "be strict"},
+            {"role": "user", "content": content},
+        ]
+        assert calls[0]["response_format"] == response_format
+        assert judge.judge_config["response_format"] == response_format
+
+    def test_records_a_response_format_only_when_set(self):
+        assert "response_format" not in build_openai_judge_fn().judge_config
+
     def test_records_the_default_model(self):
         default_model = inspect.signature(build_openai_judge_fn).parameters["model"].default
 
