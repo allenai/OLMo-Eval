@@ -2,6 +2,7 @@
 
 import pytest
 
+from olmo_eval.common.scorers import llm_judge
 from olmo_eval.evals.tasks.common import judge as judge_module
 
 
@@ -14,4 +15,4 @@ def judge_test_env(monkeypatch):
         return None
 
     monkeypatch.setattr(judge_module.asyncio, "sleep", sleep)
-    monkeypatch.setattr(judge_module, "retry_with_backoff", lambda call, **_: call())
+    monkeypatch.setattr(llm_judge, "retry_with_backoff", lambda call, **_: call())

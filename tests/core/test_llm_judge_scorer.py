@@ -177,6 +177,49 @@ class TestBuildOpenAIJudgeFn:
         assert calls[0]["response_format"] == response_format
         assert judge.judge_config["response_format"] == response_format
 
+    @pytest.mark.anyio
+    async def test_judge_with_retries_asks_again_until_a_reply_parses(self, monkeypatch):
+        from olmo_eval.common.scorers import llm_judge
+
+        async def no_sleep(_):
+            return None
+
+        monkeypatch.setattr(llm_judge.asyncio, "sleep", no_sleep)
+        replies = ["?", "VERDICT: 1"]
+        sent = []
+
+        async def judge(prompt, *, system_prompt=None):
+            sent.append((prompt, system_prompt))
+            return replies.pop(0)
+
+        def parse(raw):
+            return raw.split(": ")[1] if raw.startswith("VERDICT") else None
+
+        verdict, raw = await llm_judge.judge_with_retries(
+            judge, "grade", parse, limiter=asyncio.Semaphore(1), system_prompt="strict"
+        )
+
+        assert (verdict, raw) == ("1", "VERDICT: 1")
+        assert sent == [("grade", "strict"), ("grade", "strict")]
+
+    @pytest.mark.anyio
+    async def test_judge_with_retries_gives_up_after_its_attempts(self, monkeypatch):
+        from olmo_eval.common.scorers import llm_judge
+
+        async def no_sleep(_):
+            return None
+
+        monkeypatch.setattr(llm_judge.asyncio, "sleep", no_sleep)
+
+        async def judge(prompt, *, system_prompt=None):
+            return "?"
+
+        verdict, raw = await llm_judge.judge_with_retries(
+            judge, "grade", lambda _: None, limiter=asyncio.Semaphore(1), attempts=2
+        )
+
+        assert (verdict, raw) == (None, "?")
+
     def test_records_a_response_format_only_when_set(self):
         assert "response_format" not in build_openai_judge_fn().judge_config
 

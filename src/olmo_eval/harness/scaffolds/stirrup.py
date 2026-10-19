@@ -20,12 +20,10 @@ Stirrup (MIT) at commit 247f24d56b2108235880ed2a2baea5d35b5a67ee. Stirrup's opti
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import shlex
 import time
-import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -63,11 +61,7 @@ TURNS_REMAINING_WARNING_THRESHOLD = 20
 #: ``MAX_LENGTH_SHELL_STDOUT`` and ``MAX_LENGTH_SHELL_STDERR``).
 MAX_OUTPUT_CHARS = 20_000
 
-#: Where a running command's script, output and exit status are kept.
-RUN_DIR = "/tmp/.stirrup"
-#: Seconds between checks on a running command, the last repeating.
-POLL_INTERVALS = (0.1, 0.2, 0.5, 1.0)
-#: Timeout for the short requests that start, check and clean up a command.
+#: Timeout for the short requests that read a command's output and clean up after it.
 CONTROL_TIMEOUT = 60.0
 
 BASE_SYSTEM_PROMPT = (
@@ -140,6 +134,15 @@ SUMMARY_ACKNOWLEDGEMENT = "Got it, thanks!"
 
 INVALID_ARGUMENTS_MESSAGE = "Tool arguments are not valid"
 
+#: Counts kept in the result's metadata to show how a run spent its turns.
+DIAGNOSTIC_COUNTS = (
+    "no_tool_call_turns",
+    "invalid_argument_calls",
+    "unknown_tool_calls",
+    "finish_refusals",
+    "length_truncated_replies",
+)
+
 DEFAULT_SAMPLING_PARAMS = SamplingParams(
     temperature=0.7, top_p=0.95, max_tokens=32768, fit_max_tokens_to_context=True
 )
@@ -151,6 +154,10 @@ class SummaryError(RuntimeError):
 
 class SummaryOverflowError(SummaryError):
     """The summary request itself did not fit the context window."""
+
+
+class SummaryEmptyError(SummaryError):
+    """The model answered every summary request without any text."""
 
 
 def build_system_prompt(max_turns: int, instructions: str | None) -> str:
@@ -172,12 +179,13 @@ def truncate_output(text: str, max_chars: int = MAX_OUTPUT_CHARS) -> str:
     """Keep the start and end of a long output, noting how much was cut."""
     if len(text) <= max_chars:
         return text
-    return _truncated(text[: max_chars // 2], text[-max_chars // 2 :], len(text), max_chars)
+    half = max_chars // 2
+    return _truncated(text[:half], text[-half:], f"{len(text)} characters", max_chars)
 
 
-def _truncated(head: str, tail: str, original: int | str, max_chars: int) -> str:
+def _truncated(head: str, tail: str, original: str, max_chars: int) -> str:
     return (
-        head + f"\n... This content has been truncated from an original {original} characters "
+        head + f"\n... This content has been truncated from an original {original} "
         f"to stay below {max_chars} characters ...\n" + tail
     )
 
@@ -216,58 +224,37 @@ def format_shell_result(result: CommandResult) -> str:
 async def run_command(executor: SandboxExecutor, command: str, timeout: float) -> CommandResult:
     """Run a shell command in the sandbox and wait for it, up to ``timeout`` seconds.
 
-    The command runs detached from the request that starts it and is polled until
-    it exits, because a request to the sandbox server is cut off after a few
-    minutes however long the command is allowed. Its stdout and stderr are kept
-    apart, and a command that runs out of time is killed with its process group.
+    Commands run detached and are polled (see ``SandboxExecutor.run_detached``),
+    because a request to the sandbox server is cut off after a few minutes however
+    long a command is allowed. Each stream is truncated the way Stirrup does it.
     """
-    run = f"{RUN_DIR}/{uuid.uuid4().hex}"
-    # The script travels in the request body, so its size is not bounded by the
-    # operating system's argument limit.
-    await executor.write_files({f"{run}/command.sh": command})
-    inner = (
-        f"bash {run}/command.sh > {run}/stdout 2> {run}/stderr < /dev/null; echo $? > {run}/exit"
-    )
-    start = await executor.execute_command(
-        f"setsid nohup bash -c {shlex.quote(inner)} > /dev/null 2>&1 < /dev/null & "
-        f"echo $! > {run}/pid",
-        timeout=CONTROL_TIMEOUT,
-    )
-    if not start.success:
-        raise RuntimeError(f"Could not start the command: {start.output[-2000:]}")
-
-    deadline = time.monotonic() + timeout
-    delays = iter(POLL_INTERVALS)
-    exit_status = ""
-    while not exit_status and time.monotonic() < deadline:
-        delay = next(delays, POLL_INTERVALS[-1])
-        await asyncio.sleep(max(0.0, min(delay, deadline - time.monotonic())))
-        check = await executor.execute_command(
-            f"cat {run}/exit 2>/dev/null", timeout=CONTROL_TIMEOUT
-        )
-        exit_status = check.output.strip()
-    if not exit_status:
-        await executor.execute_command(
-            f"kill -KILL -- -$(cat {run}/pid) 2>/dev/null; true", timeout=CONTROL_TIMEOUT
-        )
-
-    stdout = await _read_output(executor, f"{run}/stdout")
-    stderr = await _read_output(executor, f"{run}/stderr")
-    await executor.execute_command(f"rm -rf {run}", timeout=CONTROL_TIMEOUT)
-    if not exit_status:
-        note = f"Command exceeded the {timeout:g}s time limit and was stopped."
-        stderr = truncate_output("\n".join(p for p in (stderr, note) if p))
-        return CommandResult(-1, stdout, stderr, timed_out=True)
-    return CommandResult(int(exit_status), stdout, stderr)
+    run = await executor.run_detached(command, timeout)
+    stdout = await _read_output(executor, run.stdout_path)
+    stderr = await _read_output(executor, run.stderr_path)
+    await executor.execute_command(f"rm -rf {run.run_dir}", timeout=CONTROL_TIMEOUT)
+    if run.timed_out:
+        note = f"Command timed out after {timeout:g} seconds"
+        return CommandResult(-1, stdout, f"{stderr}\n{note}" if stderr else note, timed_out=True)
+    if run.exit_code is None:
+        note = "The command was killed before it reported an exit status."
+        return CommandResult(-1, stdout, f"{stderr}\n{note}" if stderr else note)
+    return CommandResult(run.exit_code, stdout, stderr)
 
 
 async def _read_output(executor: SandboxExecutor, path: str) -> str:
-    """Read an output file truncated for the model, fetching only the ends of a long one."""
-    half = MAX_OUTPUT_CHARS // 2
+    """Read an output file truncated for the model, fetching only the ends of a huge one.
+
+    A file of up to four times the character budget is read whole, so it is cut by
+    characters as Stirrup cuts it. Of a larger one, generous ends are fetched and
+    cut by characters, and the note gives its size in bytes.
+    """
+    whole = 4 * MAX_OUTPUT_CHARS
+    ends = 2 * MAX_OUTPUT_CHARS
     result = await executor.execute_command(
-        f"size=$(stat -c %s {path}); if [ $size -le {MAX_OUTPUT_CHARS} ]; then cat {path}; "
-        f"else echo $size; head -c {half} {path}; echo; echo {_TAIL_MARKER}; "
-        f"tail -c {half} {path}; fi",
+        f"[ -f {path} ] || exit 0; size=$(stat -c %s {path}); "
+        f"if [ $size -le {whole} ]; then cat {path}; "
+        f"else echo $size; head -c {ends} {path}; echo; echo {_TAIL_MARKER}; "
+        f"tail -c {ends} {path}; fi",
         timeout=CONTROL_TIMEOUT,
     )
     text = result.output
@@ -275,7 +262,8 @@ async def _read_output(executor: SandboxExecutor, path: str) -> str:
         return truncate_output(text)
     size, _, rest = text.partition("\n")
     head, _, tail = rest.partition(f"\n{_TAIL_MARKER}\n")
-    return _truncated(head, tail, size, MAX_OUTPUT_CHARS)
+    half = MAX_OUTPUT_CHARS // 2
+    return _truncated(head[:half], tail[-half:], f"{size} bytes", MAX_OUTPUT_CHARS)
 
 
 _TAIL_MARKER = "---STIRRUP-OUTPUT-TAIL---"
@@ -364,7 +352,8 @@ def _validated_finish(call: ToolCall, arguments: dict[str, Any] | None) -> Finis
     if call.function.name == ABANDON_TOOL_NAME:
         return FinishCall(tool=ABANDON_TOOL_NAME, reason=reason)
     paths = arguments.get("paths")
-    if not isinstance(paths, list) or not all(isinstance(p, str) for p in paths):
+    # A path with a NUL character cannot name a file, and the sandbox rejects it.
+    if not isinstance(paths, list) or not all(isinstance(p, str) and "\0" not in p for p in paths):
         return None
     return FinishCall(tool=FINISH_TOOL_NAME, reason=reason, paths=tuple(paths))
 
@@ -408,6 +397,9 @@ class StirrupScaffold(Scaffold):
     """
 
     name = "stirrup"
+
+    def __init__(self) -> None:
+        self._conversation: _Conversation | None = None
 
     async def run(
         self,
@@ -466,11 +458,13 @@ class StirrupScaffold(Scaffold):
             "content": build_system_prompt(max_turns, config.system_prompt),
         }
         conversation = _Conversation()
+        self._conversation = conversation
         conversation.add(system_message, "system")
         conversation.add_user(instruction, "task")
 
         params = sampling_params or DEFAULT_SAMPLING_PARAMS
         usage = {"prompt_tokens": 0, "completion_tokens": 0}
+        counts = dict.fromkeys(DIAGNOSTIC_COUNTS, 0)
         started = time.monotonic()
         deadline = started + float(agent_timeout) if agent_timeout is not None else None
         completion_reason = "max_turns"
@@ -496,12 +490,21 @@ class StirrupScaffold(Scaffold):
                 replies = await self._generate(
                     provider, conversation.messages, tool_schemas, params
                 )
+                # A request that does not fit drops the latest turn and is sent again,
+                # as Stirrup retries a step. The dropped turns are bounded, so a run
+                # whose every request overflows still ends.
+                while (
+                    is_context_overflow_output(replies)
+                    and dropped_turns < max_turns
+                    and conversation.drop_latest_turn()
+                ):
+                    logger.info("Task %s overflowed the context; dropped a turn", task_id)
+                    turns_taken -= 1
+                    dropped_turns += 1
+                    replies = await self._generate(
+                        provider, conversation.messages, tool_schemas, params
+                    )
                 if is_context_overflow_output(replies):
-                    if conversation.drop_latest_turn():
-                        logger.info("Task %s overflowed the context; dropped a turn", task_id)
-                        turns_taken -= 1
-                        dropped_turns += 1
-                        continue
                     logger.warning("Task %s outgrew the context window", task_id)
                     completion_reason = "context_overflow"
                     break
@@ -515,8 +518,12 @@ class StirrupScaffold(Scaffold):
                 last_text = output.text or ""
                 turns_taken += 1
                 self._accumulate_usage(output, usage)
+                if (output.metadata or {}).get("finish_reason") == "length":
+                    counts["length_truncated_replies"] += 1
+                if not output.tool_calls:
+                    counts["no_tool_call_turns"] += 1
                 finish = await self._take_turn(
-                    conversation, output, binding.executor, command_timeout, deadline
+                    conversation, output, binding.executor, command_timeout, deadline, counts
                 )
                 if finish is not None:
                     completion_reason = (
@@ -538,6 +545,11 @@ class StirrupScaffold(Scaffold):
                     except SummaryOverflowError:
                         completion_reason = "context_overflow"
                         break
+                    except SummaryEmptyError:
+                        # The model's failure to summarize ends its run without a
+                        # submission, as running out of context would.
+                        completion_reason = "summary_failed"
+                        break
                     except SummaryError as e:
                         completion_reason = "error"
                         error = str(e)
@@ -556,8 +568,8 @@ class StirrupScaffold(Scaffold):
                 ):
                     conversation.add_user(CONTINUE_MESSAGE)
         except Exception as e:
-            # The run ends as an error, not a score, and its turns so far still reach
-            # the trajectory.
+            # A sandbox or transport failure ends the run as an error, not a score, and
+            # its turns so far still reach the trajectory.
             logger.exception("Task %s failed", task_id)
             completion_reason = "error"
             error = f"{type(e).__name__}: {e}"
@@ -570,12 +582,19 @@ class StirrupScaffold(Scaffold):
             "steps": steps,
             "summaries": summaries,
             "dropped_turns": dropped_turns,
+            **counts,
             "usage": dict(usage),
             "duration_s": round(time.monotonic() - started, 1),
         }
         if finish is not None:
             metadata["finish"] = finish.to_dict()
-        logger.info("Task %s finished after %s turns: %s", task_id, steps, completion_reason)
+        logger.info(
+            "Task %s finished after %s turns: %s (%s)",
+            task_id,
+            steps,
+            completion_reason,
+            ", ".join(f"{k}={v}" for k, v in counts.items() if v),
+        )
         return HarnessResult(
             final_output=LMOutput(
                 text=finish.reason if finish is not None else last_text,
@@ -586,6 +605,12 @@ class StirrupScaffold(Scaffold):
             error=error,
             metadata=metadata,
         )
+
+    def trajectory_so_far(self) -> AgentTrajectory:
+        """The turns of the run in progress, for a caller that has to cut it off."""
+        if self._conversation is None:
+            return AgentTrajectory(turns=())
+        return AgentTrajectory(turns=tuple(self._conversation.turns))
 
     async def _generate(
         self,
@@ -607,8 +632,12 @@ class StirrupScaffold(Scaffold):
         executor: SandboxExecutor,
         command_timeout: float,
         deadline: float | None,
+        counts: dict[str, int],
     ) -> FinishCall | None:
-        """Record a reply, run its tool calls, and return the finish call that ended the run."""
+        """Record a reply, run its tool calls, and return the finish call that ended the run.
+
+        ``counts`` is updated with the calls that were invalid, unknown or refused.
+        """
         text = output.text or ""
         calls = list(output.tool_calls or ())
         parsed = [(call, _parse_arguments(call)) for call in calls]
@@ -636,6 +665,7 @@ class StirrupScaffold(Scaffold):
                     "single finish tool call."
                 )
                 results.append(ToolResult(tool_call_id=call.id, content=content, is_error=True))
+                counts["finish_refusals"] += 1
                 continue
             if name == CODE_EXEC_TOOL_NAME:
                 result = await self._code_exec(call, arguments, executor, command_timeout, deadline)
@@ -645,6 +675,11 @@ class StirrupScaffold(Scaffold):
                 result = ToolResult(
                     tool_call_id=call.id, content=f"{name} is not a valid tool", is_error=True
                 )
+                counts["unknown_tool_calls"] += 1
+            if result.content == INVALID_ARGUMENTS_MESSAGE:
+                counts["invalid_argument_calls"] += 1
+            elif name in FINISH_TOOL_NAMES and finish is None:
+                counts["finish_refusals"] += 1
             results.append(result)
 
         for result in results:
@@ -719,7 +754,8 @@ class StirrupScaffold(Scaffold):
 
         Raises:
             SummaryOverflowError: If the request does not fit the context window.
-            SummaryError: If a request fails or no attempt gives any text.
+            SummaryEmptyError: If no attempt gives any text.
+            SummaryError: If a request fails.
         """
         text_only = f"{SUMMARIZER_PROMPT}\n\n{SUMMARIZER_TEXT_ONLY}"
         tool_docs = "\n".join(f"- {tool.name}: {tool.description}" for tool in tools)
@@ -743,12 +779,20 @@ class StirrupScaffold(Scaffold):
             failure = request_error(replies)
             if failure is not None or not replies:
                 raise SummaryError(failure or "The provider returned no summary.")
+            if (replies[0].metadata or {}).get("finish_reason") == "length":
+                # The server left the summary too little room to finish, which is the
+                # overflow Stirrup's fixed reply budget would have raised.
+                if not conversation.drop_latest_turn():
+                    raise SummaryOverflowError("The summary did not fit the context window.")
+                dropped += 1
+                attempt = 0
+                continue
             summary = (replies[0].text or "").strip()
             if summary:
                 return summary, dropped
             logger.warning("The summary reply had no text; asking again")
             attempt += 1
-        raise SummaryError("The summarizer produced no text.")
+        raise SummaryEmptyError("The summarizer produced no text.")
 
     @staticmethod
     def _context_used(output: LMOutput) -> int:
@@ -759,11 +803,3 @@ class StirrupScaffold(Scaffold):
             if isinstance(value, int | float):
                 used += int(value)
         return used
-
-    @staticmethod
-    def _accumulate_usage(output: LMOutput, usage: dict[str, int]) -> None:
-        metadata = output.metadata or {}
-        for key in usage:
-            value = metadata.get(key)
-            if isinstance(value, int | float):
-                usage[key] += int(value)

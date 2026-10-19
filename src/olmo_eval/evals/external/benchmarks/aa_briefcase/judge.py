@@ -21,8 +21,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from olmo_eval.common.scorers.llm_judge import ConfiguredJudgeFn, build_openai_judge_fn
-from olmo_eval.inference.retry import retry_with_backoff
+from olmo_eval.common.scorers.llm_judge import (
+    ConfiguredJudgeFn,
+    build_openai_judge_fn,
+    judge_with_retries,
+)
 
 from .loader import BriefcaseScenario, RubricCheck
 
@@ -186,45 +189,39 @@ async def grade_check(
             reasoning=f"Not submitted: {', '.join(check.files)}",
         )
     content = build_judge_content(scenario, brief, check, submission)
-
-    async def call() -> str:
-        # Held for the call only, so backoff waits leave the slot to others.
-        async with limiter:
-            return await judge_fn(content, system_prompt=scenario.judge_system_prompt)
-
-    raw = ""
-    for attempt in range(JUDGE_ATTEMPTS):
-        try:
-            raw = await retry_with_backoff(
-                call,
-                max_retries=JUDGE_RETRIES,
-                retry_delay=JUDGE_RETRY_DELAY,
-                context=f"aa_briefcase_lite {check.check_id}",
-            )
-        except Exception as e:
-            logger.warning(f"Judge call for {check.check_id} failed: {e}")
-            return CheckVerdict(
-                check_id=check.check_id,
-                check_type=check.check_type,
-                passed=None,
-                error=f"judge_error: {e}",
-            )
-        verdict = parse_verdict(raw)
-        if verdict is not None:
-            passed, reasoning = verdict
-            return CheckVerdict(
-                check_id=check.check_id,
-                check_type=check.check_type,
-                passed=passed,
-                reasoning=reasoning,
-                raw_reply=raw,
-            )
-        if attempt < JUDGE_ATTEMPTS - 1:
-            await asyncio.sleep(2**attempt)
+    try:
+        verdict, raw = await judge_with_retries(
+            judge_fn,
+            content,
+            parse_verdict,
+            limiter=limiter,
+            system_prompt=scenario.judge_system_prompt,
+            attempts=JUDGE_ATTEMPTS,
+            max_retries=JUDGE_RETRIES,
+            retry_delay=JUDGE_RETRY_DELAY,
+            context=f"aa_briefcase_lite {check.check_id}",
+        )
+    except Exception as e:
+        logger.warning(f"Judge call for {check.check_id} failed: {e}")
+        return CheckVerdict(
+            check_id=check.check_id,
+            check_type=check.check_type,
+            passed=None,
+            error=f"judge_error: {e}",
+        )
+    if verdict is None:
+        return CheckVerdict(
+            check_id=check.check_id,
+            check_type=check.check_type,
+            passed=None,
+            raw_reply=raw,
+            error=f"judge_parse_error: no verdict after {JUDGE_ATTEMPTS} attempts",
+        )
+    passed, reasoning = verdict
     return CheckVerdict(
         check_id=check.check_id,
         check_type=check.check_type,
-        passed=None,
+        passed=passed,
+        reasoning=reasoning,
         raw_reply=raw,
-        error=f"judge_parse_error: no verdict after {JUDGE_ATTEMPTS} attempts",
     )

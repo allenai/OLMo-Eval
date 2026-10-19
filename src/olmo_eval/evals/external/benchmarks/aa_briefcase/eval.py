@@ -15,13 +15,16 @@ from typing import TYPE_CHECKING, Any, cast
 
 from olmo_eval.common.types import LMRequest, RequestType, SamplingParams
 from olmo_eval.common.types.trajectory import AgentTrajectory
+from olmo_eval.evals.external.args import as_list, as_optional_float, as_optional_int
 from olmo_eval.evals.external.base import ExternalEval
 from olmo_eval.evals.external.result import ExternalEvalResult
 from olmo_eval.harness.sandbox.config import ContainerRuntime, SandboxConfig, SandboxMode
 from olmo_eval.harness.scaffolds.stirrup import (
     ABANDON_TOOL_NAME,
     CODE_EXEC_TOOL_NAME,
+    DIAGNOSTIC_COUNTS,
     FINISH_TOOL_NAME,
+    StirrupScaffold,
 )
 
 from .judge import (
@@ -67,28 +70,6 @@ SANDBOX_STARTUP_TIMEOUT = 300.0
 PARSE_TIMEOUT = 1800.0
 
 
-def _as_list(value: Any) -> list[str] | None:
-    if value is None:
-        return None
-    if isinstance(value, str):
-        items = [v.strip() for v in value.split(",") if v.strip()]
-    else:
-        items = [str(v) for v in value]
-    return items or None
-
-
-def _as_optional_int(value: Any) -> int | None:
-    if value in (None, "", "none", "None"):
-        return None
-    return int(value)
-
-
-def _as_optional_float(value: Any) -> float | None:
-    if value in (None, "", "none", "None"):
-        return None
-    return float(value)
-
-
 @dataclass
 class BriefcaseArgs:
     """Arguments for the AA-Briefcase-Lite evaluation."""
@@ -116,14 +97,14 @@ class BriefcaseArgs:
         defaults = cls()
         effort = data.get("judge_reasoning_effort", defaults.judge_reasoning_effort)
         return cls(
-            task_ids=_as_list(data.get("task_ids")),
+            task_ids=as_list(data.get("task_ids")),
             revision=str(data.get("revision", defaults.revision)),
             n_attempts=int(data.get("n_attempts", defaults.n_attempts)),
             max_concurrency=int(data.get("max_concurrency", defaults.max_concurrency)),
             max_turns=int(data.get("max_turns", defaults.max_turns)),
             command_timeout=float(data.get("command_timeout", defaults.command_timeout)),
-            agent_timeout=_as_optional_float(data.get("agent_timeout")),
-            context_window_tokens=_as_optional_int(data.get("context_window_tokens")),
+            agent_timeout=as_optional_float(data.get("agent_timeout")),
+            context_window_tokens=as_optional_int(data.get("context_window_tokens")),
             summarization_cutoff=float(
                 data.get("summarization_cutoff", defaults.summarization_cutoff)
             ),
@@ -162,6 +143,9 @@ class TrialResult:
     trajectory: AgentTrajectory = field(default_factory=lambda: AgentTrajectory(turns=()))
     agent_steps: int = 0
     summaries: int = 0
+    #: How the run spent its turns: dropped turns, replies without a tool call, and
+    #: invalid, unknown or refused calls.
+    agent_counts: dict[str, int] = field(default_factory=dict)
     agent_duration: float = 0.0
     grading_duration: float = 0.0
     #: Notes the parser left on the submission, e.g. a file it could not read.
@@ -523,6 +507,8 @@ class AABriefcaseLiteExternalEval(ExternalEval):
         """Run the agent, then copy the deliverables its finish call names to the outbox."""
         from olmo_eval.harness.sandbox import SandboxManager
 
+        scaffold = StirrupScaffold()
+
         config = self._sandbox_config(
             image,
             runtime,
@@ -536,7 +522,8 @@ class AABriefcaseLiteExternalEval(ExternalEval):
         manager = SandboxManager([config], owner=f"briefcase-{trial.native_id}")
         try:
             await manager.start()
-            agent = self._run_agent(manager, task, scenario, provider, bc_args, trial)
+            scaffold.set_sandbox_manager(manager)
+            agent = self._run_agent(scaffold, task, scenario, provider, bc_args, trial)
             if bc_args.agent_timeout is None:
                 await agent
             else:
@@ -548,6 +535,7 @@ class AABriefcaseLiteExternalEval(ExternalEval):
                     # The scaffold stops itself at the timeout between turns, so a run
                     # still going here is stuck in a model or sandbox call.
                     trial.error = "agent_stuck: the run outlasted its timeout"
+                    trial.trajectory = scaffold.trajectory_so_far()
                     return
             if trial.completion_reason == "finished" and trial.finish is not None:
                 await self._collect(manager, task, trial)
@@ -556,7 +544,7 @@ class AABriefcaseLiteExternalEval(ExternalEval):
 
     async def _run_agent(
         self,
-        manager: SandboxManager,
+        scaffold: StirrupScaffold,
         task: BriefcaseTask,
         scenario: BriefcaseScenario,
         provider: InferenceProvider,
@@ -564,7 +552,6 @@ class AABriefcaseLiteExternalEval(ExternalEval):
         trial: TrialResult,
     ) -> None:
         from olmo_eval.harness.config import HarnessConfig
-        from olmo_eval.harness.scaffolds import get_scaffold
         from olmo_eval.harness.tools import get_tools
 
         system_prompt, instruction = build_agent_prompts(scenario, task, bc_args.max_turns)
@@ -584,8 +571,6 @@ class AABriefcaseLiteExternalEval(ExternalEval):
             scaffold="stirrup",
             scaffold_kwargs=scaffold_kwargs,
         )
-        scaffold = get_scaffold("stirrup")
-        scaffold.set_sandbox_manager(manager)
         harness_result = await scaffold.run(
             provider,
             harness_config,
@@ -601,6 +586,10 @@ class AABriefcaseLiteExternalEval(ExternalEval):
         trial.finish = harness_result.metadata.get("finish")
         trial.agent_steps = int(harness_result.metadata.get("steps", 0))
         trial.summaries = int(harness_result.metadata.get("summaries", 0))
+        trial.agent_counts = {
+            key: int(harness_result.metadata.get(key, 0))
+            for key in ("dropped_turns", *DIAGNOSTIC_COUNTS)
+        }
         # Running out of turns, time or context is the agent's failure; an error is
         # the model server's.
         if harness_result.error:
@@ -669,6 +658,7 @@ class AABriefcaseLiteExternalEval(ExternalEval):
             "parser_notes": trial.parser_notes,
             "agent_steps": trial.agent_steps,
             "summaries": trial.summaries,
+            "agent_counts": trial.agent_counts,
             "agent_duration": trial.agent_duration,
             "grading_duration": trial.grading_duration,
             "error": trial.error,

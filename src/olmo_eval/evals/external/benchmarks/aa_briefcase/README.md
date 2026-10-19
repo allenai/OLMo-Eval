@@ -46,8 +46,8 @@ Each run follows the AA-Briefcase harness as the dataset card describes it.
   - the history is summarized once a reply fills 70% of the context window, which
     defaults to the model server's context length (`context_window_tokens`
     overrides it);
-  - a request that overflows the window drops the latest turn and is retried, as
-    Stirrup does.
+  - a request that overflows the window, or a summary the window cuts short, drops
+    the latest turn and is retried, as Stirrup does.
 
   The system and task prompts are the dataset's own, filled in as published. Replies
   are sampled at temperature 0.7 and top-p 0.95, with up to 32768 tokens each. Those
@@ -77,8 +77,14 @@ Each run follows the AA-Briefcase harness as the dataset card describes it.
   without a call.
 
 The deliverables and the parsed files are kept under `aa_briefcase_lite/<task>-<attempt>/`
-in the output directory. Each prediction records the run's completion reason, its finish
-call, every check's verdict and reasoning, and the agent's trajectory.
+in the output directory. Each prediction records:
+- the run's completion reason: `finished`, `abandoned`, `max_turns`, `timeout`,
+  `context_overflow`, `summary_failed` (the model never wrote a summary), or `error`;
+- its finish call;
+- counts of how it spent its turns: replies without a tool call, invalid, unknown or
+  refused calls, replies cut off at the token limit, and dropped turns;
+- every check's verdict and reasoning;
+- the agent's trajectory.
 
 A run fails rather than reporting a score when the sandbox or the model server fails,
 when a run gets stuck past its timeout, or when a check cannot be graded after its
@@ -96,6 +102,9 @@ retries. The partial metrics are still saved.
   Analysis's description for GDPval-AA. Video audio is not transcribed, whereas the
   leaderboard sends video to a model that reads it natively.
 - **No view_image tool.** Artificial Analysis gives it to models that accept images.
+- **Reasoning is not replayed.** Stirrup sends a model's earlier reasoning back with
+  the history; the repo's providers do not return it, so each turn sees only the
+  replies and tool calls.
 - **The abandon tool's description is this eval's own.** Artificial Analysis names
   `abandon_task_finish` and its `reason` argument but does not publish its wording.
 - **Network access is not blocked.** The prompt tells the agent the sandbox is offline,

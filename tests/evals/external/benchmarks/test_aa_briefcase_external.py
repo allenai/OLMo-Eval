@@ -14,8 +14,8 @@ from unittest import mock
 import pytest
 
 from olmo_eval.common.execution import ExecutionResult
+from olmo_eval.common.scorers import llm_judge
 from olmo_eval.evals.external.benchmarks.aa_briefcase import eval as bc_eval
-from olmo_eval.evals.external.benchmarks.aa_briefcase import judge as bc_judge
 from olmo_eval.evals.external.benchmarks.aa_briefcase.eval import (
     AABriefcaseLiteExternalEval,
     BriefcaseArgs,
@@ -157,8 +157,8 @@ def no_waits(monkeypatch):
     async def no_sleep(_):
         return None
 
-    monkeypatch.setattr(bc_judge, "retry_with_backoff", call_once)
-    monkeypatch.setattr(bc_judge.asyncio, "sleep", no_sleep)
+    monkeypatch.setattr(llm_judge, "retry_with_backoff", call_once)
+    monkeypatch.setattr(llm_judge.asyncio, "sleep", no_sleep)
 
 
 class TestLoader:
@@ -426,7 +426,7 @@ class TestExecute:
     def test_finished_deliverables_are_parsed_and_graded(
         self, scenario_root: Path, tmp_path: Path, monkeypatch
     ) -> None:
-        async def run_agent(manager, task, scenario, provider, bc_args, trial):
+        async def run_agent(scaffold, task, scenario, provider, bc_args, trial):
             trial.completion_reason = "finished" if task.task_id == "w1_t1" else "max_turns"
             if task.task_id == "w1_t1":
                 trial.finish = {
@@ -469,7 +469,7 @@ class TestExecute:
     def test_a_run_stuck_past_its_timeout_fails_without_a_score(
         self, scenario_root: Path, tmp_path: Path, monkeypatch
     ) -> None:
-        async def run_agent(manager, task, scenario, provider, bc_args, trial):
+        async def run_agent(scaffold, task, scenario, provider, bc_args, trial):
             await asyncio.sleep(60)
 
         judge, prompts = scripted_judge()
@@ -490,7 +490,7 @@ class TestExecute:
     def test_a_model_server_error_fails_the_run_without_a_score(
         self, scenario_root: Path, tmp_path: Path, monkeypatch
     ) -> None:
-        async def run_agent(manager, task, scenario, provider, bc_args, trial):
+        async def run_agent(scaffold, task, scenario, provider, bc_args, trial):
             trial.completion_reason = "error"
             trial.error = "agent_error: server down"
 

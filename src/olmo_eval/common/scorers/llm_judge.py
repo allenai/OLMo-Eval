@@ -4,6 +4,7 @@ This module provides scorers that use language models to evaluate
 responses, following patterns from benchmarks like SimpleQA.
 """
 
+import asyncio
 import logging
 import math
 import re
@@ -19,6 +20,7 @@ from olmo_eval.common.openai_credentials import (
 )
 from olmo_eval.common.scorers.execution import ContextScorer
 from olmo_eval.common.types import Instance, LMOutput, LMRequest, RequestType, SamplingParams
+from olmo_eval.inference.retry import retry_with_backoff
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +29,59 @@ JudgeFn = Callable[..., Coroutine[Any, Any, str]]
 
 #: A judge prompt: plain text, or OpenAI chat content parts such as text and images.
 JudgeContent = str | list[dict[str, Any]]
+
+
+async def judge_with_retries[V](
+    judge_fn: JudgeFn,
+    prompt: JudgeContent,
+    parse: Callable[[str], V | None],
+    *,
+    limiter: asyncio.Semaphore,
+    system_prompt: str | None = None,
+    attempts: int = 3,
+    max_retries: int = 3,
+    retry_delay: float = 1.0,
+    context: str = "",
+) -> tuple[V | None, str]:
+    """Call a judge, retrying failed calls with backoff and unparseable replies.
+
+    The limiter is held for each call only, so backoff waits leave the slot to
+    other calls. A reply that does not parse is asked for again, up to
+    ``attempts`` calls, with a growing wait between them.
+
+    Args:
+        judge_fn: The judge to call.
+        prompt: The judge's user message.
+        parse: Reads a verdict from a reply, or returns None if it holds none.
+        limiter: Bounds the judge calls in flight.
+        system_prompt: The judge's system message, if any.
+        attempts: Calls before an unparseable reply is given up on.
+        max_retries: Retries of a call that fails, as ``retry_with_backoff`` makes them.
+        retry_delay: Base wait in seconds between those retries.
+        context: Label for retry logs.
+
+    Returns:
+        The parsed verdict, or None if no attempt parsed, with the last raw reply.
+
+    Raises:
+        Exception: The last error of a call that failed on every retry.
+    """
+
+    async def call() -> str:
+        async with limiter:
+            return await judge_fn(prompt, system_prompt=system_prompt)
+
+    raw = ""
+    for attempt in range(attempts):
+        raw = await retry_with_backoff(
+            call, max_retries=max_retries, retry_delay=retry_delay, context=context
+        )
+        verdict = parse(raw)
+        if verdict is not None:
+            return verdict, raw
+        if attempt < attempts - 1:
+            await asyncio.sleep(2**attempt)
+    return None, raw
 
 
 @runtime_checkable

@@ -14,6 +14,7 @@ from olmo_eval.common.execution import ExecutionResult
 from olmo_eval.common.types import LMOutput, LMRequest, RequestType, SamplingParams
 from olmo_eval.common.types.tools import ToolCall
 from olmo_eval.harness.config import HarnessConfig
+from olmo_eval.harness.sandbox import DetachedRun
 from olmo_eval.harness.scaffolds import get_scaffold
 from olmo_eval.harness.scaffolds.stirrup import (
     BASE_SYSTEM_PROMPT,
@@ -62,63 +63,56 @@ class ScriptedProvider(InferenceProvider):
         return [[reply]]
 
 
-#: A scripted command result for a command that never exits.
-HANGS = None
+#: Scripted command results for a command that never exits, and one whose runner dies.
+HANGS = "hangs"
+DIES = "dies"
 
 
 class FakeExecutor:
     """Plays the sandbox side of ``run_command`` and answers ``test -f``.
 
     Each agent command takes the next scripted result, or succeeds and echoes
-    itself; a ``HANGS`` result never writes an exit status.
+    itself.
     """
 
     def __init__(self, files: set[str] | None = None, results: list[Any] | None = None):
         self.files = files or set()
         self.results = list(results or [])
         self.commands: list[str] = []
-        self.scripts: dict[str, str] = {}
-        self.runs: dict[str, CommandResult | None] = {}
-        self.killed: list[str] = []
+        self.runs: dict[str, Any] = {}
         self.fail_with: Exception | None = None
 
-    async def write_files(self, files, timeout=None):
-        for path, content in files.items():
-            self.scripts[path.rsplit("/", 1)[0]] = content
-
-    async def execute_command(self, command, timeout=None, **_):
+    async def run_detached(self, script: str, timeout: float) -> DetachedRun:
         if self.fail_with is not None:
             raise self.fail_with
+        self.commands.append(script)
+        result = self.results.pop(0) if self.results else CommandResult(0, f"ran: {script}", "")
+        run_dir = f"/tmp/.detached/{len(self.commands)}"
+        self.runs[run_dir] = result
+        if result == HANGS:
+            return DetachedRun(run_dir, None, timed_out=True)
+        if result == DIES:
+            return DetachedRun(run_dir, None)
+        return DetachedRun(run_dir, result.exit_code)
+
+    async def execute_command(self, command, timeout=None, **_):
         if command.startswith("test -f "):
             exists = shlex.split(command)[2] in self.files
             return ExecutionResult(success=exists, output="", exit_code=0 if exists else 1)
-        run = re.search(r"/tmp/\.stirrup/\w+", command)
-        assert run is not None, command
-        run_dir = run.group(0)
-        if command.startswith("setsid "):
-            script = self.scripts[run_dir]
-            self.commands.append(script)
-            default = CommandResult(0, f"ran: {script}", "")
-            self.runs[run_dir] = self.results.pop(0) if self.results else default
-        elif command.startswith("cat "):
-            result = self.runs[run_dir]
-            return ExecutionResult(True, "" if result is HANGS else f"{result.exit_code}\n")
-        elif command.startswith("size="):
-            result = self.runs[run_dir]
-            stream = re.search(r"/(stdout|stderr)\b", command).group(1)
-            text = "" if result is HANGS else getattr(result, stream)
+        read = re.search(r"(/tmp/\.detached/\d+)/(stdout|stderr)", command)
+        if command.startswith("[ -f ") and read is not None:
+            result = self.runs[read.group(1)]
+            text = "" if result in (HANGS, DIES) else getattr(result, read.group(2))
             return ExecutionResult(True, self._read(text))
-        elif command.startswith("kill "):
-            self.killed.append(run_dir)
         return ExecutionResult(True, "")
 
     @staticmethod
     def _read(text: str) -> str:
         """What the shell's capped read of an output file prints."""
-        if len(text) <= MAX_OUTPUT_CHARS:
+        if len(text) <= 4 * MAX_OUTPUT_CHARS:
             return text
-        half = MAX_OUTPUT_CHARS // 2
-        return f"{len(text)}\n{text[:half]}\n---STIRRUP-OUTPUT-TAIL---\n{text[-half:]}"
+        ends = 2 * MAX_OUTPUT_CHARS
+        return f"{len(text)}\n{text[:ends]}\n---STIRRUP-OUTPUT-TAIL---\n{text[-ends:]}"
 
 
 class FakeBinding:
@@ -363,20 +357,25 @@ class TestRun:
 
         assert result.metadata["summaries"] == 0
 
-    def test_a_command_past_its_timeout_is_killed_and_reported(self) -> None:
+    def test_a_command_past_its_timeout_is_reported_as_stirrup_does(self) -> None:
         provider = ScriptedProvider(
             [reply(call("code_exec", {"cmd": "sleep 9"})), reply(finish([]))]
         )
-        _, manager = run(
-            provider,
-            FakeSandboxManager(results=[HANGS]),
-            scaffold_kwargs={"command_timeout": 0.3},
-        )
+        run(provider, FakeSandboxManager(results=[HANGS]), scaffold_kwargs={"command_timeout": 5})
 
         content = tool_messages(provider.requests[1])[0]["content"]
         assert "<error_kind>timeout</error_kind>" in content
-        assert "exceeded the 0.3s time limit" in content
-        assert len(manager.executor.killed) == 1
+        assert "<details>Command timed out after 5 seconds</details>" in content
+
+    def test_a_command_whose_runner_dies_is_reported_as_killed(self) -> None:
+        provider = ScriptedProvider(
+            [reply(call("code_exec", {"cmd": "kill 0"})), reply(finish([]))]
+        )
+        run(provider, FakeSandboxManager(results=[DIES]))
+
+        content = tool_messages(provider.requests[1])[0]["content"]
+        assert "<exit_code>-1</exit_code>" in content
+        assert "killed before it reported an exit status" in content
 
     def test_command_output_keeps_streams_apart_and_truncates_long_ones(self) -> None:
         long_output = "a" * MAX_OUTPUT_CHARS + "b" * 10
@@ -447,3 +446,94 @@ class TestRun:
             run(ScriptedProvider([]), tools=get_tools((*TOOLS, "bash")))
         with pytest.raises(ValueError, match="needs a 'finish' tool"):
             run(ScriptedProvider([]), tools=get_tools(("code_exec",)))
+
+    def test_a_huge_output_is_cut_from_its_ends_and_sized_in_bytes(self) -> None:
+        huge = "a" * (5 * MAX_OUTPUT_CHARS) + "z" * 10
+        provider = ScriptedProvider(
+            [reply(call("code_exec", {"cmd": "cat big"})), reply(finish([]))]
+        )
+        run(provider, FakeSandboxManager(results=[CommandResult(0, huge, "")]))
+
+        content = tool_messages(provider.requests[1])[0]["content"]
+        assert f"original {len(huge)} bytes" in content
+        assert "z" * 10 + "</stdout>" in content
+        assert len(content) < 2 * MAX_OUTPUT_CHARS
+
+    def test_a_summary_cut_short_by_the_context_drops_a_turn_and_starts_over(self) -> None:
+        cut_short = LMOutput(text="Partial summ", metadata={"finish_reason": "length"})
+        provider = ScriptedProvider(
+            [
+                reply(call("code_exec", {"cmd": "first"}, "e1")),
+                reply(call("code_exec", {"cmd": "second"}, "e2"), tokens=80),
+                cut_short,
+                LMOutput(text="Ran both commands."),
+                reply(finish([])),
+            ],
+            max_length=100,
+        )
+        result, _ = run(provider)
+
+        retried = provider.requests[3].messages
+        assert retried[-1]["content"] == SUMMARIZER_PROMPT
+        assert all("second" not in json.dumps(m) for m in retried)
+        assert result.metadata["summaries"] == 1
+        assert result.metadata["dropped_turns"] == 1
+        assert "Ran both commands." in provider.requests[4].messages[2]["content"]
+
+    def test_a_model_that_never_summarizes_ends_without_an_error(self) -> None:
+        provider = ScriptedProvider(
+            [
+                reply(call("code_exec", {"cmd": "ls"}), tokens=80),
+                LMOutput(text=""),
+                LMOutput(text=""),
+                LMOutput(text=""),
+            ],
+            max_length=100,
+        )
+        result, _ = run(provider)
+
+        assert result.metadata["completion_reason"] == "summary_failed"
+        assert result.error is None
+
+    def test_dropped_turns_are_bounded(self) -> None:
+        overflow = LMOutput(
+            text="", metadata={REQUEST_ERROR_KEY: "too long", CONTEXT_OVERFLOW_KEY: True}
+        )
+        turns = [reply(call("code_exec", {"cmd": f"c{i}"}, f"e{i}")) for i in range(30)]
+        # Each dropped turn is regrown by the next reply, which overflows again.
+        script = [turns[0], turns[1]]
+        for i in range(2, 30):
+            script += [overflow, turns[i]]
+        result, _ = run(ScriptedProvider(script), max_turns=4)
+
+        assert result.metadata["completion_reason"] == "context_overflow"
+        assert result.metadata["dropped_turns"] == 4
+
+    def test_counts_show_how_the_turns_were_spent(self) -> None:
+        provider = ScriptedProvider(
+            [
+                LMOutput(text="no call", metadata={"finish_reason": "length"}),
+                reply(call("browse", {"url": "x"}, "b1"), call("code_exec", "{", "e1")),
+                reply(finish(["/missing.pdf"])),
+                reply(finish(["/a\x00b"], call_id="f2")),
+                reply(finish([], call_id="f3")),
+            ]
+        )
+        result, _ = run(provider)
+
+        metadata = result.metadata
+        assert metadata["no_tool_call_turns"] == 1
+        assert metadata["length_truncated_replies"] == 1
+        assert metadata["unknown_tool_calls"] == 1
+        assert metadata["invalid_argument_calls"] == 2
+        assert metadata["finish_refusals"] == 1
+
+    def test_the_trajectory_so_far_is_available_while_the_run_goes(self) -> None:
+        scaffold = get_scaffold("stirrup")
+        assert scaffold.trajectory_so_far().turns == ()
+        manager = FakeSandboxManager()
+        scaffold.set_sandbox_manager(manager)
+        config = HarnessConfig(name="t", tools=get_tools(TOOLS), scaffold="stirrup", max_turns=2)
+        asyncio.run(scaffold.run(ScriptedProvider([reply(finish([]))]), config, REQUEST))
+
+        assert [t.role for t in scaffold.trajectory_so_far().turns] == ["user", "assistant", "tool"]

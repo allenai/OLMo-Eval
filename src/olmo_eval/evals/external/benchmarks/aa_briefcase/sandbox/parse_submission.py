@@ -261,7 +261,9 @@ def parse_video(path: Path, out_dir: Path) -> list[dict]:
     # Shrink frames over the pixel budget, keeping the aspect ratio and even dimensions.
     fit = f"trunc(iw*sqrt({MAX_IMAGE_PIXELS}/(iw*ih))/2)*2"
     scale = f"scale='if(gt(iw*ih,{MAX_IMAGE_PIXELS}),{fit},iw)':-2"
-    for index, at in enumerate(frame_times(duration)):
+    times = frame_times(duration)
+    missing = 0
+    for index, at in enumerate(times):
         frame = out_dir / f"{path.name}-frame-{index + 1:02d}.jpg"
         subprocess.run(
             ["ffmpeg", "-v", "error", "-ss", f"{at:.2f}", "-i", str(path)]
@@ -272,6 +274,10 @@ def parse_video(path: Path, out_dir: Path) -> list[dict]:
         if frame.is_file():
             blocks.append({"type": "text", "text": f"Frame at {at:.1f} s:"})
             blocks.append({"type": "image", "path": frame.name})
+        else:
+            missing += 1
+    if missing:
+        blocks.append(note(f"{missing} of {len(times)} frames could not be extracted."))
     return blocks
 
 
