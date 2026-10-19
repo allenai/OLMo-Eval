@@ -21,6 +21,11 @@ RUN python -m playwright install chromium && chmod -R a+rX /opt/playwright
 
 COPY parse_submission.py /opt/briefcase/parse_submission.py
 
+# Pythons uv downloads, including the one swe-rex's server runs on, go where `user`
+# can execute them; uv's default under /root is closed to it.
+ENV UV_PYTHON_INSTALL_DIR=/opt/uv-python
+RUN mkdir -p /opt/uv-python && chmod 755 /opt/uv-python
+
 RUN useradd --uid 1000 --create-home --shell /bin/bash user \
     && echo 'user ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/user
 ENV MPLBACKEND=Agg

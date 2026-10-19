@@ -381,6 +381,9 @@ class FakeSandboxManager:
     async def start(self) -> None:
         pass
 
+    def get_executor(self, capabilities):
+        return self
+
     async def stop(self) -> None:
         self.stopped = True
 
@@ -404,7 +407,9 @@ class TestExecute:
     def setup_method(self) -> None:
         FakeSandboxManager.instances.clear()
 
-    def _execute(self, scenario_root: Path, tmp_path: Path, monkeypatch, run_agent, judge):
+    def _execute(
+        self, scenario_root: Path, tmp_path: Path, monkeypatch, run_agent, judge, args=None
+    ):
         monkeypatch.setenv("OPENAI_API_KEY", "test-key")
         eval_obj = AABriefcaseLiteExternalEval()
         with (
@@ -415,7 +420,7 @@ class TestExecute:
             mock.patch.object(eval_obj, "_run_agent", side_effect=run_agent),
         ):
             return asyncio.run(
-                eval_obj.execute(FakeProvider(), {}, output_dir=str(tmp_path / "out"))
+                eval_obj.execute(FakeProvider(), args or {}, output_dir=str(tmp_path / "out"))
             )
 
     def test_finished_deliverables_are_parsed_and_graded(
@@ -430,6 +435,10 @@ class TestExecute:
                     "paths": ["/home/user/overview.tex"],
                 }
 
+        # A deliverable left by an earlier run into the same directory is not graded.
+        stale = tmp_path / "out/aa_briefcase_lite/w1_t2-0/submission/model.xlsx"
+        stale.parent.mkdir(parents=True)
+        stale.write_text("old")
         judge, prompts = scripted_judge(verdict(True), verdict(False))
         result = self._execute(scenario_root, tmp_path, monkeypatch, run_agent, judge)
 
@@ -442,7 +451,7 @@ class TestExecute:
         assert result.metadata["pairwise_checks_skipped"] == 1
         assert result.metadata["judge_config"] == {"model": "scripted"}
 
-        agent = FakeSandboxManager.instances[0]
+        agent = next(m for m in FakeSandboxManager.instances if m.owner == "briefcase-w1_t1:0")
         assert agent.commands == ["cp -- /home/user/overview.tex /mnt/outbox/overview.tex"]
         mounts = agent.config.docker_args
         assert any(m.endswith("dst=/home/user/shared,readonly") for m in mounts)
@@ -455,6 +464,28 @@ class TestExecute:
         artifacts = tmp_path / "out/aa_briefcase_lite/w1_t1-0/submission/overview.tex"
         assert artifacts.read_text() == "deliverable"
         assert len(prompts) == 2
+        assert not stale.exists()
+
+    def test_a_run_stuck_past_its_timeout_fails_without_a_score(
+        self, scenario_root: Path, tmp_path: Path, monkeypatch
+    ) -> None:
+        async def run_agent(manager, task, scenario, provider, bc_args, trial):
+            await asyncio.sleep(60)
+
+        judge, prompts = scripted_judge()
+        with mock.patch.object(bc_eval, "AGENT_TIMEOUT_GRACE", 0.0):
+            result = self._execute(
+                scenario_root,
+                tmp_path,
+                monkeypatch,
+                run_agent,
+                judge,
+                {"agent_timeout": "0.1", "task_ids": "w1_t1"},
+            )
+
+        assert not result.success
+        assert "agent_stuck" in (result.error or "")
+        assert prompts == []
 
     def test_a_model_server_error_fails_the_run_without_a_score(
         self, scenario_root: Path, tmp_path: Path, monkeypatch
@@ -480,6 +511,7 @@ class TestExecute:
         assert args.n_attempts == 3
         assert args.judge_reasoning_effort is None
         assert args.sampling_params.fit_max_tokens_to_context
+        assert args.agent_timeout is None
 
     def test_eval_is_registered(self) -> None:
         eval_obj = get_external_eval("aa_briefcase_lite")

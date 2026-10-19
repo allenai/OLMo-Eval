@@ -35,6 +35,10 @@ DEFAULT_JUDGE_REASONING_EFFORT = "high"
 DEFAULT_JUDGE_MAX_TOKENS = 32768
 #: Judge calls per check before an unparseable reply is given up on.
 JUDGE_ATTEMPTS = 3
+#: Retries of a failing judge call, with waits doubling from ``JUDGE_RETRY_DELAY``
+#: seconds, so a stretch of rate limiting is waited out rather than left ungraded.
+JUDGE_RETRIES = 6
+JUDGE_RETRY_DELAY = 2.0
 
 SUBMISSION_MARKER = "<<<SUBMISSION CONTENT MESSAGES>>>"
 
@@ -106,8 +110,10 @@ class ParsedSubmission:
             return [*parts, _note(f"{file_name} was not submitted.")]
         for block in blocks:
             if block["type"] == "image":
-                data = base64.b64encode((self.image_dir / block["path"]).read_bytes()).decode()
-                url = f"data:image/png;base64,{data}"
+                path = self.image_dir / block["path"]
+                media_type = "image/png" if path.suffix == ".png" else "image/jpeg"
+                data = base64.b64encode(path.read_bytes()).decode()
+                url = f"data:{media_type};base64,{data}"
                 parts.append({"type": "image_url", "image_url": {"url": url}})
             elif block["type"] == "note":
                 parts.append(_note(block["text"]))
@@ -189,7 +195,12 @@ async def grade_check(
     raw = ""
     for attempt in range(JUDGE_ATTEMPTS):
         try:
-            raw = await retry_with_backoff(call, context=f"aa_briefcase_lite {check.check_id}")
+            raw = await retry_with_backoff(
+                call,
+                max_retries=JUDGE_RETRIES,
+                retry_delay=JUDGE_RETRY_DELAY,
+                context=f"aa_briefcase_lite {check.check_id}",
+            )
         except Exception as e:
             logger.warning(f"Judge call for {check.check_id} failed: {e}")
             return CheckVerdict(

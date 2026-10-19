@@ -7,15 +7,16 @@ and the Python document stack:
 
 Every file in SUBMISSION_DIR becomes a list of blocks in OUTPUT_DIR/manifest.json,
 keyed by file name. A block is ``{"type": "text", "text": ...}``,
-``{"type": "image", "path": ...}`` with a path relative to OUTPUT_DIR, or
-``{"type": "note", "text": ...}`` for what could not be parsed or was left out.
+``{"type": "image", "path": ...}`` with the path of a JPEG relative to OUTPUT_DIR,
+or ``{"type": "note", "text": ...}`` for what could not be parsed or was left out.
+A file the parser cannot read gets a note; a tool that times out fails the run.
 
 Documents are given both as text and as page images, the way Artificial
 Analysis parses submissions for its judges: PDFs directly, PowerPoint and Excel
 files through a LibreOffice PDF rendering. Spreadsheet cells carry their
-formulas and their values, recalculated by LibreOffice when the file has none
-cached. A video is given as its stream metadata and frames sampled evenly
-through it; its audio is not transcribed.
+formulas and their values as LibreOffice recalculates them. A video is given as
+its stream metadata and frames sampled evenly through it; its audio is not
+transcribed.
 """
 
 from __future__ import annotations
@@ -29,6 +30,9 @@ from pathlib import Path
 
 #: Largest image handed to the judge, in pixels.
 MAX_IMAGE_PIXELS = 1_000_000
+#: JPEG quality of page images and video frames, which keeps a request with dozens
+#: of them well under the judge API's size limit.
+JPEG_QUALITY = 85
 #: Characters of text kept per file.
 MAX_TEXT_CHARS = 200_000
 #: Page images kept per document type.
@@ -38,6 +42,20 @@ MAX_CELLS_PER_SHEET = 4_000
 VIDEO_FRAMES = 16
 TEXT_SUFFIXES = {".tex", ".srt", ".txt", ".md", ".csv", ".json", ".html", ".vtt"}
 COMMAND_TIMEOUT = 600
+
+#: LibreOffice settings that recalculate every formula when a workbook is loaded.
+#: Its default trusts the values cached in the file, which some writers leave at 0.
+RECALCULATE_ON_LOAD = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<oor:items xmlns:oor="http://openoffice.org/2001/registry"
+    xmlns:xs="http://www.w3.org/2001/XMLSchema"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+<item oor:path="/org.openoffice.Office.Calc/Formula/Load">
+<prop oor:name="OOXMLRecalcMode" oor:op="fuse"><value>0</value></prop></item>
+<item oor:path="/org.openoffice.Office.Calc/Formula/Load">
+<prop oor:name="ODFRecalcMode" oor:op="fuse"><value>0</value></prop></item>
+</oor:items>
+"""
 
 
 def text_block(text: str) -> dict:
@@ -64,7 +82,7 @@ def frame_times(duration: float, count: int = VIDEO_FRAMES) -> list[float]:
 
 
 def render_pdf(pdf: Path, out_dir: Path, prefix: str, max_pages: int) -> tuple[list[str], int]:
-    """Render up to ``max_pages`` pages to PNG and return their paths and the page count."""
+    """Render up to ``max_pages`` pages to JPEG and return their paths and the page count."""
     import pymupdf
 
     paths: list[str] = []
@@ -74,8 +92,8 @@ def render_pdf(pdf: Path, out_dir: Path, prefix: str, max_pages: int) -> tuple[l
                 break
             zoom = scale_for(page.rect.width, page.rect.height)
             pixmap = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False)
-            path = out_dir / f"{prefix}-page-{index + 1:03d}.png"
-            pixmap.save(path)
+            path = out_dir / f"{prefix}-page-{index + 1:03d}.jpg"
+            pixmap.save(path, jpg_quality=JPEG_QUALITY)
             paths.append(path.name)
         return paths, doc.page_count
 
@@ -90,8 +108,13 @@ def page_images(pdf: Path, out_dir: Path, prefix: str, max_pages: int) -> list[d
 
 def convert_with_libreoffice(path: Path, target: str, work_dir: Path) -> Path:
     """Convert a file with headless LibreOffice and return the converted file."""
+    profile = work_dir / "libreoffice-profile"
+    settings = profile / "user" / "registrymodifications.xcu"
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text(RECALCULATE_ON_LOAD)
     subprocess.run(
-        ["soffice", "--headless", "--convert-to", target, "--outdir", str(work_dir), str(path)],
+        ["soffice", f"-env:UserInstallation={profile.as_uri()}", "--headless"]
+        + ["--convert-to", target, "--outdir", str(work_dir), str(path)],
         check=True,
         capture_output=True,
         timeout=COMMAND_TIMEOUT,
@@ -203,9 +226,11 @@ def parse_xlsx(path: Path, out_dir: Path, work_dir: Path) -> list[dict]:
 
 
 def _cell_line(cell, value_sheet) -> str:
-    if isinstance(cell.value, str) and cell.value.startswith("="):
+    # An array formula is an object holding its formula text.
+    formula = getattr(cell.value, "text", cell.value)
+    if isinstance(formula, str) and formula.startswith("="):
         value = value_sheet[cell.coordinate].value if value_sheet is not None else None
-        return f"{cell.coordinate}: {cell.value} -> {value}"
+        return f"{cell.coordinate}: {formula} -> {value}"
     return f"{cell.coordinate}: {cell.value}"
 
 
@@ -237,10 +262,10 @@ def parse_video(path: Path, out_dir: Path) -> list[dict]:
     fit = f"trunc(iw*sqrt({MAX_IMAGE_PIXELS}/(iw*ih))/2)*2"
     scale = f"scale='if(gt(iw*ih,{MAX_IMAGE_PIXELS}),{fit},iw)':-2"
     for index, at in enumerate(frame_times(duration)):
-        frame = out_dir / f"{path.name}-frame-{index + 1:02d}.png"
+        frame = out_dir / f"{path.name}-frame-{index + 1:02d}.jpg"
         subprocess.run(
             ["ffmpeg", "-v", "error", "-ss", f"{at:.2f}", "-i", str(path)]
-            + ["-frames:v", "1", "-vf", scale, "-y", str(frame)],
+            + ["-frames:v", "1", "-vf", scale, "-q:v", "3", "-y", str(frame)],
             capture_output=True,
             timeout=COMMAND_TIMEOUT,
         )
@@ -275,6 +300,9 @@ def main(submission_dir: str, output_dir: str) -> None:
         with tempfile.TemporaryDirectory() as work:
             try:
                 manifest[path.name] = parse_file(path, out_dir, Path(work))
+            except subprocess.TimeoutExpired:
+                # A stuck tool is the grader's failure, not the submission's.
+                raise
             except Exception as e:
                 failure = f"The file could not be parsed: {type(e).__name__}: {e}"
                 manifest[path.name] = [note(failure)]

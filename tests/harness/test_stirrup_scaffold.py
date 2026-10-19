@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import shlex
 from typing import Any
 
@@ -23,6 +24,7 @@ from olmo_eval.harness.scaffolds.stirrup import (
     SUMMARIZER_PROMPT,
     SUMMARIZER_TEXT_ONLY,
     SUMMARY_ACKNOWLEDGEMENT,
+    CommandResult,
     build_system_prompt,
     format_shell_result,
     truncate_output,
@@ -60,23 +62,81 @@ class ScriptedProvider(InferenceProvider):
         return [[reply]]
 
 
-class FakeSandboxManager:
-    """Answers ``test -f`` from a set of existing files and records other commands."""
+#: A scripted command result for a command that never exits.
+HANGS = None
 
-    def __init__(self, files: set[str] | None = None, results: list[ExecutionResult] | None = None):
+
+class FakeExecutor:
+    """Plays the sandbox side of ``run_command`` and answers ``test -f``.
+
+    Each agent command takes the next scripted result, or succeeds and echoes
+    itself; a ``HANGS`` result never writes an exit status.
+    """
+
+    def __init__(self, files: set[str] | None = None, results: list[Any] | None = None):
         self.files = files or set()
         self.results = list(results or [])
-        self.commands: list[tuple[str, float | None]] = []
+        self.commands: list[str] = []
+        self.scripts: dict[str, str] = {}
+        self.runs: dict[str, CommandResult | None] = {}
+        self.killed: list[str] = []
+        self.fail_with: Exception | None = None
 
-    async def execute_command(self, command, timeout=None, capabilities=None, **_):
+    async def write_files(self, files, timeout=None):
+        for path, content in files.items():
+            self.scripts[path.rsplit("/", 1)[0]] = content
+
+    async def execute_command(self, command, timeout=None, **_):
+        if self.fail_with is not None:
+            raise self.fail_with
         if command.startswith("test -f "):
-            path = shlex.split(command)[2]
-            exists = path in self.files
+            exists = shlex.split(command)[2] in self.files
             return ExecutionResult(success=exists, output="", exit_code=0 if exists else 1)
-        self.commands.append((command, timeout))
-        if self.results:
-            return self.results.pop(0)
-        return ExecutionResult(success=True, output=f"ran: {command}", exit_code=0)
+        run = re.search(r"/tmp/\.stirrup/\w+", command)
+        assert run is not None, command
+        run_dir = run.group(0)
+        if command.startswith("setsid "):
+            script = self.scripts[run_dir]
+            self.commands.append(script)
+            default = CommandResult(0, f"ran: {script}", "")
+            self.runs[run_dir] = self.results.pop(0) if self.results else default
+        elif command.startswith("cat "):
+            result = self.runs[run_dir]
+            return ExecutionResult(True, "" if result is HANGS else f"{result.exit_code}\n")
+        elif command.startswith("size="):
+            result = self.runs[run_dir]
+            stream = re.search(r"/(stdout|stderr)\b", command).group(1)
+            text = "" if result is HANGS else getattr(result, stream)
+            return ExecutionResult(True, self._read(text))
+        elif command.startswith("kill "):
+            self.killed.append(run_dir)
+        return ExecutionResult(True, "")
+
+    @staticmethod
+    def _read(text: str) -> str:
+        """What the shell's capped read of an output file prints."""
+        if len(text) <= MAX_OUTPUT_CHARS:
+            return text
+        half = MAX_OUTPUT_CHARS // 2
+        return f"{len(text)}\n{text[:half]}\n---STIRRUP-OUTPUT-TAIL---\n{text[-half:]}"
+
+
+class FakeBinding:
+    def __init__(self, executor: FakeExecutor) -> None:
+        self.executor = executor
+        self.released = False
+
+    async def release(self) -> None:
+        self.released = True
+
+
+class FakeSandboxManager:
+    def __init__(self, files: set[str] | None = None, results: list[Any] | None = None):
+        self.executor = FakeExecutor(files, results)
+        self.binding = FakeBinding(self.executor)
+
+    async def acquire_binding(self, capabilities=None):
+        return self.binding
 
 
 def call(name: str, arguments: dict[str, Any] | str, call_id: str = "c1") -> ToolCall:
@@ -140,10 +200,15 @@ class TestHelpers:
         assert truncate_output("short") == "short"
 
     def test_shell_results_are_xml(self) -> None:
-        assert format_shell_result("hi", 2) == (
-            "<shell_results>\n<exit_code>2</exit_code>\n<output>hi</output>\n</shell_results>"
+        assert format_shell_result(CommandResult(2, "out", "err")) == (
+            "<shell_results>\n<exit_code>2</exit_code>\n<stdout>out</stdout>"
+            "\n<stderr>err</stderr>\n</shell_results>"
         )
-        assert "<error_kind>timeout</error_kind>" in format_shell_result("", -1, timed_out=True)
+        timed_out = format_shell_result(CommandResult(-1, "", "slow", timed_out=True))
+        assert timed_out == (
+            "<shell_results>\n<error_kind>timeout</error_kind>\n<details>slow</details>"
+            "\n</shell_results>"
+        )
 
 
 class TestRun:
@@ -164,14 +229,15 @@ class TestRun:
         }
         assert result.final_output.text == "done"
         assert result.error is None
-        assert manager.commands == [("python make.py", 300.0)]
+        assert manager.executor.commands == ["python make.py"]
         first = provider.requests[0]
         assert first.messages[0]["content"] == build_system_prompt(30, "Task instructions.")
         assert first.messages[1] == {"role": "user", "content": "Write the report."}
         assert [t.name for t in first.tools] == list(TOOLS)
         assert provider.sampling_params[0] == DEFAULT_SAMPLING_PARAMS
         command_result = tool_messages(provider.requests[1])[0]["content"]
-        assert command_result == format_shell_result("ran: python make.py", 0)
+        assert command_result == format_shell_result(CommandResult(0, "ran: python make.py", ""))
+        assert manager.binding.released
 
     def test_finish_naming_a_missing_file_is_refused(self) -> None:
         provider = ScriptedProvider(
@@ -211,7 +277,7 @@ class TestRun:
         results = tool_messages(provider.requests[1])
         assert [r["tool_call_id"] for r in results] == ["e1", "f1", "a1"]
         assert all("multiple finish tools" in r["content"] for r in results[1:])
-        assert manager.commands == [("ls", 300.0)]
+        assert manager.executor.commands == ["ls"]
         assert result.metadata["completion_reason"] == "finished"
 
     def test_bad_calls_get_errors_and_keep_the_history_replayable(self) -> None:
@@ -274,7 +340,7 @@ class TestRun:
         assert "Listed the files." in after[2]["content"]
         assert after[3]["content"] == SUMMARY_ACKNOWLEDGEMENT
         assert result.metadata["summaries"] == 1
-        assert manager.commands == [("ls", 300.0)]
+        assert manager.executor.commands == ["ls"]
 
     def test_a_summary_that_does_not_fit_ends_the_run_out_of_context(self) -> None:
         overflow = LMOutput(
@@ -297,20 +363,61 @@ class TestRun:
 
         assert result.metadata["summaries"] == 0
 
-    def test_a_command_timeout_is_reported_to_the_model(self) -> None:
-        timeout = ExecutionResult(success=False, output="slow", exit_code=-1, error="timeout")
+    def test_a_command_past_its_timeout_is_killed_and_reported(self) -> None:
         provider = ScriptedProvider(
             [reply(call("code_exec", {"cmd": "sleep 9"})), reply(finish([]))]
         )
-        run(
+        _, manager = run(
             provider,
-            FakeSandboxManager(results=[timeout]),
-            scaffold_kwargs={"command_timeout": 5},
+            FakeSandboxManager(results=[HANGS]),
+            scaffold_kwargs={"command_timeout": 0.3},
         )
 
-        assert (
-            "<error_kind>timeout</error_kind>" in tool_messages(provider.requests[1])[0]["content"]
+        content = tool_messages(provider.requests[1])[0]["content"]
+        assert "<error_kind>timeout</error_kind>" in content
+        assert "exceeded the 0.3s time limit" in content
+        assert len(manager.executor.killed) == 1
+
+    def test_command_output_keeps_streams_apart_and_truncates_long_ones(self) -> None:
+        long_output = "a" * MAX_OUTPUT_CHARS + "b" * 10
+        provider = ScriptedProvider([reply(call("code_exec", {"cmd": "make"})), reply(finish([]))])
+        run(provider, FakeSandboxManager(results=[CommandResult(2, long_output, "warning")]))
+
+        content = tool_messages(provider.requests[1])[0]["content"]
+        assert "<exit_code>2</exit_code>" in content
+        assert f"original {len(long_output)} characters" in content
+        assert "b" * 10 + "</stdout>" in content
+        assert "<stderr>warning</stderr>" in content
+
+    def test_an_overflowing_request_drops_the_latest_turn_and_retries(self) -> None:
+        overflow = LMOutput(
+            text="", metadata={REQUEST_ERROR_KEY: "too long", CONTEXT_OVERFLOW_KEY: True}
         )
+        provider = ScriptedProvider(
+            [
+                reply(call("code_exec", {"cmd": "first"}, "e1")),
+                reply(call("code_exec", {"cmd": "second"}, "e2")),
+                overflow,
+                reply(finish([])),
+            ]
+        )
+        result, _ = run(provider)
+
+        retried = provider.requests[3].messages
+        assert retried == provider.requests[1].messages
+        assert result.metadata["completion_reason"] == "finished"
+        assert result.metadata["dropped_turns"] == 1
+
+    def test_a_sandbox_failure_ends_the_run_with_its_turns_recorded(self) -> None:
+        manager = FakeSandboxManager()
+        manager.executor.fail_with = RuntimeError("container gone")
+        provider = ScriptedProvider([reply(call("code_exec", {"cmd": "ls"}))])
+        result, _ = run(provider, manager)
+
+        assert result.metadata["completion_reason"] == "error"
+        assert result.error == "RuntimeError: container gone"
+        assert [t.role for t in result.trajectory.turns] == ["user", "assistant"]
+        assert manager.binding.released
 
     def test_context_overflow_and_server_errors_end_the_run(self) -> None:
         overflow = LMOutput(

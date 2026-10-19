@@ -21,15 +21,16 @@ error of the pass rate across attempts.
 
 ```bash
 # All four tasks on Beaker
-uv run olmo-eval beaker launch -E aa_briefcase_lite -m <model> --gpus 1
+uv run olmo-eval beaker launch -E aa_briefcase_lite -m <model> --gpus 1 --timeout 20h
 
 # One task, three runs
-uv run olmo-eval beaker launch -E aa_briefcase_lite -m <model> --gpus 1 \
+uv run olmo-eval beaker launch -E aa_briefcase_lite -m <model> --gpus 1 --timeout 20h \
     -A task_ids=w1_t2 -A n_attempts=3
 ```
 
-The judge needs `OPENAI_API_KEY`. `olmo-eval external-evals` lists every argument
-with its default.
+A task can take hours: an agent may use all 500 turns, and up to `max_concurrency`
+runs (default 4) share one model server. The judge needs `OPENAI_API_KEY`.
+`olmo-eval external-evals` lists every argument with its default.
 
 ## How a task runs
 
@@ -42,14 +43,24 @@ Each run follows the AA-Briefcase harness as the dataset card describes it.
   `abandon_task_finish` gives up. Settings:
   - up to 500 turns, with a reminder once 20 remain;
   - 20 minutes per command;
-  - the history is summarized once a reply fills 70% of the context window.
+  - the history is summarized once a reply fills 70% of the context window, which
+    defaults to the model server's context length (`context_window_tokens`
+    overrides it);
+  - a request that overflows the window drops the latest turn and is retried, as
+    Stirrup does.
 
-  The system and task prompts are the dataset's own, filled in as published.
+  The system and task prompts are the dataset's own, filled in as published. Replies
+  are sampled at temperature 0.7 and top-p 0.95, with up to 32768 tokens each. Those
+  are the defaults of the repo's other agent evals; Stirrup sends no temperature and
+  allows 64,000 tokens. A run has no wall-clock limit unless `agent_timeout` is set;
+  a run that reaches it submits nothing.
 - **Sandbox.** The agent works in a container built from `sandbox/Dockerfile`, as the
   unprivileged `user` in `/home/user`. The container has the Python, LaTeX,
   LibreOffice, FFmpeg and other tools the task prompt lists. The task's source files
   are mounted read-only at `/home/user/shared` and `/home/user/week`. The image is
-  built on the first run on a host, which takes several minutes.
+  built on the first run on a host, which takes about five minutes. The base image
+  and the Python packages are pinned. The Debian packages, such as TeX Live and
+  LibreOffice, follow bookworm's updates.
 - **Submission.** Only files named in the `finish` call are graded. A deliverable counts
   when a submitted path has its file name. A run that ends any other way, for example
   by abandoning or running out of turns, submits nothing, and all its checks fail.
@@ -57,7 +68,7 @@ Each run follows the AA-Briefcase harness as the dataset card describes it.
   judge (`sandbox/parse_submission.py`):
   - LaTeX and subtitles are passed as text.
   - PDFs, slides and workbooks are passed as text and as page images. Workbook cells
-    carry both formulas and recalculated values.
+    carry both formulas and the values LibreOffice recalculates for them.
   - Videos are passed as their stream metadata and 16 evenly spaced frames.
 - **Grading.** Each check is one judge call. It uses the dataset's binary-rubric prompts
   and the parsed files the check names. The judge is GPT-5.5 (`gpt-5.5-2026-04-23`) at
@@ -70,7 +81,8 @@ in the output directory. Each prediction records the run's completion reason, it
 call, every check's verdict and reasoning, and the agent's trajectory.
 
 A run fails rather than reporting a score when the sandbox or the model server fails,
-or when a check cannot be graded after its retries. The partial metrics are still saved.
+when a run gets stuck past its timeout, or when a check cannot be graded after its
+retries. The partial metrics are still saved.
 
 ## Differences from the leaderboard harness
 
@@ -83,8 +95,8 @@ or when a check cannot be graded after its retries. The partial metrics are stil
 - **The judge's input format is not published.** The parsing above follows Artificial
   Analysis's description for GDPval-AA. Video audio is not transcribed, whereas the
   leaderboard sends video to a model that reads it natively.
-- **No view_image tool.** Stirrup offers it only to models that accept images.
-- **Command results** give stdout and stderr as one `<output>` stream, because the
-  sandbox returns them combined.
+- **No view_image tool.** Artificial Analysis gives it to models that accept images.
+- **The abandon tool's description is this eval's own.** Artificial Analysis names
+  `abandon_task_finish` and its `reason` argument but does not publish its wording.
 - **Network access is not blocked.** The prompt tells the agent the sandbox is offline,
   but the container keeps network access.

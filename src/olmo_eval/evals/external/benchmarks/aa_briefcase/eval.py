@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import shlex
+import shutil
 import statistics
 import tempfile
 import time
@@ -17,6 +18,11 @@ from olmo_eval.common.types.trajectory import AgentTrajectory
 from olmo_eval.evals.external.base import ExternalEval
 from olmo_eval.evals.external.result import ExternalEvalResult
 from olmo_eval.harness.sandbox.config import ContainerRuntime, SandboxConfig, SandboxMode
+from olmo_eval.harness.scaffolds.stirrup import (
+    ABANDON_TOOL_NAME,
+    CODE_EXEC_TOOL_NAME,
+    FINISH_TOOL_NAME,
+)
 
 from .judge import (
     DEFAULT_JUDGE_MAX_TOKENS,
@@ -51,9 +57,7 @@ SUBMISSION_DIR = "/mnt/submission"
 PARSED_DIR = "/mnt/parsed"
 PARSER = "/opt/briefcase/parse_submission.py"
 
-TOOLS = ("code_exec", "finish", "abandon_task_finish")
-FINISH_TOOL_NAME = "finish"
-ABANDON_TOOL_NAME = "abandon_task_finish"
+TOOLS = (CODE_EXEC_TOOL_NAME, FINISH_TOOL_NAME, ABANDON_TOOL_NAME)
 
 #: Extra wall-clock time, past the agent timeout, before a run is cut off from
 #: outside. The scaffold stops itself at the timeout between turns; this bounds a
@@ -61,8 +65,6 @@ ABANDON_TOOL_NAME = "abandon_task_finish"
 AGENT_TIMEOUT_GRACE = 300.0
 SANDBOX_STARTUP_TIMEOUT = 300.0
 PARSE_TIMEOUT = 1800.0
-
-_TRUE_VALUES = (True, "true", "True", "1", 1)
 
 
 def _as_list(value: Any) -> list[str] | None:
@@ -81,6 +83,12 @@ def _as_optional_int(value: Any) -> int | None:
     return int(value)
 
 
+def _as_optional_float(value: Any) -> float | None:
+    if value in (None, "", "none", "None"):
+        return None
+    return float(value)
+
+
 @dataclass
 class BriefcaseArgs:
     """Arguments for the AA-Briefcase-Lite evaluation."""
@@ -91,7 +99,7 @@ class BriefcaseArgs:
     max_concurrency: int = 4
     max_turns: int = 500
     command_timeout: float = 1200.0
-    agent_timeout: float = 14400.0
+    agent_timeout: float | None = None
     context_window_tokens: int | None = None
     summarization_cutoff: float = 0.7
     temperature: float = 0.7
@@ -114,7 +122,7 @@ class BriefcaseArgs:
             max_concurrency=int(data.get("max_concurrency", defaults.max_concurrency)),
             max_turns=int(data.get("max_turns", defaults.max_turns)),
             command_timeout=float(data.get("command_timeout", defaults.command_timeout)),
-            agent_timeout=float(data.get("agent_timeout", defaults.agent_timeout)),
+            agent_timeout=_as_optional_float(data.get("agent_timeout")),
             context_window_tokens=_as_optional_int(data.get("context_window_tokens")),
             summarization_cutoff=float(
                 data.get("summarization_cutoff", defaults.summarization_cutoff)
@@ -262,7 +270,7 @@ class AABriefcaseLiteExternalEval(ExternalEval):
     def description(self) -> str:
         return (
             "Evaluates LLM agents on the public week of Artificial Analysis's AA-Briefcase: "
-            "four due-diligence deliverables graded against 55 binary rubric checks"
+            "due-diligence deliverables graded against binary rubric checks"
         )
 
     @property
@@ -288,7 +296,10 @@ class AABriefcaseLiteExternalEval(ExternalEval):
             "max_concurrency": ("Max agent runs in flight at once", defaults.max_concurrency),
             "max_turns": ("Max model replies per run", defaults.max_turns),
             "command_timeout": ("Timeout in seconds for each command", defaults.command_timeout),
-            "agent_timeout": ("Wall-clock budget in seconds for one run", defaults.agent_timeout),
+            "agent_timeout": (
+                "Wall-clock budget in seconds for one run; one that runs out submits nothing",
+                None,
+            ),
             "context_window_tokens": (
                 "Context window used to decide when to summarize (default: the server's)",
                 None,
@@ -445,7 +456,9 @@ class AABriefcaseLiteExternalEval(ExternalEval):
         outbox = artifacts / "submission"
         parsed = artifacts / "parsed"
         for directory in (outbox, parsed):
-            directory.mkdir(parents=True, exist_ok=True)
+            # A rerun into the same output directory starts from nothing.
+            shutil.rmtree(directory, ignore_errors=True)
+            directory.mkdir(parents=True)
             directory.chmod(0o777)
         await asyncio.to_thread(stage_sources, scenario.root, task, sources)
 
@@ -523,14 +536,19 @@ class AABriefcaseLiteExternalEval(ExternalEval):
         manager = SandboxManager([config], owner=f"briefcase-{trial.native_id}")
         try:
             await manager.start()
-            try:
-                await asyncio.wait_for(
-                    self._run_agent(manager, task, scenario, provider, bc_args, trial),
-                    timeout=bc_args.agent_timeout + AGENT_TIMEOUT_GRACE,
-                )
-            except TimeoutError:
-                logger.warning(f"[{trial.native_id}] Agent cut off past its timeout")
-                trial.completion_reason = "timeout"
+            agent = self._run_agent(manager, task, scenario, provider, bc_args, trial)
+            if bc_args.agent_timeout is None:
+                await agent
+            else:
+                try:
+                    await asyncio.wait_for(
+                        agent, timeout=bc_args.agent_timeout + AGENT_TIMEOUT_GRACE
+                    )
+                except TimeoutError:
+                    # The scaffold stops itself at the timeout between turns, so a run
+                    # still going here is stuck in a model or sandbox call.
+                    trial.error = "agent_stuck: the run outlasted its timeout"
+                    return
             if trial.completion_reason == "finished" and trial.finish is not None:
                 await self._collect(manager, task, trial)
         finally:
@@ -552,9 +570,10 @@ class AABriefcaseLiteExternalEval(ExternalEval):
         system_prompt, instruction = build_agent_prompts(scenario, task, bc_args.max_turns)
         scaffold_kwargs: dict[str, Any] = {
             "command_timeout": bc_args.command_timeout,
-            "agent_timeout": bc_args.agent_timeout,
             "summarization_cutoff": bc_args.summarization_cutoff,
         }
+        if bc_args.agent_timeout is not None:
+            scaffold_kwargs["agent_timeout"] = bc_args.agent_timeout
         if bc_args.context_window_tokens is not None:
             scaffold_kwargs["context_window_tokens"] = bc_args.context_window_tokens
         harness_config = HarnessConfig(
@@ -609,7 +628,7 @@ class AABriefcaseLiteExternalEval(ExternalEval):
         self, image: str, runtime: ContainerRuntime, outbox: Path, parsed: Path
     ) -> ParsedSubmission:
         """Parse the deliverables in a fresh container the agent never touched."""
-        from olmo_eval.harness.sandbox import Capability, SandboxManager
+        from olmo_eval.harness.sandbox import SandboxManager
 
         config = self._sandbox_config(
             image,
@@ -620,10 +639,12 @@ class AABriefcaseLiteExternalEval(ExternalEval):
         manager = SandboxManager([config], owner=f"briefcase-parse-{outbox.parent.name}")
         try:
             await manager.start()
-            result = await manager.execute_command(
+            # Streamed, because parsing a deck or a video can outlast a single request.
+            result = await manager.get_executor(frozenset()).execute_command(
                 f"python {PARSER} {SUBMISSION_DIR} {PARSED_DIR}",
                 PARSE_TIMEOUT,
-                capabilities=Capability.BASH,
+                stream=True,
+                log_prefix=f"briefcase-parse-{outbox.parent.name}",
             )
             if not result.success:
                 raise RuntimeError(f"Parsing the submission failed: {result.output[-2000:]}")
