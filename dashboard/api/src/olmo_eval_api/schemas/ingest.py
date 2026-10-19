@@ -213,6 +213,7 @@ class TaskResultIn(_In):
     num_instances: NonNeg32
     instances_processed: NonNeg32 | None
     instances_failed: NonNeg32 | None
+    generation_counts: dict[str, NonNeg] | None = None
     error: str | None
     error_summary: dict[str, Any] | None
     duration_seconds: float | None

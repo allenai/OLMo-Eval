@@ -3,6 +3,6 @@ contact_links:
   - name: Documentation
     url: https://github.com/allenai/olmo-eval#readme
     about: Check the README for usage instructions
-  - name: Discussions
-    url: https://github.com/allenai/olmo-eval/discussions
-    about: Ask questions and discuss ideas
+  - name: Contributing guide
+    url: https://github.com/allenai/olmo-eval/blob/main/CONTRIBUTING.md
+    about: Setup, checks, and how to add an evaluation

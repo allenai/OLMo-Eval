@@ -17,6 +17,9 @@ Rules:
   built from these values are not silently low.
 - Agent results with more than one turn report only the last model call, so
   both counts are None for them.
+- A scripted conversation from the ``multi_turn_chat`` scaffold reports the sums
+  over its turns. Each turn's prompt repeats the conversation so far, so the
+  prompt count is the compute spent, not the length of the longest prompt.
 """
 
 from __future__ import annotations

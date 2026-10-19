@@ -813,7 +813,7 @@ class SandboxExecutor:
                 exit_code=process.returncode or 0,
             )
 
-        from swerex.runtime.abstract import Command  # type: ignore[ty:unresolved-import]
+        from swerex.runtime.abstract import Command
 
         response = await asyncio.wait_for(
             self._runtime.execute(Command(command=["bash", "-c", command], timeout=timeout)),
