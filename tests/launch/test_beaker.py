@@ -5,6 +5,7 @@ import pytest
 from olmo_eval.cli.beaker.config_loader import LaunchConfigLoader
 from olmo_eval.common.constants.infrastructure import cluster_has_weka
 from olmo_eval.launch.beaker import (
+    DEFAULT_WEKA_BUCKETS,
     BeakerEnvSecret,
     BeakerJobConfig,
     BeakerWekaBucket,
@@ -17,6 +18,7 @@ from olmo_eval.launch.beaker import (
     resolve_clusters,
     validate_min_runtime,
     validate_priority_configuration,
+    weka_buckets_with,
 )
 
 
@@ -140,6 +142,29 @@ class TestBeakerWekaBucket:
         """Test custom mount path."""
         bucket = BeakerWekaBucket(bucket="oe-eval-default", mount="/custom/path")
         assert bucket.mount == "/custom/path"
+
+
+class TestWekaBucketsWith:
+    """Tests for the default Weka bucket list and extra buckets."""
+
+    def test_job_config_mounts_defaults(self):
+        """A job config without extra buckets mounts exactly the defaults."""
+        config = BeakerJobConfig(
+            name="test-job",
+            command=["echo", "hello"],
+            cluster="h100",
+            workspace="ai2/oe-data",
+            budget="ai2/oe-other",
+        )
+        assert [b.bucket for b in config.weka_buckets] == list(DEFAULT_WEKA_BUCKETS)
+
+    def test_extra_buckets_appended_once(self):
+        """Extra buckets follow the defaults, and a repeated bucket is mounted once."""
+        buckets = weka_buckets_with(
+            ["olmo-3p5-post-checkpoints", "oe-eval-default", "olmo-3p5-post-checkpoints"]
+        )
+        assert [b.bucket for b in buckets] == [*DEFAULT_WEKA_BUCKETS, "olmo-3p5-post-checkpoints"]
+        assert buckets[-1].mount == "/weka/olmo-3p5-post-checkpoints"
 
 
 class TestBeakerJobConfig:

@@ -62,6 +62,9 @@ class LaunchConfig:
 
     uv_cache_dir: str | None = None
 
+    # Weka buckets mounted in addition to the defaults
+    weka_buckets: list[str] = field(default_factory=list)
+
     # Secret env overrides: maps beaker_secret_name -> env_var_name
     # Allows overriding default {username}_{ENV_VAR} pattern
     secret_env_overrides: dict[str, str] = field(default_factory=dict)
@@ -245,6 +248,7 @@ class LaunchConfigLoader:
             harness=self.cli_args.get("harness"),
             harness_overrides=self.cli_args.get("harness_overrides", []),
             uv_cache_dir=self.cli_args.get("uv_cache_dir"),
+            weka_buckets=list(self.cli_args.get("weka_buckets", [])),
             secret_env_overrides=self.cli_args.get("secret_env_overrides", {}),
             env_vars=self.cli_args.get("env_vars", {}),
         )
