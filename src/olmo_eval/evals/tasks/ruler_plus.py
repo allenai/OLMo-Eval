@@ -11,6 +11,10 @@ Generation budgets follow upstream RULER's per-task ``tokens_to_generate``,
 and each condition has 512 samples, whereas ruler.py follows HELMET's budgets
 with 100 samples. Scores are therefore not directly comparable between
 ``ruler_plus_*`` and ``ruler_*`` tasks at the same context size.
+
+These tasks are internal-only: allenai/ruler-plus is private because its
+haystacks include Paul Graham essay excerpts that we can't relicense (see
+ruler_plus_loader.py).
 """
 
 from typing import Any

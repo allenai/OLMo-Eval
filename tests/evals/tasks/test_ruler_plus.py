@@ -4,7 +4,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
+from huggingface_hub.errors import RepositoryNotFoundError
 
 from olmo_eval.data import ruler_plus_loader
 from olmo_eval.data.ruler_plus_loader import (
@@ -103,6 +105,19 @@ class TestDataFile:
         ]
         assert data_file.path == "/cache/shard.jsonl"
         assert data_file.source == f"hf:{RULER_PLUS_REPO_ID}@{RULER_PLUS_REVISION}/data/{SHARD}"
+
+    def test_private_repo_explains_access(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.delenv(RULER_PLUS_DATA_DIR_ENV_VAR, raising=False)
+
+        def fake_download(**kwargs: Any) -> str:
+            request = httpx.Request("GET", "https://huggingface.co")
+            raise RepositoryNotFoundError(
+                "404 Client Error", response=httpx.Response(404, request=request)
+            )
+
+        monkeypatch.setattr(ruler_plus_loader, "hf_hub_download", fake_download)
+        with pytest.raises(PermissionError, match="internal-only"):
+            get_ruler_plus_data_file(SHARD)
 
     def test_env_override_reads_local_file(self, local_data: Path):
         data_file = get_ruler_plus_data_file(SHARD)
