@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import copy
-import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, fields, replace
 from typing import TYPE_CHECKING, Any, Literal
 
+from olmo_eval.common.openai_credentials import secret_available
 from olmo_eval.common.repr import hide_unset
 from olmo_eval.inference.providers.config import ProviderConfig
 
@@ -117,11 +117,7 @@ class HarnessConfig:
         Returns:
             List of missing secret names (empty if all present).
         """
-        missing = []
-        for secret in self.required_secrets:
-            if not os.getenv(secret):
-                missing.append(secret)
-        return missing
+        return [secret for secret in self.required_secrets if not secret_available(secret)]
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization.
@@ -156,13 +152,10 @@ class HarnessConfig:
         if self.sandboxes:
             d["sandboxes"] = [s.to_dict() for s in self.sandboxes]
         if self.scaffold_kwargs:
-            # Copied because callers write into what this returns:
-            # _apply_harness_overrides passes it straight to
-            # _apply_dotlist_overrides, which sets its leaves in place.
-            # Presets are cached for the life of the process, so returning
-            # the config's own dict let one launch's `-o scaffold_kwargs...`
-            # override survive into every later config built from that
-            # preset.
+            # Copied so a caller that writes into the result cannot change
+            # this config. Presets are cached for the life of the process, so
+            # sharing the dict would let one caller's edits leak into every
+            # later config built from the same preset.
             d["scaffold_kwargs"] = copy.deepcopy(self.scaffold_kwargs)
         if self.sandbox_pool_instances is not None:
             d["sandbox_pool_instances"] = self.sandbox_pool_instances

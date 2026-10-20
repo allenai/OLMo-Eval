@@ -1,4 +1,4 @@
-"""Berkeley Function Calling Leaderboard (BFCL) v3 as a completion task.
+"""Berkeley Function Calling Leaderboard (BFCL) v3, single-turn categories.
 
 BFCL asks a model to pick the right function from a set of documented ones and
 fill in its arguments. A prediction is graded by comparing the calls it made
@@ -6,16 +6,33 @@ against a list of accepted values per parameter, so an answer is right when it
 names the right function and supplies values the benchmark accepts -- not when
 it matches one reference string.
 
-BFCL addresses an instruction-tuned model, through a chat template or a tool
-calling API. This module reformulates its single-turn categories as a plain
-completion, so a pretrained model with no chat template can be measured on the
-same instances: the instruction, the function documents, and the question form
-one block of text that the model continues with its calls. Curated exemplars
-carry the answer format, and ``:0shot`` through ``:5shot`` set how many are
-shown (the default is five)::
+Three regimes are registered for every category, differing only in how the
+functions reach the model and how its calls are read back:
 
-    uv run olmo-eval run -m my-base-model -t bfcl
-    uv run olmo-eval run -m my-base-model -t bfcl_simple:2shot
+``bfcl_simple``
+    Native function calling. The functions go to the server as tool schemas and
+    the calls come back as ``tool_calls``. This is the regime BFCL was built
+    for, and the one to use for an instruction-tuned model behind an
+    OpenAI-compatible endpoint::
+
+        uv run olmo-eval run -m my-model -t bfcl_simple
+
+    A vLLM server the run starts itself is told to parse tool calls whenever
+    a task sends tool schemas, and vLLM picks a ``--tool-call-parser`` from
+    the model name; add ``-o provider.kwargs.tool_call_parser=<name>`` to
+    choose one. A server that would answer in plain text, or a provider that
+    cannot carry tool schemas at all, stops the run with an error rather than
+    reporting a score of zero.
+
+``bfcl_simple:prompt``
+    BFCL's own prompting mode: the functions are written into a system prompt
+    and the model is asked to reply with ``[func(arg=value)]`` text. Works
+    against any chat endpoint, with no server-side tool parsing.
+
+``bfcl_simple:base``
+    The same task as a plain completion, for a pretrained model with no chat
+    template. Curated exemplars carry the answer format; ``:0shot`` through
+    ``:5shot`` change how many are shown, and the default is five.
 
 Multi-turn, executable, and REST categories are not registered: the first needs
 BFCL's stateful API backend, and the others grade by calling live third-party
@@ -30,16 +47,20 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import re
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar
 
 from olmo_eval.common.formatters import Formatter
 from olmo_eval.common.metrics import AccuracyMetric
 from olmo_eval.common.scorers.bfcl import (
+    GORILLA_TO_OPENAPI,
     BFCLScorer,
     DecodeError,
+    decode_text,
     decode_text_lenient,
+    decode_tool_calls,
     language_for_category,
 )
 from olmo_eval.common.scorers.bfcl.constants import Language
@@ -50,6 +71,7 @@ from olmo_eval.common.types import (
     Response,
     SamplingParams,
     Split,
+    ToolSchema,
 )
 from olmo_eval.data import DataLoader, DataSource
 from olmo_eval.evals.tasks.common import Task, register, register_variant
@@ -82,6 +104,25 @@ _PROMPT_OPENING = (
     "You SHOULD NOT include any other text in the response."
 )
 
+#: BFCL states how a model should behave across turns even in its single-turn
+#: categories, so the chat regimes say it too.
+_PROMPT_LATER_TURNS = (
+    "At each turn, your should try your best to complete the tasks requested by the user within "
+    "the current turn. Continue outputting functions to call until you have fulfilled the user's "
+    "request to the best of your ability. Once you have no more functions to call, the system "
+    "will consider the current turn complete and proceed to the next turn or task."
+)
+
+SYSTEM_PROMPT_WITHOUT_FUNC_DOC = f"{_PROMPT_OPENING}\n\n{_PROMPT_LATER_TURNS}\n"
+
+SYSTEM_PROMPT = (
+    SYSTEM_PROMPT_WITHOUT_FUNC_DOC
+    + "\nHere is a list of functions in JSON format that you can invoke.\n{functions}\n\n"
+)
+
+#: The completion regime drops the paragraph about later turns, which has
+#: nothing to say about a single-turn completion, and states the functions
+#: per example instead of once in a system message.
 BASE_INSTRUCTION = _PROMPT_OPENING
 
 
@@ -94,6 +135,12 @@ _LANGUAGE_HINTS = {
     Language.JAVASCRIPT: " Note that the provided function is in JavaScript syntax.",
     Language.PYTHON: " Note that the provided function is in Python 3 syntax.",
 }
+
+
+_INVALID_NAME_CHARS = re.compile(r"[^a-zA-Z0-9_-]")
+
+#: OpenAI's limit on a tool name.
+_MAX_TOOL_NAME_LEN = 64
 
 
 def _annotate_java_parameter(value: dict[str, Any]) -> None:
@@ -163,6 +210,78 @@ def prepare_function_docs(functions: list[dict[str, Any]], language: Language) -
     return prepared
 
 
+def _cast_to_openapi_types(properties: dict[str, Any]) -> dict[str, Any]:
+    """Rewrite Gorilla's type names as JSON Schema ones, one level into nesting."""
+    for value in properties.values():
+        declared = value.get("type")
+        if declared is None:
+            value["type"] = "string"
+        else:
+            if declared == "float":
+                value["format"] = "float"
+                value["description"] = value.get("description", "") + " This is a float type value."
+            value["type"] = GORILLA_TO_OPENAPI.get(declared, "string")
+
+        if value["type"] not in ("array", "object"):
+            continue
+        if "properties" in value:
+            value["properties"] = _cast_to_openapi_types(value["properties"])
+        elif "items" in value:
+            items = value["items"]
+            items["type"] = GORILLA_TO_OPENAPI.get(items.get("type"), "string")
+            if items["type"] == "array" and "items" in items:
+                inner = items["items"]
+                inner["type"] = GORILLA_TO_OPENAPI.get(inner.get("type"), "string")
+            elif items["type"] == "object" and "properties" in items:
+                items["properties"] = _cast_to_openapi_types(items["properties"])
+    return properties
+
+
+def _sanitize_tool_name(name: str, taken: set[str]) -> str:
+    """Return a name an OpenAI-style tool schema accepts, unique among ``taken``."""
+    candidate = _INVALID_NAME_CHARS.sub("_", name)[:_MAX_TOOL_NAME_LEN] or "function"
+    if candidate not in taken:
+        return candidate
+    for suffix in range(1, 1000):
+        marked = f"{candidate[: _MAX_TOOL_NAME_LEN - len(str(suffix)) - 1]}_{suffix}"
+        if marked not in taken:
+            return marked
+    raise ValueError(f"Could not find a unique tool name for {name!r}.")
+
+
+def build_tool_schemas(
+    functions: list[dict[str, Any]],
+) -> tuple[tuple[ToolSchema, ...], dict[str, str]]:
+    """Convert function documents to tool schemas, and map names back.
+
+    A tool name has to match ``^[a-zA-Z0-9_-]{1,64}$``, which many BFCL function
+    names do not, so the returned map restores the dataset's spelling when the
+    calls are read back.
+    """
+    schemas: list[ToolSchema] = []
+    name_map: dict[str, str] = {}
+    taken: set[str] = set()
+
+    for item in copy.deepcopy(functions):
+        parameters = item.get("parameters") or {}
+        parameters["type"] = "object"
+        parameters["properties"] = _cast_to_openapi_types(parameters.get("properties") or {})
+        parameters.setdefault("required", [])
+
+        sanitized = _sanitize_tool_name(item["name"], taken)
+        taken.add(sanitized)
+        name_map[sanitized] = item["name"]
+        schemas.append(
+            ToolSchema(
+                name=sanitized,
+                description=item.get("description") or "",
+                parameters=parameters,
+            )
+        )
+
+    return tuple(schemas), name_map
+
+
 def render_function_docs(functions: list[dict[str, Any]]) -> str:
     """Render function documents for a text prompt.
 
@@ -186,6 +305,89 @@ def render_messages(messages: Sequence[dict[str, Any]]) -> str:
 # ---------------------------------------------------------------------------
 
 
+class CallSource:
+    """Where a formatter's regime expects the model's calls to appear."""
+
+    TOOL_CALLS = "tool_calls"
+    TEXT = "text"
+
+
+@dataclass(slots=True)
+class BFCLToolFormatter(Formatter):
+    """Send the functions as native tool schemas and read back ``tool_calls``."""
+
+    call_source: ClassVar[str] = CallSource.TOOL_CALLS
+    lenient: ClassVar[bool] = False
+
+    @property
+    def request_type(self) -> RequestType:
+        return RequestType.CHAT
+
+    def format(self, instance: Instance, fewshot: list[Instance] | None = None) -> LMRequest:
+        messages = tuple(dict(m) for m in instance.metadata["messages"])
+        system_prompt = next((m["content"] for m in messages if m.get("role") == "system"), None)
+        return LMRequest(
+            request_type=RequestType.CHAT,
+            messages=messages,
+            tools=instance.tools,
+            system_prompt=system_prompt,
+        )
+
+
+@dataclass(slots=True)
+class BFCLPromptFormatter(Formatter):
+    """Write the functions into a system prompt and read back call text."""
+
+    call_source: ClassVar[str] = CallSource.TEXT
+    lenient: ClassVar[bool] = False
+
+    system_prompt_template: str = SYSTEM_PROMPT
+
+    @property
+    def request_type(self) -> RequestType:
+        return RequestType.CHAT
+
+    def _system_prompt(self, instance: Instance) -> str:
+        return self.system_prompt_template.format(
+            functions=render_function_docs(instance.metadata["prepared_functions"])
+        )
+
+    def format(self, instance: Instance, fewshot: list[Instance] | None = None) -> LMRequest:
+        messages: list[dict[str, Any]] = []
+        for example in fewshot or []:
+            messages.append({"role": "user", "content": self._exemplar_user(example)})
+            messages.append({"role": "assistant", "content": example.gold_answer or ""})
+
+        instance_messages = [dict(m) for m in instance.metadata["messages"]]
+        system_prompt = self._system_prompt(instance)
+        if instance_messages and instance_messages[0].get("role") == "system":
+            # BFCL keeps a question's own system message, appended to its own.
+            instance_messages[0]["content"] = (
+                system_prompt + "\n\n" + (instance_messages[0].get("content") or "")
+            )
+            system_prompt = instance_messages[0]["content"]
+            messages = [instance_messages[0], *messages, *instance_messages[1:]]
+        else:
+            messages = [
+                {"role": "system", "content": system_prompt},
+                *messages,
+                *instance_messages,
+            ]
+
+        return LMRequest(
+            request_type=RequestType.CHAT,
+            messages=tuple(messages),
+            system_prompt=system_prompt,
+        )
+
+    def _exemplar_user(self, example: Instance) -> str:
+        functions = render_function_docs(example.metadata["prepared_functions"])
+        return (
+            "Here is a list of functions in JSON format that you can invoke.\n"
+            f"{functions}\n\n{example.question}"
+        )
+
+
 @dataclass(slots=True)
 class BFCLCompletionFormatter(Formatter):
     """Lay the task out as a plain completion, with exemplars for the format.
@@ -194,6 +396,9 @@ class BFCLCompletionFormatter(Formatter):
     the functions, and the question are one block of text and the model
     continues it with the calls.
     """
+
+    call_source: ClassVar[str] = CallSource.TEXT
+    lenient: ClassVar[bool] = True
 
     instruction: str = BASE_INSTRUCTION
     functions_header: str = "### Functions:"
@@ -672,6 +877,14 @@ def fewshot_source_for(language: Language) -> str:
 
 BFCL_METRIC = AccuracyMetric(scorer=BFCLScorer)
 
+#: BFCL asks for up to 4096 tokens, shrunk to whatever the context window has
+#: left once the prompt is in it, and samples at 0.001 rather than a flat zero.
+CHAT_SAMPLING = SamplingParams(
+    max_tokens=4096,
+    temperature=0.001,
+    fit_max_tokens_to_context=True,
+)
+
 #: The completion regime stops at the next block header so that a model which
 #: keeps writing examples is scored on the answer it gave, not on what follows.
 COMPLETION_SAMPLING = SamplingParams(
@@ -698,11 +911,10 @@ class BFCLTask(Task):
     categories: tuple[str, ...] = ()
 
     split = Split.TRAIN
-    formatter = BFCLCompletionFormatter()
+    formatter = BFCLToolFormatter()
     metrics = (BFCL_METRIC,)
     primary_metric = BFCL_METRIC
-    sampling_params = COMPLETION_SAMPLING
-    num_fewshot = 5
+    sampling_params = CHAT_SAMPLING
     # A reasoning model's trace is not part of its answer; a reply without one
     # is left alone.
     strip_thinking = True
@@ -760,6 +972,7 @@ class BFCLTask(Task):
         language = language_for_category(test_category)
         functions = [dict(function) for function in doc["function"]]
         prepared = prepare_function_docs(functions, language)
+        tools, name_map = build_tool_schemas(prepared)
 
         # Single-turn categories carry exactly one turn of messages.
         messages = [dict(message) for message in doc["question"][0]]
@@ -768,6 +981,7 @@ class BFCLTask(Task):
 
         return Instance(
             question=question,
+            tools=tools,
             metadata={
                 "id": doc["id"],
                 "test_category": test_category,
@@ -775,6 +989,7 @@ class BFCLTask(Task):
                 "messages": messages,
                 "functions": functions,
                 "prepared_functions": prepared,
+                "name_map": name_map,
                 "ground_truth": self._load_answers().get(doc["id"], []),
             },
         )
@@ -805,15 +1020,32 @@ class BFCLTask(Task):
         the irrelevance categories score as the model declining to call
         anything.
 
-        Decoding also accepts the JSON tool-call formats models pick up during
-        pretraining, so a reply is judged on which function it chose rather
-        than on which surface form it reached for.
+        The completion regime also accepts the JSON tool-call formats models
+        pick up during pretraining, so a base model's reply is judged on which
+        function it chose rather than on which surface form it reached for.
         """
+        formatter = self.config.formatter
+        assert formatter is not None
+        from_tool_calls = (
+            getattr(type(formatter), "call_source", CallSource.TEXT) == CallSource.TOOL_CALLS
+        )
+        lenient = getattr(type(formatter), "lenient", False)
+
         for response in responses:
             language = Language(response.instance.metadata["language"])
+            name_map = response.instance.metadata.get("name_map") or {}
             for output in response.outputs:
                 try:
-                    output.extracted_answer = decode_text_lenient(output.text, language)
+                    if from_tool_calls:
+                        output.extracted_answer = decode_tool_calls(output.tool_calls, name_map)
+                        if not output.extracted_answer and output.text.strip():
+                            # Usually a server that was not told to parse tool
+                            # calls; worth seeing in the saved predictions.
+                            output.metadata["bfcl_no_tool_calls_with_text"] = True
+                    elif lenient:
+                        output.extracted_answer = decode_text_lenient(output.text, language)
+                    else:
+                        output.extracted_answer = decode_text(output.text, language)
                 except DecodeError as exc:
                     output.extracted_answer = None
                     output.metadata["bfcl_decode_error"] = f"{type(exc).__name__}: {exc}"
@@ -872,7 +1104,6 @@ def _register_bfcl_tasks() -> None:
         language = language_for_category(categories[0])
         attrs: dict[str, Any] = {
             "categories": categories,
-            "fewshot_source": fewshot_source_for(language),
             "data_source": DataSource(
                 path=BFCL_REPO,
                 data_files=tuple(f"BFCL_v3_{category}.json" for category in categories),
@@ -890,8 +1121,29 @@ def _register_bfcl_tasks() -> None:
         setattr(module, class_name, cls)
         register(task_name)(cls)
 
+        # BFCL's own prompting mode: functions in a system prompt, calls in text.
+        register_variant(
+            task_name,
+            "prompt",
+            formatter=BFCLPromptFormatter(),
+            fewshot_source=fewshot_source_for(language),
+        )
+
+        # The completion regime for a base model, with exemplars for the format.
+        register_variant(
+            task_name,
+            "base",
+            formatter=BFCLCompletionFormatter(),
+            sampling_params=COMPLETION_SAMPLING,
+            num_fewshot=5,
+            fewshot_source=fewshot_source_for(language),
+        )
+
         for count in SHOT_COUNTS:
             register_variant(task_name, f"{count}shot", num_fewshot=count)
 
 
 _register_bfcl_tasks()
+
+# Registered last: the multi-turn tasks build on this module's helpers.
+from . import multi_turn  # noqa: E402,F401

@@ -11,7 +11,8 @@ Two tasks mirror the official CharXiv evaluation (https://charxiv.github.io, por
 
 Only the ``validation`` split is supported (the leaderboard split; ``test`` answers are withheld).
 Question texts and grading prompts are byte-identical to the official pipeline. Grading needs
-``OPENAI_API_KEY``; judge replies are cached under ``CHARXIV_GPT_CACHE_DIR`` (or a temp dir).
+``OPENAI_API_KEY`` or ``OPENROUTER_API_KEY``; judge replies are cached under
+``CHARXIV_GPT_CACHE_DIR`` (or a temp dir).
 Metrics are 0-1 (the leaderboard reports x100); the official protocol counts failed grades
 (score -1) as 0 while ``n_invalid`` tracks them.
 """
@@ -146,7 +147,7 @@ class CharxivScoreMetric(Metric):
             return None
         return float(result["score"]) if result["score"] in (0, 1) else 0.0
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False
 
 
@@ -167,7 +168,7 @@ class CharxivInvalidCountMetric(Metric):
             return None
         return 0.0 if result["score"] in (0, 1) else 1.0
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False
 
 

@@ -11,6 +11,11 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+from olmo_eval.common.openai_credentials import (
+    OPENAI_API_KEY_ENV,
+    describe_secret,
+    openai_sandbox_env,
+)
 from olmo_eval.evals.external.result import ExternalEvalResult
 
 if TYPE_CHECKING:
@@ -49,6 +54,11 @@ class ExternalEval(ABC):
     @property
     def required_secrets(self) -> tuple[str, ...]:
         """Environment variable names that must be forwarded to the sandbox."""
+        return ()
+
+    @property
+    def extras(self) -> tuple[str, ...]:
+        """Package extras that must be installed for this evaluation to run."""
         return ()
 
     @property
@@ -119,11 +129,22 @@ class ExternalEval(ABC):
         )
 
     def _build_env_vars(self, secrets: tuple[str, ...] | None = None) -> dict[str, str]:
-        """Build environment variables for the sandbox, validating required secrets."""
+        """Build environment variables for the sandbox, validating required secrets.
+
+        A required OPENAI_API_KEY can be satisfied by OPENROUTER_API_KEY, in which
+        case the sandbox's OpenAI SDK is pointed at OpenRouter.
+        """
         secrets = secrets or self.required_secrets
         env_vars: dict[str, str] = {}
         missing = []
         for secret in secrets:
+            if secret == OPENAI_API_KEY_ENV:
+                openai_env = openai_sandbox_env()
+                if openai_env:
+                    env_vars.update(openai_env)
+                else:
+                    missing.append(describe_secret(OPENAI_API_KEY_ENV))
+                continue
             value = os.environ.get(secret)
             if value:
                 env_vars[secret] = value

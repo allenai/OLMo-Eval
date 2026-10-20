@@ -8,6 +8,7 @@ from typing import Any
 
 from rich.console import Console
 
+from olmo_eval.common.types import ProviderKind
 from olmo_eval.evals.suites import get_suite, suite_exists
 from olmo_eval.harness.config import HarnessConfig, ProviderConfig
 
@@ -88,12 +89,13 @@ def _apply_dotlist_overrides(base_dict: dict[str, Any], overrides: list[str]) ->
       ``sandbox_pool_min_instances`` minimum instead of being applied per sandbox
 
     Args:
-        base_dict: The base dictionary to modify.
+        base_dict: The base dictionary. It is not modified.
         overrides: List of dotlist strings (e.g., ["sandboxes.0.mode=modal"]).
 
     Returns:
-        The modified dictionary.
+        A new dictionary with the overrides applied.
     """
+    base_dict = copy.deepcopy(base_dict)
     for override in overrides:
         if "=" not in override:
             continue
@@ -174,6 +176,57 @@ def _apply_dotlist_overrides(base_dict: dict[str, Any], overrides: list[str]) ->
     return base_dict
 
 
+def provider_kind_override(overrides: list[str]) -> str | None:
+    """Return the provider kind set by a CLI override such as ``provider.kind=vllm_server``."""
+    provider_overrides = [
+        o for o in overrides if o.split("=", 1)[0].strip() in ("provider", "provider.kind")
+    ]
+    if not provider_overrides:
+        return None
+    provider = _apply_dotlist_overrides({"provider": {}}, provider_overrides)["provider"]
+    kind = provider.get("kind") if isinstance(provider, dict) else None
+    return str(kind) if kind else None
+
+
+def merge_model_provider(
+    harness_config: HarnessConfig,
+    provider_config: ProviderConfig,
+    overrides: list[str] | None = None,
+) -> HarnessConfig:
+    """Merge a model's provider into a harness config, honoring a CLI provider.kind override.
+
+    A harness preset's own provider kind yields to the model preset's kind, but an
+    explicit ``provider.kind`` override always wins. Scaffolds talk to the model through
+    an OpenAI client, so a model preset's in-process vllm kind runs as vllm_server under
+    a scaffold.
+    """
+    merged = harness_config.merge_provider(provider_config)
+    kind = provider_kind_override(overrides or [])
+    if kind is None and merged.scaffold and merged.provider.kind == ProviderKind.VLLM:
+        kind = ProviderKind.VLLM_SERVER
+    return merged.with_provider_overrides(kind=kind) if kind else merged
+
+
+def _apply_harness_overrides(harness_config: HarnessConfig, overrides: list[str]) -> HarnessConfig:
+    """Apply CLI overrides to harness config.
+
+    Args:
+        harness_config: Base HarnessConfig to modify.
+        overrides: List of dotlist override strings (e.g., ["sandbox.mode=docker"]).
+            Supports list indices like "sandboxes.0.mode=modal".
+            Supports JSON values like 'sandboxes.0={"mode":"modal"}'.
+            Supports shared sandbox overrides like
+            'sandboxes={"mode":"modal","instances":64,"min_instances":24}'
+            where non-pool fields are applied to each sandbox config and
+            instances/min_instances set the shared sandbox pool budget/minimum.
+
+    Returns:
+        New HarnessConfig with overrides applied.
+    """
+    harness_dict = _apply_dotlist_overrides(harness_config.to_dict(), overrides)
+    return HarnessConfig.from_dict(harness_dict)
+
+
 @dataclass
 class RunConfig:
     """Parsed and validated configuration for an evaluation run.
@@ -189,19 +242,6 @@ class RunConfig:
     task_overrides: dict[str, dict[str, Any]] = field(default_factory=dict, repr=False)
 
     output_dir: str = "/tmp/results/"
-
-    # Storage configuration
-    store: bool = False
-    s3_bucket: str | None = None
-    s3_prefix: str | None = None
-    s3_group: str | None = None
-    s3_endpoint_url: str | None = None
-    s3_region: str = "us-east-1"
-    db_host: str = "localhost"
-    db_port: int = 5432
-    db_name: str = "olmo_eval"
-    db_user: str = "postgres"
-    db_password: str = field(default="postgres", repr=False)
 
     # Experiment metadata
     experiment_name: str | None = None
@@ -259,17 +299,6 @@ class RunConfigBuilder:
         output_dir: str,
         num_gpus: int = 1,
         parallelism: int = 1,
-        store: bool = False,
-        s3_bucket: str | None = None,
-        s3_prefix: str | None = None,
-        s3_group: str | None = None,
-        s3_endpoint_url: str | None = None,
-        s3_region: str = "us-east-1",
-        db_host: str = "localhost",
-        db_port: int = 5432,
-        db_name: str = "olmo_eval",
-        db_user: str = "postgres",
-        db_password: str = "postgres",
         experiment_name: str | None = None,
         experiment_group: str | None = None,
         save_predictions: bool = True,
@@ -303,17 +332,6 @@ class RunConfigBuilder:
         self.output_dir = output_dir
         self.num_gpus = num_gpus
         self.parallelism = parallelism
-        self.store = store
-        self.s3_bucket = s3_bucket
-        self.s3_prefix = s3_prefix
-        self.s3_group = s3_group
-        self.s3_endpoint_url = s3_endpoint_url
-        self.s3_region = s3_region
-        self.db_host = db_host
-        self.db_port = db_port
-        self.db_name = db_name
-        self.db_user = db_user
-        self.db_password = db_password
         self.experiment_name = experiment_name
         self.experiment_group = experiment_group
         self.save_predictions = save_predictions
@@ -357,9 +375,7 @@ class RunConfigBuilder:
 
         task_overrides: dict[str, dict[str, Any]] = {}
         for task_spec, cli_overrides in resolved_cli_overrides.items():
-            override_dict: dict[str, Any] = {}
-            _apply_dotlist_overrides(override_dict, cli_overrides)
-            task_overrides[task_spec] = override_dict
+            task_overrides[task_spec] = _apply_dotlist_overrides({}, cli_overrides)
 
         # Resolve harness configuration with provider config built in
         harness_config = self._resolve_harness_config(self.model)
@@ -369,17 +385,6 @@ class RunConfigBuilder:
             task_specs=task_specs,
             task_overrides=task_overrides,
             output_dir=self.output_dir,
-            store=self.store,
-            s3_bucket=self.s3_bucket,
-            s3_prefix=self.s3_prefix,
-            s3_group=self.s3_group,
-            s3_endpoint_url=self.s3_endpoint_url,
-            s3_region=self.s3_region,
-            db_host=self.db_host,
-            db_port=self.db_port,
-            db_name=self.db_name,
-            db_user=self.db_user,
-            db_password=self.db_password,
             experiment_name=self.experiment_name,
             experiment_group=self.experiment_group,
             save_predictions=self.save_predictions,
@@ -445,18 +450,22 @@ class RunConfigBuilder:
                 raise SystemExit(1) from None
 
         else:
-            harness_config = HarnessConfig(name="default")
+            from olmo_eval.inference.metrics import MetricsConfig
+
+            # Collect inference metrics as the presets do, so per-task cost fields
+            # (attributed_inference_seconds) are filled for runs without --harness.
+            harness_config = HarnessConfig(name="default", metrics=MetricsConfig())
 
         # Apply CLI overrides to harness config
         if self.cli_harness_overrides:
-            harness_dict = harness_config.to_dict()
-            harness_dict = _apply_dotlist_overrides(harness_dict, self.cli_harness_overrides)
-            harness_config = HarnessConfig.from_dict(harness_dict)
+            harness_config = _apply_harness_overrides(harness_config, self.cli_harness_overrides)
 
         from olmo_eval.common.configs import get_provider_config
 
         provider_config = get_provider_config(model_name)
-        harness_config = harness_config.merge_provider(provider_config)
+        harness_config = merge_model_provider(
+            harness_config, provider_config, self.cli_harness_overrides
+        )
         if self.force_download_model:
             harness_config = harness_config.with_provider_overrides(force_download=True)
 

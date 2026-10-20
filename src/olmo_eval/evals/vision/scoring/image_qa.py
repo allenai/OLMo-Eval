@@ -227,10 +227,10 @@ class MathVistaGptScorer(ContextScorer):
     """MathVista scoring with the official GPT-4 answer extraction.
 
     Follows the official protocol: deterministic short-circuits first, then a
-    ``gpt-4-0613`` extraction call (requires ``OPENAI_API_KEY``).  Responses
-    are cached under ``cache_dir`` (env ``MATHVISTA_GPT_CACHE_DIR`` or a fresh
-    per-process temp dir) so a user's own re-runs are cheap; existing shared
-    caches are never touched.
+    ``gpt-4-0613`` extraction call (requires ``OPENAI_API_KEY`` or
+    ``OPENROUTER_API_KEY``).  Responses are cached under ``cache_dir`` (env
+    ``MATHVISTA_GPT_CACHE_DIR`` or a fresh per-process temp dir) so a user's own
+    re-runs are cheap; existing shared caches are never touched.
     """
 
     name: str = "score"

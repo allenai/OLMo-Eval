@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import dataclasses
 import unittest
+from unittest import mock
 
-from olmo_eval.common.types import Instance, LMOutput, RequestType
+import pytest
+
+from olmo_eval.common.types import Instance, LMOutput, MetricName, RequestType
 from olmo_eval.evals.tasks import omega_500
 from olmo_eval.evals.tasks.common import get_task
 from olmo_eval.evals.tasks.omega_500 import _FLEX, _STRICT
@@ -39,7 +43,9 @@ class TestOmega500Task(unittest.TestCase):
         self.assertEqual(hillclimb.config.sampling_params.max_tokens, 32768)
         self.assertEqual(hillclimb.config.sampling_params.temperature, 0.6)
         self.assertEqual(hillclimb.config.sampling_params.top_p, 0.95)
-        self.assertEqual(hillclimb.config.metrics, base.config.metrics)
+        self.assertEqual(
+            [m.name for m in hillclimb.config.metrics], [m.name for m in base.config.metrics]
+        )
         self.assertEqual(hillclimb.config.formatter, base.config.formatter)
 
     def test_process_doc(self) -> None:
@@ -135,6 +141,51 @@ class TestOmegaScorers(unittest.TestCase):
         self.assertEqual(OmegaExactMatchScorer().name, "exact_match")
 
 
+class TestOmegaRepairedExtraction(unittest.TestCase):
+    """The hill-climb variants repair the reference cascade; omega_500 keeps it."""
+
+    def _scores(self, task_name: str, gold: str, text: str) -> tuple[float, float]:
+        scorers = {m.name: m.scorer() for m in get_task(task_name).config.metrics}
+        instance = _make_instance(gold)
+        return (
+            scorers["exact_match"].score(instance, LMOutput(text=text)),
+            scorers["exact_match_flex"].score(instance, LMOutput(text=text)),
+        )
+
+    def test_colon_after_prefix(self) -> None:
+        for task_name in ("omega_500:hillclimb", "omega_500_out"):
+            for text in (
+                "The answer is: 42",
+                "The answer is: 42.",
+                "Therefore, the final answer is: 42",
+                "reasoning\nanswer is:\n42",
+            ):
+                with self.subTest(task=task_name, text=text):
+                    self.assertEqual(self._scores(task_name, "42", text), (1.0, 1.0))
+
+    def test_unformatted_answer_counts_for_flex(self) -> None:
+        for task_name in ("omega_500:hillclimb", "omega_500_out"):
+            for text in ("42", "42.", "reasoning\n42"):
+                with self.subTest(task=task_name, text=text):
+                    self.assertEqual(self._scores(task_name, "42", text), (0.0, 1.0))
+
+    def test_task_extract_answer_uses_repaired_cascade(self) -> None:
+        output = LMOutput(text="The answer is: 42")
+        self.assertEqual(get_task("omega_500:hillclimb").extract_answer(output), "42")
+        self.assertEqual(get_task("omega_500").extract_answer(output), ": 42")
+
+    def test_extract_answer_does_not_depend_on_the_primary_metric(self) -> None:
+        task = get_task("omega_500:hillclimb")
+        config = dataclasses.replace(task.config, primary_metric=MetricName.ACCURACY)
+        with mock.patch.object(task, "config", config):
+            self.assertEqual(task.extract_answer(LMOutput(text="The answer is: 42")), "42")
+
+    def test_reference_task_keeps_reference_extraction(self) -> None:
+        """omega_500 stays comparable with oe-eval's published numbers."""
+        self.assertEqual(self._scores("omega_500", "42", "The answer is: 42"), (0.0, 0.0))
+        self.assertEqual(self._scores("omega_500", "42", "42"), (0.0, 0.0))
+
+
 class TestOmegaDocIds(unittest.TestCase):
     DOC = {
         "id": "omega_500_001",
@@ -155,20 +206,26 @@ class TestOmegaDocIds(unittest.TestCase):
         self.assertEqual(instance.metadata["family"], "arithmetic_gcd")
 
 
-def test_unboxed_fast_path_matches_reference_cascade(monkeypatch):
+@pytest.mark.parametrize(
+    ("extract_name", "answer_regexes_name"),
+    [("_extract", "_ANSWER_REGEXES"), ("_extract_repaired", "_REPAIRED_ANSWER_REGEXES")],
+)
+def test_unboxed_fast_path_matches_full_cascade(monkeypatch, extract_name, answer_regexes_name):
+    extract = getattr(omega_500, extract_name)
+    full_answer_regexes = getattr(omega_500, answer_regexes_name)
     cases = [
         "reasoning\n" * 200 + ending
         for ending in ("", "answer: 42", "Therefore, the final answer is 42", "answer is:\n42")
     ] + [r"\boxed{4}", r"first \boxed{3} then \boxed{4}", r"unfinished \boxed{"]
-    actual = [omega_500._extract(text) for text in cases]
+    actual = [extract(text) for text in cases]
     original = omega_500.extract_answer_with_format
 
-    def reference(text, **kwargs):
-        kwargs["answer_regexes"] = omega_500._ANSWER_REGEXES
+    def full(text, **kwargs):
+        kwargs["answer_regexes"] = full_answer_regexes
         return original(text, **kwargs)
 
-    monkeypatch.setattr(omega_500, "extract_answer_with_format", reference)
-    assert actual == [omega_500._extract(text) for text in cases]
+    monkeypatch.setattr(omega_500, "extract_answer_with_format", full)
+    assert actual == [extract(text) for text in cases]
 
 
 if __name__ == "__main__":

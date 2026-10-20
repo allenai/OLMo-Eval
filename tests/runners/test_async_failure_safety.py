@@ -119,10 +119,6 @@ def test_marked_chat_request_fails_its_instance() -> None:
 def test_streaming_strategy_propagates_fast_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    class _Reporter:
-        def progress_callback(self, _label: str):
-            return lambda *_args, **_kwargs: None
-
     async def fail(*_args: object, **_kwargs: object) -> None:
         raise TerminalProviderError("engine died")
 
@@ -142,7 +138,6 @@ def test_streaming_strategy_propagates_fast_failure(
                 total_instances=1,
             )
 
-    monkeypatch.setattr("olmo_eval.common.beaker_status.BeakerStatusReporter", _Reporter)
     asyncio.run(run())
 
 

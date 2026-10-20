@@ -1,5 +1,6 @@
 """Tests for BeakerStatusReporter."""
 
+import threading
 import unittest
 from unittest import mock
 
@@ -142,6 +143,51 @@ class BeakerStatusReporterTest(unittest.TestCase):
         self.assertEqual(thread_class.call_args.kwargs["name"], "beaker-status-update")
         self.assertTrue(thread_class.call_args.kwargs["daemon"])
         fake_thread.start.assert_called_once_with()
+
+    def _slow_reporter(self, release: threading.Event):
+        sent: list[str] = []
+
+        def update(_workload, description: str) -> None:
+            sent.append(description.split(" git_commit")[0])
+            if len(sent) == 1:
+                release.wait(5)
+
+        fake_client = mock.MagicMock()
+        fake_client.workload.update.side_effect = update
+        with (
+            mock.patch.dict("os.environ", {"BEAKER_WORKLOAD_ID": "wl_xyz"}, clear=True),
+            mock.patch.object(beaker_status.Beaker, "from_env", return_value=fake_client),
+        ):
+            reporter = beaker_status.BeakerStatusReporter(min_interval=0.0)
+        return reporter, sent
+
+    def test_forced_update_during_slow_request_is_sent_after_it(self) -> None:
+        release = threading.Event()
+        reporter, sent = self._slow_reporter(release)
+
+        reporter.update("first")
+        reporter.update("skipped")
+        reporter.update("final", force=True)
+        threading.Timer(0.2, release.set).start()
+        reporter.flush()
+
+        self.assertEqual(sent, ["first", "final"])
+
+    def test_only_the_newest_forced_update_is_kept(self) -> None:
+        release = threading.Event()
+        reporter, sent = self._slow_reporter(release)
+
+        reporter.update("first")
+        reporter.update("older", force=True)
+        reporter.update("newest", force=True)
+        release.set()
+        reporter.flush()
+
+        self.assertEqual(sent, ["first", "newest"])
+
+    def test_flush_without_updates_returns(self) -> None:
+        with mock.patch.dict("os.environ", {}, clear=True):
+            beaker_status.BeakerStatusReporter().flush()
 
 
 if __name__ == "__main__":
