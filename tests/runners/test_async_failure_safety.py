@@ -10,8 +10,8 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from olmo_eval.common.types import Instance, LMRequest, RequestType
-from olmo_eval.inference.errors import TerminalProviderError
+from olmo_eval.common.types import Instance, LMOutput, LMRequest, RequestType
+from olmo_eval.inference.errors import REQUEST_ERROR_KEY, TerminalProviderError
 from olmo_eval.runners.asynq.batching import BatchConfig, StreamingStrategy
 from olmo_eval.runners.asynq.monitoring import check_workers_alive
 from olmo_eval.runners.asynq.processing import process_batch, process_chat_request
@@ -80,13 +80,45 @@ def test_terminal_processing_paths_propagate_without_instance_failures() -> None
         assert result_queue.empty()
 
 
+def test_marked_request_fails_alone_in_its_batch() -> None:
+    marked = LMOutput(text="", metadata={REQUEST_ERROR_KEY: "prompt too long"})
+    harness = SimpleNamespace(
+        provider=SimpleNamespace(
+            describe_request=Mock(return_value=None),
+            agenerate=AsyncMock(return_value=[[LMOutput(text="ok")], [marked]]),
+        ),
+        _apply_config=lambda request: request,
+        flush_metrics=Mock(),
+    )
+    result_queue: queue.Queue[ResultItem] = queue.Queue()
+
+    asyncio.run(process_batch([_queue_item(0), _queue_item(1)], harness, result_queue))  # type: ignore[arg-type]
+
+    results = {r.instance_idx: r for r in (result_queue.get_nowait() for _ in range(2))}
+    assert results[0].error is None and [o.text for o in results[0].outputs] == ["ok"]
+    assert results[1].error == "prompt too long" and results[1].outputs == []
+
+
+def test_marked_chat_request_fails_its_instance() -> None:
+    marked = LMOutput(text="", metadata={REQUEST_ERROR_KEY: "prompt too long"})
+    harness = SimpleNamespace(
+        provider=SimpleNamespace(describe_request=Mock(return_value=None)),
+        _apply_config=lambda request: request,
+        run=AsyncMock(
+            return_value=SimpleNamespace(final_output=marked, trajectory=None, error=None)
+        ),
+    )
+    result_queue: queue.Queue[ResultItem] = queue.Queue()
+
+    asyncio.run(process_chat_request(_queue_item(0), harness, result_queue))  # type: ignore[arg-type]
+
+    result = result_queue.get_nowait()
+    assert result.error == "prompt too long" and result.outputs == []
+
+
 def test_streaming_strategy_propagates_fast_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    class _Reporter:
-        def progress_callback(self, _label: str):
-            return lambda *_args, **_kwargs: None
-
     async def fail(*_args: object, **_kwargs: object) -> None:
         raise TerminalProviderError("engine died")
 
@@ -106,7 +138,6 @@ def test_streaming_strategy_propagates_fast_failure(
                 total_instances=1,
             )
 
-    monkeypatch.setattr("olmo_eval.common.beaker_status.BeakerStatusReporter", _Reporter)
     asyncio.run(run())
 
 

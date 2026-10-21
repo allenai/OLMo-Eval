@@ -14,6 +14,7 @@ from .base import (
     Scorer,
     SQuADF1Scorer,
 )
+from .bfcl import BFCLScorer
 from .citation import (
     CITATION_GROUP_PROMPT,
     JUST_HAS_A_TITLE,
@@ -22,8 +23,14 @@ from .citation import (
     score_citations_for_sections,
 )
 from .code_execution import CodeExecutionScorer, MultiplEScorer
-from .execution import ContextScorer, ExecutionScorer, SandboxRequiredError
-from .ifeval import IFEvalScorer
+from .execution import (
+    ContextScorer,
+    ExecutionScorer,
+    SandboxRequiredError,
+    ScoringIncompleteError,
+)
+from .ifeval import IFEvalScorer, MultiIFScorer
+from .label_set import LabelSetMatchScorer
 from .llm_judge import (
     JudgeFn,
     LLMJudgeScorer,
@@ -48,6 +55,7 @@ from .trajectory import (
 )
 
 __all__ = [
+    "BFCLScorer",
     "BitsPerByteScorer",
     "build_openai_judge_fn",
     "CITATION_GROUP_PROMPT",
@@ -62,10 +70,12 @@ __all__ = [
     "IFEvalScorer",
     "JudgeFn",
     "JUST_HAS_A_TITLE",
+    "LabelSetMatchScorer",
     "LLMJudgeScorer",
     "LogprobScorer",
     "MathVerifyScorer",
     "MinervaMathScorer",
+    "MultiIFScorer",
     "MultipleChoiceScorer",
     "MultiplEScorer",
     "NGramCopyingBPBScorer",
@@ -74,6 +84,7 @@ __all__ = [
     "RubricJudgeScorer",
     "SafetyScorer",
     "SandboxRequiredError",
+    "ScoringIncompleteError",
     "score_citation_group",
     "score_citations_for_sections",
     "Scorer",

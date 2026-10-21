@@ -25,11 +25,27 @@ class TestPopQATask(unittest.TestCase):
         self.assertEqual(task.config.sampling_params.max_tokens, 15)
         self.assertEqual(task.config.sampling_params.stop_sequences, ("\n\n",))
 
+    def test_metrics(self) -> None:
+        """First-line containment is primary; whole-output containment stays."""
+        task = get_task("popqa")
+        self.assertEqual(
+            {metric.name for metric in task.config.metrics},
+            {"exact_match_first_line", "exact_match_containment"},
+        )
+        primary = task.config.get_primary_metric()
+        assert primary is not None
+        self.assertEqual(primary.name, "exact_match_first_line")
+
     def test_chat_variant(self) -> None:
         task = get_task("popqa:chat")
         self.assertEqual(task.request_type, RequestType.CHAT)
         self.assertIsNone(task.config.sampling_params.stop_sequences)
         self.assertEqual(task.config.sampling_params.temperature, 0.6)
+
+    def test_both_variants_strip_reasoning(self) -> None:
+        """A completed trace fits even the base task's 15-token budget."""
+        self.assertTrue(get_task("popqa").config.strip_thinking)
+        self.assertTrue(get_task("popqa:chat").config.strip_thinking)
 
     def test_process_doc(self) -> None:
         task = get_task("popqa")
@@ -59,6 +75,24 @@ class TestPopQATask(unittest.TestCase):
         self.assertIn(" A: ", examples[0])
         self.assertTrue(request.prompt.endswith("Q: What is X? A:"))
 
+    def _task_with_fewshot(self, num_fewshot: int):
+        """``get_task`` hands back a shared config, so restore it afterwards."""
+        task = get_task("popqa")
+        original = task.config.num_fewshot
+        self.addCleanup(setattr, task.config, "num_fewshot", original)
+        task.config.num_fewshot = num_fewshot
+        return task
+
+    def test_zero_shot_override_drops_all_examples(self) -> None:
+        """A zero-shot override must not fall back to the full fixed set."""
+        task = self._task_with_fewshot(0)
+        self.assertEqual(task._build_fewshot(), [])
+        request = task.format_request(_make_instance(["answer"]))
+        self.assertEqual(request.prompt, "Q: What is X? A:")
+
+    def test_fewshot_truncates_to_requested_count(self) -> None:
+        self.assertEqual(len(self._task_with_fewshot(3)._build_fewshot()), 3)
+
     def test_chat_fewshot_in_single_message(self) -> None:
         task = get_task("popqa:chat")
         request = task.format_request(_make_instance(["answer"]))
@@ -71,10 +105,27 @@ class TestPopQATask(unittest.TestCase):
 class TestPopQAContainsScorer(unittest.TestCase):
     def setUp(self) -> None:
         self.scorer = PopQAContainsScorer()
+        self.first_line = PopQAContainsScorer(name="popqa_contains_first_line", first_line=True)
         self.instance = _make_instance(["United States of America", "USA"])
 
     def _score(self, text: str) -> float:
         return self.scorer.score(self.instance, LMOutput(text=text))
+
+    def test_first_line_ignores_rambled_hits(self) -> None:
+        """An alias appearing only in invented follow-up Q/A must not count."""
+        rambled = "France\n\nQ: Where is NASA? A: USA\n\nQ: Who wrote it?"
+        self.assertEqual(self.scorer.score(self.instance, LMOutput(text=rambled)), 1.0)
+        self.assertEqual(self.first_line.score(self.instance, LMOutput(text=rambled)), 0.0)
+
+    def test_first_line_accepts_answer_on_first_line(self) -> None:
+        text = "The USA, of course.\nSome elaboration follows."
+        self.assertEqual(self.first_line.score(self.instance, LMOutput(text=text)), 1.0)
+
+    def test_first_line_skips_leading_blank_lines(self) -> None:
+        """What a stripped reasoning trace leaves behind: blank lines, then the answer."""
+        text = "\n\nThe USA.\n\nQ: Where is NASA? A: USA"
+        self.assertEqual(self.first_line.score(self.instance, LMOutput(text=text)), 1.0)
+        self.assertEqual(self.first_line.score(self.instance, LMOutput(text="\n\nFrance")), 0.0)
 
     def test_verbatim_match(self) -> None:
         self.assertEqual(self._score(" United States of America"), 1.0)

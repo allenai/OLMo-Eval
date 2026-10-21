@@ -80,4 +80,26 @@ def test_science_nojudge_excludes_judge_tasks():
 
 def test_science_judge_contains_judge_tasks():
     expanded = get_suite("science:judge").expand()
-    assert set(expanded) == {"astabench_scholarqa"}
+    assert set(expanded) == {
+        "astabench_scholarqa",
+        "frontierscience_olympiad",
+        "frontierscience_research",
+        "hle:text:verified",
+    }
+
+
+def test_science_all_includes_only_the_verified_hle_variant():
+    expanded = get_suite("science:all").expand()
+    assert "hle:text:verified" in expanded
+    assert "hle:text" not in expanded
+
+
+def test_frontierscience_suite_holds_both_tracks():
+    assert set(get_suite("frontierscience").expand()) == {
+        "frontierscience_olympiad",
+        "frontierscience_research",
+    }
+
+
+def test_hle_suite_holds_the_text_variants():
+    assert set(get_suite("hle_text").expand()) == {"hle:text", "hle:text:verified"}

@@ -39,6 +39,7 @@ class TestAggregationStrategy:
         """Test that all expected values exist."""
         assert AggregationStrategy.NONE.value == "none"
         assert AggregationStrategy.AVERAGE.value == "average"
+        assert AggregationStrategy.WEIGHTED_AVERAGE.value == "weighted_average"
         assert AggregationStrategy.AVERAGE_OF_AVERAGES.value == "average_of_averages"
         assert AggregationStrategy.DISPLAY_ONLY.value == "display_only"
 

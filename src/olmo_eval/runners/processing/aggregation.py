@@ -5,6 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from olmo_eval.common.logging import get_logger
+from olmo_eval.runners.processing.generation_counts import sum_generation_counts
+
+logger = get_logger(__name__)
+
 
 @dataclass
 class ChildAverageResult:
@@ -50,6 +55,46 @@ def _unflatten_metrics(flat_metrics: dict[str, float]) -> dict[str, dict[str, fl
     return result
 
 
+def _weighted_mean(values: list[float], weights: list[float]) -> float:
+    """Instance-weighted mean. Callers guarantee one positive weight per value."""
+    return sum(value * weight for value, weight in zip(values, weights, strict=True)) / sum(weights)
+
+
+def _mean(values: list[float]) -> float:
+    return sum(values) / len(values)
+
+
+def _task_weight(task_data: dict[str, Any]) -> float:
+    """Instance count to weight one task by, or 0.0 when there is no usable count."""
+    num_instances = task_data.get("num_instances")
+    if not isinstance(num_instances, (int, float)) or isinstance(num_instances, bool):
+        return 0.0
+    return float(num_instances) if num_instances > 0 else 0.0
+
+
+def _tasks_missing_instance_counts(
+    task_specs: list[str],
+    task_results: dict[str, dict[str, Any]],
+) -> list[str]:
+    return sorted(spec for spec in task_specs if _task_weight(task_results[spec]) <= 0)
+
+
+def _log_omitted_weighted_suite(suite_name: str, task_specs: list[str]) -> None:
+    logger.warning(
+        f"Suite {suite_name}: no instance count for {', '.join(task_specs)}. "
+        f"Omitting the aggregate - an instance-weighted suite reports a weighted "
+        f"mean or no score at all."
+    )
+
+
+def _contributing_task_specs(
+    task_specs: list[str],
+    task_results: dict[str, dict[str, Any]],
+) -> list[str]:
+    """The specs that published metrics, in suite order."""
+    return [spec for spec in task_specs if (task_results.get(spec) or {}).get("metrics")]
+
+
 def _extract_primary_score(
     task_data: dict[str, Any],
 ) -> float | None:
@@ -62,6 +107,32 @@ def _extract_primary_score(
     return extract_score_from_metrics(task_data.get("metrics", {}), primary_metric_key)
 
 
+def _log_tasks_excluded_from_suite(
+    suite_name: str,
+    task_specs: list[str],
+    task_results: dict[str, dict[str, Any]],
+) -> None:
+    """Name the failed tasks that a suite average leaves out.
+
+    A failed task publishes no metrics, so it drops out of the average on its
+    own. That is deliberate - a score computed on a subset of instances must not
+    pollute a suite average - but it silently changes what the average covers, so
+    say it once per excluded task instead of letting the reader infer it from
+    num_tasks.
+    """
+    for spec in task_specs:
+        task_data = task_results.get(spec)
+        if task_data is None or task_data.get("metrics"):
+            continue
+        error = task_data.get("error")
+        if not error:
+            continue
+        logger.warning(
+            f"Suite {suite_name}: excluding failed task {spec} from the aggregate "
+            f"({error}). The suite average covers the remaining tasks only."
+        )
+
+
 def _compute_child_average(
     child: str | Any,  # str or Suite
     priority_suffix: str,
@@ -72,45 +143,63 @@ def _compute_child_average(
     Returns:
         ChildAverageResult with metrics and task info, or None if no results found.
     """
-    from olmo_eval.evals.suites.registry import Suite
+    from olmo_eval.evals.suites.registry import AggregationStrategy, Suite
 
     if isinstance(child, Suite):
-        # Child is a nested Suite - average all its expanded tasks
+        # Child is a nested Suite - average all its expanded tasks, weighting
+        # each by its instance count when the child asks to be weighted.
+        weighted = child.aggregation == AggregationStrategy.WEIGHTED_AVERAGE
+        child_specs = [f"{task_spec}{priority_suffix}" for task_spec in child.expand()]
+        tasks_included = _contributing_task_specs(child_specs, task_results)
+        if not tasks_included:
+            return None
+
+        if weighted:
+            missing = _tasks_missing_instance_counts(tasks_included, task_results)
+            if missing:
+                _log_omitted_weighted_suite(child.name, missing)
+                return None
+
         child_metrics: dict[str, list[float]] = {}
+        child_metric_weights: dict[str, list[float]] = {}
         primary_scores: list[float] = []
-        tasks_included = []
+        primary_score_weights: list[float] = []
 
-        for task_spec in child.expand():
-            full_task_spec = f"{task_spec}{priority_suffix}"
-            if full_task_spec not in task_results:
-                continue
-
+        for full_task_spec in tasks_included:
             task_data = task_results[full_task_spec]
-            nested_metrics = task_data.get("metrics", {})
-            if not nested_metrics:
-                continue
 
             # Flatten nested metrics for averaging
-            flat_metrics = _flatten_nested_metrics(nested_metrics)
+            flat_metrics = _flatten_nested_metrics(task_data.get("metrics", {}))
             if not flat_metrics:
                 continue
 
-            tasks_included.append(full_task_spec)
+            task_weight = _task_weight(task_data)
             for metric_key, value in flat_metrics.items():
                 if metric_key not in child_metrics:
                     child_metrics[metric_key] = []
+                    child_metric_weights[metric_key] = []
                 child_metrics[metric_key].append(value)
+                child_metric_weights[metric_key].append(task_weight)
 
             primary_value = _extract_primary_score(task_data)
             if primary_value is not None:
                 primary_scores.append(primary_value)
+                primary_score_weights.append(task_weight)
 
         if not child_metrics:
             return None
 
-        averaged_flat = {name: sum(vals) / len(vals) for name, vals in child_metrics.items()}
+        averaged_flat = {
+            name: (_weighted_mean(vals, child_metric_weights[name]) if weighted else _mean(vals))
+            for name, vals in child_metrics.items()
+        }
         averaged = _unflatten_metrics(averaged_flat)
-        avg_primary = sum(primary_scores) / len(primary_scores) if primary_scores else None
+        if not primary_scores:
+            avg_primary = None
+        elif weighted:
+            avg_primary = _weighted_mean(primary_scores, primary_score_weights)
+        else:
+            avg_primary = _mean(primary_scores)
         # Build the key for this nested suite (with suffix)
         nested_key = f"{child.name}{priority_suffix}"
         return ChildAverageResult(
@@ -140,6 +229,17 @@ def _compute_child_average(
         )
 
 
+def _attach_generation_counts(
+    suite_result: dict[str, Any],
+    task_results: dict[str, dict[str, Any]],
+    task_specs: list[str],
+) -> None:
+    """Record the summed generation counts of the tasks behind a suite score."""
+    counts = sum_generation_counts(task_results, task_specs)
+    if counts is not None:
+        suite_result["generation_counts"] = counts
+
+
 def compute_suite_aggregations(
     task_specs: list[str],
     task_results: dict[str, dict[str, Any]],
@@ -149,6 +249,8 @@ def compute_suite_aggregations(
     For each suite in task_specs, computes aggregated metrics based on the
     suite's aggregation strategy:
     - AVERAGE: Simple average of all expanded task scores
+    - WEIGHTED_AVERAGE: Average of all expanded task scores, each weighted by
+      the task's instance count
     - AVERAGE_OF_AVERAGES: Average over children, where nested suites are
       averaged first (each child gets equal weight)
 
@@ -182,6 +284,12 @@ def compute_suite_aggregations(
         suite = get_suite(base_spec)
         if suite.aggregation == AggregationStrategy.NONE:
             continue
+
+        _log_tasks_excluded_from_suite(
+            spec,
+            [f"{task_spec}{priority_suffix}" for task_spec in suite.expand()],
+            task_results,
+        )
 
         if suite.aggregation == AggregationStrategy.AVERAGE_OF_AVERAGES:
             # Average of averages: each child (task or nested suite) gets equal weight
@@ -226,6 +334,7 @@ def compute_suite_aggregations(
                             "average": result.primary_score
                         }
                         nested_result["primary_metric"] = "primary_score:average"
+                    _attach_generation_counts(nested_result, task_results, result.tasks)
                     suite_aggregations[result.nested_suite_key] = nested_result
 
             if not child_averages:
@@ -251,46 +360,57 @@ def compute_suite_aggregations(
                 aggregated_metrics["primary_score"] = {"average": avg_primary}
                 suite_result["primary_metric"] = "primary_score:average"
 
+            _attach_generation_counts(suite_result, task_results, all_tasks_included)
             suite_aggregations[spec] = suite_result
         else:
-            # AVERAGE or DISPLAY_ONLY: simple average of all expanded tasks
-            suite_tasks = suite.expand()
+            # AVERAGE, WEIGHTED_AVERAGE or DISPLAY_ONLY: average all expanded
+            # tasks, weighting each by its instance count for WEIGHTED_AVERAGE.
+            weighted = suite.aggregation == AggregationStrategy.WEIGHTED_AVERAGE
+            suite_specs = [f"{task_spec}{priority_suffix}" for task_spec in suite.expand()]
+            tasks_included = _contributing_task_specs(suite_specs, task_results)
+            if not tasks_included:
+                continue
+
+            if weighted:
+                missing = _tasks_missing_instance_counts(tasks_included, task_results)
+                if missing:
+                    _log_omitted_weighted_suite(spec, missing)
+                    continue
+
             suite_metrics: dict[str, list[float]] = {}  # Flat "metric:scorer" -> values
+            suite_metric_weights: dict[str, list[float]] = {}
             task_primary_scores: list[float] = []
-            tasks_included: list[str] = []
+            primary_score_weights: list[float] = []
 
-            for task_spec in suite_tasks:
-                # Build the full task spec with the same suffix as the suite
-                full_task_spec = f"{task_spec}{priority_suffix}"
-
-                if full_task_spec not in task_results:
-                    continue
-
+            for full_task_spec in tasks_included:
                 task_data = task_results[full_task_spec]
-                nested_metrics = task_data.get("metrics", {})
-
-                if not nested_metrics:
-                    continue
-
-                tasks_included.append(full_task_spec)
+                task_weight = _task_weight(task_data)
 
                 # Flatten nested metrics for averaging
-                flat_metrics = _flatten_nested_metrics(nested_metrics)
+                flat_metrics = _flatten_nested_metrics(task_data.get("metrics", {}))
                 for metric_key, value in flat_metrics.items():
                     if metric_key not in suite_metrics:
                         suite_metrics[metric_key] = []
+                        suite_metric_weights[metric_key] = []
                     suite_metrics[metric_key].append(value)
+                    suite_metric_weights[metric_key].append(task_weight)
 
                 primary_value = _extract_primary_score(task_data)
                 if primary_value is not None:
                     task_primary_scores.append(primary_value)
+                    primary_score_weights.append(task_weight)
 
             if not suite_metrics:
                 continue
 
             # Compute averages and unflatten back to nested structure
             averaged_flat = {
-                name: sum(values) / len(values) for name, values in suite_metrics.items()
+                name: (
+                    _weighted_mean(values, suite_metric_weights[name])
+                    if weighted
+                    else _mean(values)
+                )
+                for name, values in suite_metrics.items()
             }
             aggregated_metrics = _unflatten_metrics(averaged_flat)
 
@@ -302,10 +422,15 @@ def compute_suite_aggregations(
             }
 
             if task_primary_scores:
-                avg_primary = sum(task_primary_scores) / len(task_primary_scores)
+                avg_primary = (
+                    _weighted_mean(task_primary_scores, primary_score_weights)
+                    if weighted
+                    else _mean(task_primary_scores)
+                )
                 aggregated_metrics["primary_score"] = {"average": avg_primary}
                 avg_suite_result["primary_metric"] = "primary_score:average"
 
+            _attach_generation_counts(avg_suite_result, task_results, tasks_included)
             suite_aggregations[spec] = avg_suite_result
 
     return suite_aggregations

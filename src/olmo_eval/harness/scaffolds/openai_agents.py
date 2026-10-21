@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import functools
 import logging
 from collections.abc import Sequence
 from contextvars import ContextVar
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
+from olmo_eval.common.openai_credentials import resolve_openai_credentials
 from olmo_eval.common.types import LMOutput, LMRequest, SamplingParams
 from olmo_eval.common.types.tools import ToolCall, ToolResult
 from olmo_eval.common.types.trajectory import AgentTrajectory, AgentTurn
@@ -24,10 +26,134 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _current_binding: ContextVar[ExecutorBinding | None] = ContextVar("_current_binding", default=None)
+_max_tool_output_chars: ContextVar[int | None] = ContextVar("_max_tool_output_chars", default=None)
 FORCED_FINAL_ANSWER_INSTRUCTION = (
     "You have reached the maximum number of steps. Based on the information gathered so far, "
     "provide your final answer now. Do not call any tools."
 )
+
+# Chat template defaults applied to self-hosted requests unless configured otherwise.
+# Thinking is pinned off because no agentic preset configures a vLLM reasoning parser,
+# so a template that defaults thinking on would leak <think> blocks into scored output.
+DEFAULT_CHAT_TEMPLATE_KWARGS: dict[str, Any] = {"enable_thinking": False}
+
+# Sentinel distinguishing "provider does not support chat_template_kwargs" from
+# "provider supports it but has none configured".
+_UNSUPPORTED: Any = object()
+
+
+def _compaction_available() -> bool:
+    """Whether context compaction can run with the available credentials.
+
+    Compaction calls OpenAI's ``responses.compact`` endpoint, which OpenRouter does
+    not serve, so it needs an OpenAI key.
+    """
+    credentials = resolve_openai_credentials()
+    return credentials is not None and not credentials.via_openrouter
+
+
+@functools.cache
+def _warn_compaction_unavailable() -> None:
+    logger.warning(
+        "Context compaction is disabled: it needs OPENAI_API_KEY, because OpenRouter does "
+        "not serve OpenAI's responses.compact endpoint. Long agent runs keep their full history."
+    )
+
+
+def truncate_tool_output(output: str, max_chars: int | None) -> str:
+    """Shorten a tool output to at most ``max_chars``, keeping its start and end.
+
+    Args:
+        output: The tool output.
+        max_chars: Character budget, or None to leave the output unchanged.
+
+    Returns:
+        The output, with its middle replaced by a marker if it was over budget.
+    """
+    if max_chars is None or len(output) <= max_chars:
+        return output
+    head = max_chars // 2
+    tail = max_chars - head
+    omitted = len(output) - max_chars
+    return f"{output[:head]}\n[... {omitted} characters omitted ...]\n{output[-tail:]}"
+
+
+def _resolve_chat_template_kwargs(provider: InferenceProvider) -> dict[str, Any] | None:
+    """Resolve the ``chat_template_kwargs`` request field for a provider.
+
+    ``chat_template_kwargs`` is a vLLM extension to the OpenAI chat completions
+    body. Managed APIs reject unrecognized body fields with a 400, so it may only
+    be sent to self-hosted OpenAI-compatible servers. Providers in that family
+    expose a ``chat_template_kwargs`` attribute; every other provider opts out
+    simply by not having one.
+
+    Defaults only fill gaps, so an explicitly configured value always wins. The
+    result is always a fresh dict, so the provider's own configuration can never
+    be mutated through it.
+
+    This runs once per agent creation, and agents are cached per config and
+    provider, so applying a default is logged at INFO while the outcomes that
+    change nothing stay at DEBUG.
+
+    Args:
+        provider: The inference provider backing the agent.
+
+    Returns:
+        The kwargs to send in the request body, or None if the provider does not
+        support the field.
+    """
+    configured = getattr(provider, "chat_template_kwargs", _UNSUPPORTED)
+    if configured is _UNSUPPORTED:
+        logger.debug(
+            f"{type(provider).__name__} does not accept chat_template_kwargs; "
+            "omitting it from the request body"
+        )
+        return None
+
+    explicit: dict[str, Any] = configured or {}
+    resolved: dict[str, Any] = dict(DEFAULT_CHAT_TEMPLATE_KWARGS)
+    resolved.update(explicit)
+
+    defaulted = {k: v for k, v in DEFAULT_CHAT_TEMPLATE_KWARGS.items() if k not in explicit}
+    if defaulted:
+        # Only spell out the full payload when the provider configured other keys too.
+        detail = "" if resolved == defaulted else f"; sending {resolved}"
+        logger.info(f"Defaulted chat_template_kwargs {defaulted} for {provider.model_name}{detail}")
+    else:
+        logger.debug(
+            f"Using explicitly configured chat_template_kwargs for "
+            f"{provider.model_name}: {resolved}"
+        )
+    return resolved
+
+
+def _make_tool_error_formatter(valid_tool_names: Sequence[str]) -> Any:
+    """Build a ``RunConfig.tool_error_formatter`` that names the tools the model may call.
+
+    The SDK default for a missing tool is ``Tool 'x' not found.``, which tells the model
+    nothing about what it should have called. Weak models only recover when the error
+    spells out the real names, so the inventory is captured here: ``ToolErrorFormatterArgs``
+    carries the *failed* name but no list of valid ones.
+
+    Args:
+        valid_tool_names: Names the model is actually allowed to call.
+
+    Returns:
+        A formatter suitable for ``RunConfig.tool_error_formatter``.
+    """
+    if valid_tool_names:
+        guidance = f"Available tools: {', '.join(valid_tool_names)}. Call one of these exact names."
+    else:
+        guidance = "No tools are available."
+
+    def format_tool_error(args: Any) -> str | None:
+        # Approval rejections are routed through this same hook; returning None leaves
+        # the SDK default in place for every kind we have nothing better to say about.
+        if args.kind != "tool_not_found":
+            return None
+        return f"Error: tool '{args.tool_name}' does not exist. {guidance}"
+
+    return format_tool_error
 
 
 @register_scaffold("openai_agents")
@@ -46,6 +172,7 @@ class OpenAIAgentsScaffold(Scaffold):
         self._cached_config: HarnessConfig | None = None
         self._cached_provider_id: int | None = None
         self._cached_has_sandbox: bool = False
+        self._cached_stop_at_tools: tuple[str, ...] = ()
         self._sandbox_manager: SandboxManager | None = None
 
     def clear_cache(self) -> None:
@@ -54,6 +181,7 @@ class OpenAIAgentsScaffold(Scaffold):
         self._cached_config = None
         self._cached_provider_id = None
         self._cached_has_sandbox = False
+        self._cached_stop_at_tools = ()
 
     async def initialize(self, config: HarnessConfig) -> None:
         """Initialize sandbox manager if needed.
@@ -135,7 +263,7 @@ class OpenAIAgentsScaffold(Scaffold):
                 if binding is None:
                     raise RuntimeError("No binding set for session tool")
                 result = await binding.execute_in_session(command)
-                output = result.output
+                output = truncate_tool_output(result.output, _max_tool_output_chars.get())
                 if result.exit_code != 0:
                     output += f"\n[Exit code: {result.exit_code}]"
                 return output
@@ -143,7 +271,8 @@ class OpenAIAgentsScaffold(Scaffold):
 
             async def sandboxed_execute(command: str) -> str:
                 """Execute command in sandbox."""
-                return await manager.execute(command, capabilities=required_caps)
+                output = await manager.execute(command, capabilities=required_caps)
+                return truncate_tool_output(output, _max_tool_output_chars.get())
 
         return sandboxed_execute
 
@@ -152,6 +281,7 @@ class OpenAIAgentsScaffold(Scaffold):
         provider: InferenceProvider,
         config: HarnessConfig,
         sandbox_manager: SandboxManager | None = None,
+        stop_at_tools: tuple[str, ...] = (),
     ) -> Any:
         """Create a new agent with the given configuration.
 
@@ -159,13 +289,16 @@ class OpenAIAgentsScaffold(Scaffold):
             provider: The inference provider for model calls.
             config: Harness configuration.
             sandbox_manager: Optional sandbox manager for sandboxed tools.
+            stop_at_tools: Tool names whose call ends the run.
 
         Returns:
             An Agent instance from the agents SDK.
         """
-        from agents import (  # type: ignore[ty:unresolved-import]
+        from agents import (
             Agent,
+            ModelSettings,
             OpenAIChatCompletionsModel,
+            StopAtTools,
             function_tool,
             set_tracing_disabled,
         )
@@ -182,21 +315,35 @@ class OpenAIAgentsScaffold(Scaffold):
         logger.debug(
             f"Creating agent with client: {type(client).__name__}, "
             f"base_url={getattr(client, 'base_url', 'unknown')}, "
-            f"model={provider.model_name}"
+            f"model={provider.openai_client_model_name}"
         )
 
         model = OpenAIChatCompletionsModel(
             openai_client=client,
-            model=provider.model_name,
+            model=provider.openai_client_model_name,
         )
 
         agent_tools = self._convert_tools(config.resolved_tools, function_tool, sandbox_manager)
+
+        # This scaffold drives the OpenAI client directly instead of the provider's
+        # generate path, so the request body built here is the only place a
+        # chat_template_kwargs setting can actually reach the server.
+        agent_kwargs: dict[str, Any] = {}
+        chat_template_kwargs = _resolve_chat_template_kwargs(provider)
+        if chat_template_kwargs is not None:
+            agent_kwargs["model_settings"] = ModelSettings(
+                extra_body={"chat_template_kwargs": chat_template_kwargs}
+            )
+
+        if stop_at_tools:
+            agent_kwargs["tool_use_behavior"] = StopAtTools(stop_at_tool_names=list(stop_at_tools))
 
         agent = Agent(
             name=self.name,
             instructions=config.system_prompt or "",
             model=model,
             tools=agent_tools,
+            **agent_kwargs,
         )
 
         return agent
@@ -206,11 +353,13 @@ class OpenAIAgentsScaffold(Scaffold):
         provider: InferenceProvider,
         config: HarnessConfig,
         sandbox_manager: SandboxManager | None = None,
+        stop_at_tools: tuple[str, ...] = (),
     ) -> Any:
         """Get cached agent or create a new one if config/provider changed.
 
-        Agents are cached based on config, provider, and whether sandbox is used.
-        The sandbox manager is stable across runs, so caching works.
+        Agents are cached based on config, provider, whether sandbox is used, and
+        which tools end the run. The sandbox manager is stable across runs, so
+        caching works.
         """
         has_sandbox = sandbox_manager is not None
         if (
@@ -218,15 +367,17 @@ class OpenAIAgentsScaffold(Scaffold):
             and self._cached_config == config
             and self._cached_provider_id == id(provider)
             and self._cached_has_sandbox == has_sandbox
+            and self._cached_stop_at_tools == stop_at_tools
         ):
             return self._cached_agent
 
-        agent = self._create_agent(provider, config, sandbox_manager)
+        agent = self._create_agent(provider, config, sandbox_manager, stop_at_tools)
 
         self._cached_agent = agent
         self._cached_config = config
         self._cached_provider_id = id(provider)
         self._cached_has_sandbox = has_sandbox
+        self._cached_stop_at_tools = stop_at_tools
 
         return agent
 
@@ -249,13 +400,24 @@ class OpenAIAgentsScaffold(Scaffold):
             trace_metadata: Optional metadata for tracing (e.g., instance_id, task_id).
             **kwargs: Scaffold-specific options:
                 - enable_compaction: Enable context compaction (default: True).
+                - max_tool_output_chars: Truncate sandboxed tool outputs to this many
+                  characters (default: no limit).
+                - stop_at_tools: Names of tools whose call ends the run, with that
+                  tool's output as the final output (default: none).
 
         Returns:
             HarnessResult with trajectory from SDK execution.
         """
         enable_compaction = kwargs.get("enable_compaction", True)
+        max_tool_output_chars = kwargs.get("max_tool_output_chars")
+        stop_at_tools = tuple(kwargs.get("stop_at_tools") or ())
         try:
-            from agents import Runner, trace  # type: ignore[ty:unresolved-import]
+            from agents import RunConfig, Runner, trace
+            from agents.exceptions import (
+                MaxTurnsExceeded,
+                ModelBehaviorError,
+                ModelRefusalError,
+            )
         except ImportError as e:
             raise ImportError(
                 "OpenAI Agents SDK not installed. Install with: pip install openai-agents"
@@ -263,10 +425,12 @@ class OpenAIAgentsScaffold(Scaffold):
 
         # Create compaction session if enabled
         session = None
-        if enable_compaction:
+        if enable_compaction and not _compaction_available():
+            _warn_compaction_unavailable()
+        elif enable_compaction:
             try:
-                from agents import SQLiteSession  # type: ignore[ty:unresolved-import]
-                from agents.memory import (  # type: ignore[ty:unresolved-import]
+                from agents import SQLiteSession
+                from agents.memory import (
                     OpenAIResponsesCompactionSession,
                 )
 
@@ -294,7 +458,9 @@ class OpenAIAgentsScaffold(Scaffold):
             )
 
         # Use cached agent (tools read from ContextVar at execution time)
-        agent = self._get_or_create_agent(provider, config, self._sandbox_manager)
+        agent = self._get_or_create_agent(
+            provider, config, self._sandbox_manager, stop_at_tools=stop_at_tools
+        )
 
         # Acquire binding if session tools are used
         has_session_tools = any(t.session for t in config.resolved_tools if t.sandbox)
@@ -326,6 +492,19 @@ class OpenAIAgentsScaffold(Scaffold):
         else:
             trace_name = f"Agent: {config.name}" if config.name else "Agent run"
 
+        # An unknown tool name is a recoverable mistake, not a dead run: let the SDK hand the
+        # model an error turn naming the tools it may call instead of aborting the whole
+        # instance with ModelBehaviorError. This covers function tools only -- the SDK has no
+        # equivalent branch for custom/freeform calls.
+        run_config = RunConfig(
+            tool_not_found_behavior="return_error_to_model",
+            tool_error_formatter=_make_tool_error_formatter(
+                [tool.name for tool in config.resolved_tools]
+            ),
+        )
+
+        output_limit_token = _max_tool_output_chars.set(max_tool_output_chars)
+
         # Run agent within trace context for observability
         date_cutoff = (trace_metadata or {}).get("date_cutoff")
         with search_date_cutoff(date_cutoff), trace(trace_name, metadata=trace_metadata):
@@ -334,54 +513,67 @@ class OpenAIAgentsScaffold(Scaffold):
                     "starting_agent": agent,
                     "input": input_text,
                     "max_turns": max_turns,
+                    "run_config": run_config,
                 }
                 if session is not None:
                     run_kwargs["session"] = session
 
                 result = await Runner.run(**run_kwargs)
-            except Exception as e:
-                # Handle MaxTurnsExceeded - return a result with the error instead of raising
-                if type(e).__name__ == "MaxTurnsExceeded":
-                    partial_result = getattr(e, "run_data", None)
-                    trajectory = self._convert_trajectory(partial_result)
-                    try:
-                        final_text = await self._force_final_answer(
-                            Runner=Runner,
-                            agent=agent,
-                            partial_result=partial_result,
-                            original_input=input_text,
-                        )
-                    except Exception:
-                        logger.warning(
-                            "Forced final answer after max_turns failed; using fallback result",
-                            exc_info=True,
-                        )
-                        return HarnessResult(
-                            trajectory=AgentTrajectory(turns=()),
-                            final_output=LMOutput(text="[Max turns exceeded]"),
-                            max_turns_reached=True,
-                            error=f"Max turns ({max_turns}) exceeded",
-                        )
-
-                    return HarnessResult(
-                        trajectory=trajectory,
-                        final_output=LMOutput(text=final_text),
-                        max_turns_reached=True,
-                        error=None,
+            except MaxTurnsExceeded as e:
+                # Return a result with the error instead of raising
+                partial_result = getattr(e, "run_data", None)
+                trajectory = self._convert_trajectory(partial_result)
+                try:
+                    final_text = await self._force_final_answer(
+                        Runner=Runner,
+                        agent=agent,
+                        partial_result=partial_result,
+                        original_input=input_text,
+                        run_config=run_config,
                     )
-                if type(e).__name__ == "ModelBehaviorError":
+                except Exception:
+                    logger.warning(
+                        "Forced final answer after max_turns failed; using fallback result",
+                        exc_info=True,
+                    )
                     return HarnessResult(
                         trajectory=AgentTrajectory(turns=()),
-                        final_output=LMOutput(text=f"[Tool error: {e}]"),
-                        error=str(e),
+                        final_output=LMOutput(text="[Max turns exceeded]"),
+                        max_turns_reached=True,
+                        error=f"Max turns ({max_turns}) exceeded",
                     )
 
+                return HarnessResult(
+                    trajectory=trajectory,
+                    final_output=LMOutput(text=final_text),
+                    max_turns_reached=True,
+                    error=None,
+                )
+            except ModelBehaviorError as e:
+                # Unknown function tools are handled by run_config above, so this is now a
+                # backstop for the other ways a model can violate the protocol.
+                return HarnessResult(
+                    trajectory=AgentTrajectory(turns=()),
+                    final_output=LMOutput(text=f"[Tool error: {e}]"),
+                    error=str(e),
+                )
+            except ModelRefusalError as e:
+                # A refusal used to arrive as empty final output; the SDK now raises instead.
+                # Record it as a scored instance with an error, rather than letting a refusal
+                # take down the whole run.
+                return HarnessResult(
+                    trajectory=AgentTrajectory(turns=()),
+                    final_output=LMOutput(text=f"[Model refusal: {e}]"),
+                    error=str(e),
+                )
+            except Exception as e:
                 # Log full traceback for debugging connection issues
                 import traceback
 
                 logger.error(f"Agent run failed: {e}\n{traceback.format_exc()}")
                 raise
             finally:
+                _max_tool_output_chars.reset(output_limit_token)
                 # Release binding after run
                 binding = _current_binding.get()
                 if binding is not None:
@@ -407,6 +599,7 @@ class OpenAIAgentsScaffold(Scaffold):
         agent: Any,
         partial_result: Any,
         original_input: str,
+        run_config: Any = None,
     ) -> str:
         """Run one no-tool model call to produce a final answer after max_turns."""
         final_input = self._build_forced_final_input(partial_result, original_input)
@@ -422,6 +615,7 @@ class OpenAIAgentsScaffold(Scaffold):
             starting_agent=final_agent,
             input=final_input,
             max_turns=1,
+            run_config=run_config,
         )
         final_text = getattr(final_result, "final_output", "")
         return str(final_text or "")

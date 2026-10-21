@@ -151,3 +151,24 @@ class TestGetProviderConfig:
 
         # llama3.1 doesn't have a preset tokenizer - defaults to None
         assert config.tokenizer is None
+
+
+class TestProviderConfigKwargsPassthrough:
+    """Unknown provider keys become constructor kwargs for every kind (so a typo
+    surfaces in the provider instead of being dropped silently)."""
+
+    def test_unknown_keys_reach_kwargs(self):
+        from olmo_eval.inference.providers.config import ProviderConfig
+
+        config = ProviderConfig.from_dict(
+            {"kind": "hf", "model": "m", "multimodal": True, "max_crops": 24}
+        )
+        assert config.kwargs["multimodal"] is True
+        assert config.kwargs["max_crops"] == 24
+
+    def test_known_fields_stay_fields(self):
+        from olmo_eval.inference.providers.config import ProviderConfig
+
+        config = ProviderConfig.from_dict({"kind": "hf", "model": "m", "dtype": "float32"})
+        assert config.dtype == "float32"
+        assert "dtype" not in config.kwargs

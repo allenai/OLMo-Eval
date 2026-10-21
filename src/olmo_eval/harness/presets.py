@@ -103,6 +103,33 @@ class HarnessPresets:
         )
 
     @lazy
+    def bfcl_multi_turn(name: str) -> HarnessConfig:
+        """BFCL multi-turn preset: drives a rollout against its stateful APIs."""
+        return HarnessConfig(
+            name=name,
+            provider=ProviderConfig(
+                kind=ProviderKind.VLLM_SERVER,
+                kwargs={"timeout": 120},
+            ),
+            metrics=MetricsConfig(),
+            scaffold="bfcl_multi_turn",
+            max_concurrency=8,
+            batching=BatchConfig.streaming(),
+        )
+
+    @lazy
+    def multi_turn_chat(name: str) -> HarnessConfig:
+        """Multi-turn chat preset: answers each scripted user turn in one conversation."""
+        return HarnessConfig(
+            name=name,
+            provider=ProviderConfig(kind=ProviderKind.VLLM_SERVER),
+            metrics=MetricsConfig(),
+            scaffold="multi_turn_chat",
+            max_concurrency=256,
+            batching=BatchConfig.streaming(),
+        )
+
+    @lazy
     def dr_tulu(name: str) -> HarnessConfig:
         """Dr. Tulu preset with web and academic search tools."""
         from .tools.search import semantic_scholar_search, serper_fetch_page, serper_web_search

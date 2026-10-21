@@ -5,6 +5,7 @@ import pytest
 from olmo_eval.cli.beaker.config_loader import LaunchConfigLoader
 from olmo_eval.common.constants.infrastructure import cluster_has_weka
 from olmo_eval.launch.beaker import (
+    DEFAULT_WEKA_BUCKETS,
     BeakerEnvSecret,
     BeakerJobConfig,
     BeakerWekaBucket,
@@ -15,7 +16,9 @@ from olmo_eval.launch.beaker import (
     parse_install_spec,
     parse_task_with_priority,
     resolve_clusters,
+    validate_min_runtime,
     validate_priority_configuration,
+    weka_buckets_with,
 )
 
 
@@ -141,6 +144,29 @@ class TestBeakerWekaBucket:
         assert bucket.mount == "/custom/path"
 
 
+class TestWekaBucketsWith:
+    """Tests for the default Weka bucket list and extra buckets."""
+
+    def test_job_config_mounts_defaults(self):
+        """A job config without extra buckets mounts exactly the defaults."""
+        config = BeakerJobConfig(
+            name="test-job",
+            command=["echo", "hello"],
+            cluster="h100",
+            workspace="ai2/oe-data",
+            budget="ai2/oe-other",
+        )
+        assert [b.bucket for b in config.weka_buckets] == list(DEFAULT_WEKA_BUCKETS)
+
+    def test_extra_buckets_appended_once(self):
+        """Extra buckets follow the defaults, and a repeated bucket is mounted once."""
+        buckets = weka_buckets_with(
+            ["olmo-3p5-post-checkpoints", "oe-eval-default", "olmo-3p5-post-checkpoints"]
+        )
+        assert [b.bucket for b in buckets] == [*DEFAULT_WEKA_BUCKETS, "olmo-3p5-post-checkpoints"]
+        assert buckets[-1].mount == "/weka/olmo-3p5-post-checkpoints"
+
+
 class TestBeakerJobConfig:
     """Tests for BeakerJobConfig."""
 
@@ -151,14 +177,14 @@ class TestBeakerJobConfig:
             command=["echo", "hello"],
             cluster="h100",
             workspace="ai2/oe-data",
-            budget="ai2/oe-base",
+            budget="ai2/oe-other",
         )
         assert config.name == "test-job"
         assert config.command == ["echo", "hello"]
         assert config.num_gpus == 0
         assert config.cluster == "h100"
         assert config.workspace == "ai2/oe-data"
-        assert config.budget == "ai2/oe-base"
+        assert config.budget == "ai2/oe-other"
         assert config.priority == "normal"
         assert config.preemptible is True
         assert config.timeout == "24h"
@@ -199,7 +225,7 @@ class TestBeakerJobConfig:
             command=["echo"],
             cluster="h100",
             workspace="ai2/oe-data",
-            budget="ai2/oe-base",
+            budget="ai2/oe-other",
         )
         # Just verify defaults exist and have valid mount paths
         assert len(config.weka_buckets) >= 1
@@ -214,10 +240,218 @@ class TestBeakerJobConfig:
             command=["echo"],
             cluster="h100",
             workspace="ai2/oe-data",
-            budget="ai2/oe-base",
+            budget="ai2/oe-other",
         )
         # env_secrets defaults to empty list; secrets are injected during launch
         assert len(config.env_secrets) == 0
+
+
+class TestValidateMinRuntime:
+    """Tests for min runtime validation."""
+
+    @pytest.mark.parametrize("value", ["2h", "30m", "90s", "1h30m", "0h5m", " 4h "])
+    def test_valid_durations(self, value):
+        assert validate_min_runtime(value) == value.strip()
+
+    @pytest.mark.parametrize("value", ["", "2", "1d", "-1h", "2 hours", "30m1h"])
+    def test_invalid_durations(self, value):
+        with pytest.raises(ValueError, match="invalid min runtime"):
+            validate_min_runtime(value)
+
+    @pytest.mark.parametrize("value", ["0s", "0h", "0h0m0s"])
+    def test_zero_duration_rejected(self, value):
+        with pytest.raises(ValueError, match="must be greater than zero"):
+            validate_min_runtime(value)
+
+
+class TestBeakerJobConfigMinRuntime:
+    """Tests for min runtime handling in BeakerJobConfig."""
+
+    def _config(self, **kwargs):
+        return BeakerJobConfig(
+            name="test",
+            command=["echo"],
+            cluster="h100",
+            workspace="ai2/oe-data",
+            budget="ai2/oe-other",
+            **kwargs,
+        )
+
+    def test_min_runtime_replaces_preemptible(self):
+        config = self._config(min_runtime="2h")
+        assert config.min_runtime == "2h"
+        assert config.preemptible is None
+
+    def test_preemptible_false_with_min_runtime_rejected(self):
+        with pytest.raises(ValueError, match="cannot be combined with min_runtime"):
+            self._config(preemptible=False, min_runtime="2h")
+
+    def test_invalid_min_runtime_rejected(self):
+        with pytest.raises(ValueError, match="invalid min runtime"):
+            self._config(min_runtime="2")
+
+    def test_preemptible_none_without_min_runtime_defaults_true(self):
+        assert self._config(preemptible=None).preemptible is True
+
+    @pytest.mark.parametrize(
+        ("kwargs", "expected_preemptible", "expected_min_runtime"),
+        [
+            ({}, True, None),
+            ({"preemptible": False}, False, None),
+            ({"min_runtime": "2h"}, None, "2h"),
+        ],
+    )
+    def test_launch_passes_preemption_to_gantry(
+        self, kwargs, expected_preemptible, expected_min_runtime
+    ):
+        from unittest.mock import MagicMock, patch
+
+        from olmo_eval.launch import BeakerLauncher
+
+        launcher = BeakerLauncher(workspace="ai2/oe-data")
+        launcher._beaker = MagicMock(user_name="test-user")
+        config = self._config(weka_buckets=[], **kwargs)
+
+        with patch("gantry.api.launch_experiment") as mock_launch:
+            launcher.launch(config)
+
+        call_kwargs = mock_launch.call_args.kwargs
+        assert call_kwargs["preemptible"] is expected_preemptible
+        assert call_kwargs["min_runtime"] == expected_min_runtime
+
+    @pytest.mark.parametrize(
+        ("kwargs", "expected_context"),
+        [
+            ({}, {"preemptible": True}),
+            ({"preemptible": False}, {"preemptible": False}),
+            ({"min_runtime": "1h30m"}, {"minRuntime": 90 * 60 * 1_000_000_000}),
+        ],
+    )
+    def test_task_spec_context(self, kwargs, expected_context):
+        """The Beaker spec sends minRuntime without the deprecated preemptible field."""
+        from beaker.types import BeakerTaskSpec
+
+        config = self._config(**kwargs)
+        spec = BeakerTaskSpec.new(
+            "test",
+            beaker_image="test-image",
+            preemptible=config.preemptible,
+            min_runtime=config.min_runtime,
+        )
+
+        context = spec.to_json()["context"]
+        context.pop("priority", None)
+        assert context == expected_context
+
+    @pytest.mark.parametrize(
+        ("kwargs", "expected_line"),
+        [
+            ({}, "Preemptible: yes"),
+            ({"preemptible": False}, "Preemptible: no"),
+            ({"min_runtime": "1h30m"}, "Min runtime: 1h30m"),
+        ],
+    )
+    def test_dry_run_header(self, kwargs, expected_line, capsys):
+        from olmo_eval.launch import BeakerLauncher
+
+        BeakerLauncher()._print_dry_run_config(self._config(**kwargs), ["ai2/jupiter"])
+
+        assert expected_line in capsys.readouterr().out
+
+    @pytest.mark.parametrize(
+        ("context", "expected_line"),
+        [
+            ({"preemptible": True}, "Preemptible: yes"),
+            ({"minRuntime": 90 * 60 * 1_000_000_000}, "Min runtime: 1h30m"),
+        ],
+    )
+    def test_print_experiment_config_header(self, context, expected_line, capsys):
+        from olmo_eval.launch import print_experiment_config
+
+        print_experiment_config({"tasks": [{"context": context}]}, name="test")
+
+        assert expected_line in capsys.readouterr().out
+
+
+class TestGoogleCredentialInjection:
+    """Google credentials reach gantry as google_credentials_secret."""
+
+    def _launch(self, dry_run: bool):
+        from unittest.mock import MagicMock, patch
+
+        from olmo_eval.launch import BeakerLauncher
+
+        launcher = BeakerLauncher(workspace="ai2/oe-data")
+        launcher._beaker = MagicMock(user_name="test-user")
+        config = BeakerJobConfig(
+            name="test",
+            command=["echo"],
+            cluster="h100",
+            workspace="ai2/oe-data",
+            budget="ai2/oe-other",
+            weka_buckets=[],
+            inject_gcs_credentials=True,
+        )
+        with (
+            patch("gantry.api.launch_experiment") as mock_launch,
+            patch(
+                "olmo_eval.launch.beaker.gcs.ensure_gcs_secrets",
+                return_value="test-user_GOOGLE_CREDENTIALS",
+            ) as mock_ensure,
+        ):
+            launcher.launch(config, dry_run=dry_run)
+        return mock_launch.call_args.kwargs, mock_ensure
+
+    def test_launch_writes_and_injects_the_secret(self):
+        kwargs, mock_ensure = self._launch(dry_run=False)
+        mock_ensure.assert_called_once_with("ai2/oe-data")
+        assert kwargs["google_credentials_secret"] == "test-user_GOOGLE_CREDENTIALS"
+
+    def test_dry_run_injects_without_writing_the_secret(self):
+        kwargs, mock_ensure = self._launch(dry_run=True)
+        mock_ensure.assert_not_called()
+        assert kwargs["google_credentials_secret"] == "test-user_GOOGLE_CREDENTIALS"
+
+
+class TestUploaderKeyInjection:
+    """The uploader key reaches the job as OLMO_EVAL_UPLOAD_CREDENTIALS."""
+
+    def _launch(self, dry_run: bool):
+        from unittest.mock import MagicMock, patch
+
+        from olmo_eval.launch import BeakerLauncher
+
+        launcher = BeakerLauncher(workspace="ai2/oe-data")
+        launcher._beaker = MagicMock(user_name="test-user")
+        config = BeakerJobConfig(
+            name="test",
+            command=["echo"],
+            cluster="h100",
+            workspace="ai2/oe-data",
+            budget="ai2/oe-other",
+            weka_buckets=[],
+            inject_upload_credentials=True,
+        )
+        with (
+            patch("gantry.api.launch_experiment") as mock_launch,
+            patch(
+                "olmo_eval.launch.beaker.uploader.ensure_uploader_secret",
+                return_value="olmo_eval_uploader_key",
+            ) as mock_ensure,
+        ):
+            launcher.launch(config, dry_run=dry_run)
+        return mock_launch.call_args.kwargs, mock_ensure
+
+    def test_launch_writes_and_injects_the_key(self):
+        kwargs, mock_ensure = self._launch(dry_run=False)
+        mock_ensure.assert_called_once_with("ai2/oe-data")
+        assert ("OLMO_EVAL_UPLOAD_CREDENTIALS", "olmo_eval_uploader_key") in kwargs["env_secrets"]
+        assert kwargs["google_credentials_secret"] is None
+
+    def test_dry_run_injects_without_reading_the_key(self):
+        kwargs, mock_ensure = self._launch(dry_run=True)
+        mock_ensure.assert_not_called()
+        assert ("OLMO_EVAL_UPLOAD_CREDENTIALS", "olmo_eval_uploader_key") in kwargs["env_secrets"]
 
 
 class TestBeakerLauncherImport:
@@ -509,7 +743,7 @@ class TestBeakerJobConfigTaskPackages:
             command=["echo"],
             cluster="h100",
             workspace="ai2/oe-data",
-            budget="ai2/oe-base",
+            budget="ai2/oe-other",
         )
         assert config.task_packages is None
 
@@ -520,7 +754,7 @@ class TestBeakerJobConfigTaskPackages:
             command=["echo"],
             cluster="h100",
             workspace="ai2/oe-data",
-            budget="ai2/oe-base",
+            budget="ai2/oe-other",
             task_packages=["special-lib==1.0", "git+https://github.com/user/repo"],
         )
         assert config.task_packages == ["special-lib==1.0", "git+https://github.com/user/repo"]
@@ -560,6 +794,28 @@ class TestBuildCommandWithTaskPackages:
         provider_pos = install_cmd.find("uv pip install 'vllm==0.14.0'")
         task_pos = install_cmd.find("uv pip install 'task-dep==1.0'")
         assert provider_pos < task_pos
+
+    def test_cuda_constraints_exclude_torch_companions_and_cutlass(self):
+        """Only Torch itself and the CUDA packages are pinned to the base image.
+
+        Provider releases pin torchvision/torchaudio alongside their Torch
+        generation, and vLLM pins CUTLASS DSL independently of Torch's CUDA
+        package set, so neither may be frozen to the image's build.
+        """
+        from olmo_eval.launch import BeakerLauncher
+
+        launcher = BeakerLauncher()
+        install_cmd = launcher._build_install_cmd(
+            extras=[],
+            env_exports=None,
+            provider_packages=["vllm==0.14.0"],
+        )
+
+        assert (
+            "uv pip freeze -q | grep -E '^(torch(==| @ )|nvidia-)' "
+            "| grep -vE '^nvidia-cutlass-dsl' > /tmp/cuda-constraints.txt"
+        ) in install_cmd
+        assert "grep -E '^(torch|nvidia-)' > /tmp/cuda-constraints.txt" not in install_cmd
 
     def test_no_task_packages_if_none(self):
         """Test that no extra install steps if task_packages is None."""
@@ -1183,3 +1439,77 @@ class TestLaunchConfigLoaderExperimentNames:
         config = loader.load()
 
         assert config.name == "mimo-7b-base-olmobase_code-and-2-more"
+
+
+class TestLaunchConfigLoaderPreemption:
+    """Tests for resolving preemptible and min_runtime across the CLI and config file."""
+
+    def _load(self, cli_args=None, yaml_body=None, tmp_path=None):
+        base_cli_args = {
+            "model": ("XiaomiMiMo/MiMo-7B-Base",),
+            "task": ("mmlu",),
+            "cluster": "h100",
+            "workspace": "ai2/test-workspace",
+            "budget": "ai2/test-budget",
+            "gpus": 1,
+        }
+        config_path = None
+        if yaml_body is not None:
+            assert tmp_path is not None
+            path = tmp_path / "config.yaml"
+            path.write_text("name: test\nmodels: [m]\ntasks: [mmlu]\n" + yaml_body)
+            config_path = str(path)
+        loader = LaunchConfigLoader(
+            config_path=config_path, cli_args={**base_cli_args, **(cli_args or {})}
+        )
+        return loader.load()
+
+    def test_default_is_preemptible(self):
+        config = self._load()
+        assert config.preemptible is True
+        assert config.min_runtime is None
+
+    def test_cli_min_runtime(self):
+        config = self._load({"min_runtime": "2h"})
+        assert config.preemptible is None
+        assert config.min_runtime == "2h"
+
+    @pytest.mark.parametrize("preemptible", [True, False])
+    def test_cli_min_runtime_with_preemptible_rejected(self, preemptible):
+        with pytest.raises(SystemExit):
+            self._load({"min_runtime": "2h", "preemptible": preemptible})
+
+    def test_cli_invalid_min_runtime_rejected(self):
+        with pytest.raises(SystemExit):
+            self._load({"min_runtime": "two hours"})
+
+    def test_config_file_min_runtime(self, tmp_path):
+        config = self._load(yaml_body="min_runtime: 4h\n", tmp_path=tmp_path)
+        assert config.preemptible is None
+        assert config.min_runtime == "4h"
+
+    @pytest.mark.parametrize("preemptible", ["true", "false"])
+    def test_config_file_min_runtime_with_preemptible_rejected(self, preemptible, tmp_path):
+        with pytest.raises(SystemExit):
+            self._load(
+                yaml_body=f"preemptible: {preemptible}\nmin_runtime: 4h\n", tmp_path=tmp_path
+            )
+
+    def test_config_file_preemptible_false(self, tmp_path):
+        config = self._load(yaml_body="preemptible: false\n", tmp_path=tmp_path)
+        assert config.preemptible is False
+        assert config.min_runtime is None
+
+    def test_cli_min_runtime_replaces_config_file_preemptible(self, tmp_path):
+        config = self._load(
+            {"min_runtime": "2h"}, yaml_body="preemptible: false\n", tmp_path=tmp_path
+        )
+        assert config.preemptible is None
+        assert config.min_runtime == "2h"
+
+    def test_cli_preemptible_replaces_config_file_min_runtime(self, tmp_path):
+        config = self._load(
+            {"preemptible": False}, yaml_body="min_runtime: 4h\n", tmp_path=tmp_path
+        )
+        assert config.preemptible is False
+        assert config.min_runtime is None

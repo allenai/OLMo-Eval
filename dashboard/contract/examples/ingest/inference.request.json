@@ -1,0 +1,382 @@
+{
+  "source_paths": [
+    "metrics/vllm_server_meta-llama_Llama-3.1-8B-Instruct-inference.jsonl"
+  ],
+  "batches": [
+    {
+      "seq": 0,
+      "timestamp": "2026-10-01T01:05:03.141014+00:00",
+      "task_name": null,
+      "total_requests": 64,
+      "successful_requests": 64,
+      "failed_requests": 0,
+      "total_prompt_tokens": 9480,
+      "total_completion_tokens": 943,
+      "wall_clock_time_s": 6.732583038014127,
+      "output_tokens_per_second": 140.06511240567656,
+      "mean_latency_s": 0.10519660996897073,
+      "gpu_summary": {
+        "device_count": 4,
+        "sample_count": 28,
+        "avg_utilization_pct": 2.8214285714285716,
+        "max_utilization_pct": 49.0,
+        "avg_memory_used_mb": 75265.50892857143,
+        "max_memory_used_mb": 75267.9375,
+        "avg_power_watts": 132.63185714285714
+      }
+    },
+    {
+      "seq": 1,
+      "timestamp": "2026-10-01T01:05:03.345784+00:00",
+      "task_name": null,
+      "total_requests": 64,
+      "successful_requests": 64,
+      "failed_requests": 0,
+      "total_prompt_tokens": 9557,
+      "total_completion_tokens": 1083,
+      "wall_clock_time_s": 6.934038895997219,
+      "output_tokens_per_second": 156.18602898596063,
+      "mean_latency_s": 0.10834435774995654,
+      "gpu_summary": {
+        "device_count": 4,
+        "sample_count": 28,
+        "avg_utilization_pct": 6.357142857142857,
+        "max_utilization_pct": 100.0,
+        "avg_memory_used_mb": 75265.50892857143,
+        "max_memory_used_mb": 75267.9375,
+        "avg_power_watts": 132.63157142857145
+      }
+    },
+    {
+      "seq": 2,
+      "timestamp": "2026-10-01T01:05:03.954805+00:00",
+      "task_name": null,
+      "total_requests": 64,
+      "successful_requests": 64,
+      "failed_requests": 0,
+      "total_prompt_tokens": 9268,
+      "total_completion_tokens": 1420,
+      "wall_clock_time_s": 0.8099369359842967,
+      "output_tokens_per_second": 1753.2229200960053,
+      "mean_latency_s": 0.012655264624754636,
+      "gpu_summary": {
+        "device_count": 4,
+        "sample_count": 4,
+        "avg_utilization_pct": 40.5,
+        "max_utilization_pct": 98.0,
+        "avg_memory_used_mb": 75267.9375,
+        "max_memory_used_mb": 75267.9375,
+        "avg_power_watts": 309.337
+      }
+    }
+  ],
+  "series": [
+    {
+      "name": "gpu_utilization_pct",
+      "unit": "%",
+      "device": "0",
+      "points": [
+        [
+          283.996,
+          0.0
+        ],
+        [
+          285.089,
+          0.0
+        ],
+        [
+          284.0,
+          0.0
+        ],
+        [
+          285.097,
+          0.0
+        ],
+        [
+          290.734,
+          0.0
+        ],
+        [
+          291.548,
+          100.0
+        ],
+        [
+          290.939,
+          100.0
+        ],
+        [
+          291.943,
+          100.0
+        ],
+        [
+          292.561,
+          100.0
+        ],
+        [
+          293.245,
+          100.0
+        ],
+        [
+          292.292,
+          100.0
+        ],
+        [
+          293.294,
+          100.0
+        ],
+        [
+          283.997,
+          0.0
+        ],
+        [
+          285.092,
+          0.0
+        ],
+        [
+          284.008,
+          0.0
+        ],
+        [
+          285.103,
+          0.0
+        ]
+      ]
+    },
+    {
+      "name": "gpu_memory_used_mb",
+      "unit": "MB",
+      "device": "0",
+      "points": [
+        [
+          283.996,
+          75261.9375
+        ],
+        [
+          285.089,
+          75261.9375
+        ],
+        [
+          284.0,
+          75261.9375
+        ],
+        [
+          285.097,
+          75261.9375
+        ],
+        [
+          290.734,
+          75267.9375
+        ],
+        [
+          291.548,
+          75267.9375
+        ],
+        [
+          290.939,
+          75267.9375
+        ],
+        [
+          291.943,
+          75267.9375
+        ],
+        [
+          292.561,
+          75267.9375
+        ],
+        [
+          293.245,
+          75267.9375
+        ],
+        [
+          292.292,
+          75267.9375
+        ],
+        [
+          293.294,
+          75267.9375
+        ],
+        [
+          283.997,
+          75261.9375
+        ],
+        [
+          285.092,
+          75261.9375
+        ],
+        [
+          284.008,
+          75261.9375
+        ],
+        [
+          285.103,
+          75261.9375
+        ]
+      ]
+    },
+    {
+      "name": "gpu_utilization_pct",
+      "unit": "%",
+      "device": "1",
+      "points": [
+        [
+          283.996,
+          0.0
+        ],
+        [
+          285.089,
+          0.0
+        ],
+        [
+          284.0,
+          0.0
+        ],
+        [
+          285.097,
+          0.0
+        ],
+        [
+          290.734,
+          28.0
+        ],
+        [
+          291.548,
+          100.0
+        ],
+        [
+          290.939,
+          77.0
+        ],
+        [
+          291.943,
+          100.0
+        ],
+        [
+          292.561,
+          100.0
+        ],
+        [
+          293.245,
+          100.0
+        ],
+        [
+          292.292,
+          100.0
+        ],
+        [
+          293.294,
+          100.0
+        ],
+        [
+          283.997,
+          0.0
+        ],
+        [
+          285.092,
+          0.0
+        ],
+        [
+          284.008,
+          0.0
+        ],
+        [
+          285.103,
+          0.0
+        ]
+      ]
+    },
+    {
+      "name": "gpu_memory_used_mb",
+      "unit": "MB",
+      "device": "1",
+      "points": [
+        [
+          283.996,
+          75261.9375
+        ],
+        [
+          285.089,
+          75261.9375
+        ],
+        [
+          284.0,
+          75261.9375
+        ],
+        [
+          285.097,
+          75261.9375
+        ],
+        [
+          290.734,
+          75267.9375
+        ],
+        [
+          291.548,
+          75267.9375
+        ],
+        [
+          290.939,
+          75267.9375
+        ],
+        [
+          291.943,
+          75267.9375
+        ],
+        [
+          292.561,
+          75267.9375
+        ],
+        [
+          293.245,
+          75267.9375
+        ],
+        [
+          292.292,
+          75267.9375
+        ],
+        [
+          293.294,
+          75267.9375
+        ],
+        [
+          283.997,
+          75261.9375
+        ],
+        [
+          285.092,
+          75261.9375
+        ],
+        [
+          284.008,
+          75261.9375
+        ],
+        [
+          285.103,
+          75261.9375
+        ]
+      ]
+    }
+  ],
+  "request_latency": null,
+  "gpu_devices": [
+    {
+      "device_id": 0,
+      "name": "NVIDIA H100 80GB HBM3",
+      "memory_total_mb": 81559.0
+    },
+    {
+      "device_id": 1,
+      "name": "NVIDIA H100 80GB HBM3",
+      "memory_total_mb": 81559.0
+    },
+    {
+      "device_id": 2,
+      "name": "NVIDIA H100 80GB HBM3",
+      "memory_total_mb": 81559.0
+    },
+    {
+      "device_id": 3,
+      "name": "NVIDIA H100 80GB HBM3",
+      "memory_total_mb": 81559.0
+    }
+  ]
+}

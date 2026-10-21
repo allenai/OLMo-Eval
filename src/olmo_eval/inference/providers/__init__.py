@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from .litellm import LiteLLMProvider
     from .mock import MockProvider
     from .olmo_core import OlmoCoreProvider
+    from .olmo_core_vlm import OlmoCoreVLMProvider
     from .vllm import VLLMProvider
     from .vllm_server import VLLMServerProvider
 
@@ -19,6 +20,7 @@ __all__ = [
     "LiteLLMProvider",
     "MockProvider",
     "OlmoCoreProvider",
+    "OlmoCoreVLMProvider",
     "ProviderConfig",
     "VLLMProvider",
     "VLLMServerProvider",
@@ -42,6 +44,10 @@ def __getattr__(name: str):
         from .olmo_core import OlmoCoreProvider
 
         return OlmoCoreProvider
+    if name == "OlmoCoreVLMProvider":
+        from .olmo_core_vlm import OlmoCoreVLMProvider
+
+        return OlmoCoreVLMProvider
     if name == "VLLMProvider":
         from .vllm import VLLMProvider
 

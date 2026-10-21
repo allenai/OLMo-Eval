@@ -40,7 +40,9 @@ class DataSource:
     subset: str | None = None
     split: str = "test"
     source_type: SourceType | None = None
-    data_files: str | None = None
+    #: Data file(s) to load, relative to the repository root. A tuple selects
+    #: several files that together form one split.
+    data_files: str | tuple[str, ...] | None = None
     revision: str | None = None
 
     def __post_init__(self) -> None:
@@ -157,6 +159,8 @@ class DataSource:
             "subset": self.subset,
             "split": self.split,
             "source_type": self.source_type.value if self.source_type else None,
-            "data_files": self.data_files,
+            "data_files": list(self.data_files)
+            if isinstance(self.data_files, tuple)
+            else self.data_files,
             "revision": self.revision,
         }

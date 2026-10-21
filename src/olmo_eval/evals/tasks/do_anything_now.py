@@ -8,7 +8,59 @@ Paper: https://arxiv.org/abs/2308.03825
 
 Usage:
 
-    olmo-eval run -m llama3.1-8b -t do_anything_now:wg_judge
+For a reasoning model:
+olmo-eval beaker launch  \
+    --harness default   \
+    -o provider.kwargs.tensor_parallel_size=2   \
+    -o 'metrics.collect_gpu=true'   \
+    -o auxiliary_providers.wg_judge.kind=vllm_server \
+    -o auxiliary_providers.wg_judge.model=allenai/wildguard \
+    -o auxiliary_providers.wg_judge.kwargs.add_bos_token=true \
+    -o scoring_concurrency=4   \
+    -m allenai/Olmo-3-7B-Think   \
+    -t "do_anything_now:wg_judge_thinking@high" \
+    -w "ai2/WORKSPACE"   \
+    -B "ai2/BUDGET"   \
+    --cluster h100
+
+For an instruct model:
+olmo-eval beaker launch  \
+    --harness default   \
+    -o 'metrics.collect_gpu=true'   \
+    -o auxiliary_providers.wg_judge.kind=vllm_server \
+    -o auxiliary_providers.wg_judge.model=allenai/wildguard \
+    -o auxiliary_providers.wg_judge.kwargs.add_bos_token=true \
+    -o scoring_concurrency=4   \
+    -m allenai/Olmo-3-7B-Instruct   \
+    -t "do_anything_now:wg_judge@high" \
+    -w "ai2/WORKSPACE"   \
+    -B "ai2/BUDGET"   \
+    --cluster h100
+
+For a base model:
+olmo-eval beaker launch  \
+    --harness default   \
+    -o 'metrics.collect_gpu=true'   \
+    -o auxiliary_providers.wg_judge.kind=vllm_server \
+    -o auxiliary_providers.wg_judge.model=allenai/wildguard \
+    -o auxiliary_providers.wg_judge.kwargs.add_bos_token=true \
+    -o scoring_concurrency=4   \
+    -m allenai/Olmo-3-1025-7B   \
+    -t "do_anything_now:base@high" \
+    -w "ai2/WORKSPACE"   \
+    -B "ai2/BUDGET"   \
+    --cluster h100
+
+On the OpenAI harness:
+olmo-eval beaker launch  \
+    --harness default   \
+    -o 'metrics.collect_gpu=true'   \
+    -o scoring_concurrency=4   \
+    -m allenai/Olmo-3-7B-Instruct   \
+    -t "do_anything_now:openai_judge@high" \
+    -w "ai2/WORKSPACE"   \
+    -B "ai2/BUDGET"   \
+    --cluster h100
 """
 
 import logging
@@ -38,6 +90,7 @@ class DoAnythingNow(SafetyBase):
                 "id": index,
                 "jailbreak_source": doc["source"],
                 "platform": doc["platform"],
+                "vanilla_prompt": doc["vanilla"],
             },
         )
 

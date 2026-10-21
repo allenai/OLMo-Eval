@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import logging
 import multiprocessing as mp
+import time
 from typing import TYPE_CHECKING
 
 from olmo_eval.common.logging import get_logger
-from olmo_eval.inference.errors import classify_terminal_provider_error
+from olmo_eval.inference.errors import classify_terminal_provider_error, request_error
 from olmo_eval.inference.metrics.core.stats import compute_batch_hash
 from olmo_eval.runners.asynq.types import QueueItem, ResultItem
 
@@ -16,18 +17,43 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+_NO_OUTPUT_ERROR = "Provider returned no output for this request (see the provider's logged error)"
+
 
 def _get_native_ids(items: list[QueueItem]) -> list[str]:
     """Extract native IDs from queue items for batch hashing."""
     return [f"{item.task_id}:{item.instance_idx}" for item in items]
 
 
-def _flush_batch_metrics(harness: Harness, items: list[QueueItem], log: logging.Logger) -> None:
-    """Flush batch metrics without letting telemetry failures interrupt inference."""
+def _flush_batch_metrics(harness: Harness, items: list[QueueItem], log: logging.Logger) -> object:
+    """Flush batch metrics without letting telemetry failures interrupt inference.
+
+    Returns what harness.flush_metrics returned, or None if flushing failed.
+    """
     try:
-        harness.flush_metrics(compute_batch_hash(_get_native_ids(items)))
+        return harness.flush_metrics(compute_batch_hash(_get_native_ids(items)))
     except Exception as e:
         log.warning(f"Failed to flush batch metrics: {e}")
+        return None
+
+
+def attribute_batch_seconds(batch: object, num_requests: int) -> list[float | None]:
+    """Split a batch's inference wall time across its requests by token share.
+
+    Each request gets wall_clock_time_s * (its prompt + completion tokens) / (the
+    batch's tokens), using the per-request metrics the provider recorded for this
+    batch. Returns all None when there are no metrics or they do not line up one
+    to one with the batch's requests.
+    """
+    from olmo_eval.inference.metrics.core.schema import BatchMetrics
+
+    if not isinstance(batch, BatchMetrics) or len(batch.requests) != num_requests:
+        return [None] * num_requests
+    tokens = [r.prompt_tokens + r.completion_tokens for r in batch.requests]
+    total = sum(tokens)
+    if total <= 0:
+        return [batch.wall_clock_time_s / num_requests] * num_requests
+    return [batch.wall_clock_time_s * count / total for count in tokens]
 
 
 def _format_cause(cause: BaseException) -> str:
@@ -108,6 +134,7 @@ async def process_chat_request(
     }
     prepared_request = harness._apply_config(item.request)
     request_trace = harness.provider.describe_request(prepared_request, item.sampling_params)
+    sent_at = time.time()
 
     try:
         harness_result = await harness.run(
@@ -129,6 +156,7 @@ async def process_chat_request(
         else:
             output_with_metadata = final_output
 
+        provider_error = request_error([final_output])
         result_queue.put(
             ResultItem(
                 model_name=item.model_name,
@@ -137,9 +165,10 @@ async def process_chat_request(
                 instance=item.instance,
                 request=prepared_request,
                 request_trace=request_trace,
-                outputs=[output_with_metadata],
-                error=harness_result.error,
+                outputs=[] if provider_error is not None else [output_with_metadata],
+                error=provider_error or harness_result.error,
                 attempt=item.attempt,
+                sent_at=sent_at,
             )
         )
 
@@ -165,6 +194,7 @@ async def process_chat_request(
                 outputs=[],
                 error=error_detail,
                 attempt=item.attempt,
+                sent_at=sent_at,
             )
         )
 
@@ -202,18 +232,29 @@ async def process_batch(
         harness.provider.describe_request(request, sampling_params) for request in prepared_requests
     ]
 
-    reported = 0
+    # Results are queued after the batch metrics are flushed, so each one can carry
+    # its share of the batch's inference time.
+    results: list[ResultItem] = []
+    sent_at = time.time()
     try:
         if request_type == RequestType.LOGLIKELIHOOD:
             all_outputs = await harness.provider.alogprobs(prepared_requests, sampling_params)
         else:
             all_outputs = await harness.provider.agenerate(prepared_requests, sampling_params)
 
-        # Map outputs back to individual items
+        # An empty result is a fallback failure for requests that expected output.
         for item, prepared_request, request_trace, outputs in zip(
             items, prepared_requests, request_traces, all_outputs, strict=True
         ):
-            result_queue.put(
+            error = request_error(outputs)
+            expects_output = request_type != RequestType.LOGLIKELIHOOD or bool(
+                prepared_request.continuations
+            )
+            if error is None and expects_output and not outputs:
+                error = _NO_OUTPUT_ERROR
+            if error is not None:
+                log.warning(f"Instance {item.instance_idx} failed: {error}")
+            results.append(
                 ResultItem(
                     model_name=item.model_name,
                     task_id=item.task_id,
@@ -221,19 +262,22 @@ async def process_batch(
                     instance=item.instance,
                     request=prepared_request,
                     request_trace=request_trace,
-                    outputs=outputs,
-                    error=None,
+                    outputs=[] if error is not None else outputs,
+                    error=error,
                     attempt=item.attempt,
+                    sent_at=sent_at,
                 )
             )
-            reported += 1
 
     except Exception as e:
         terminal_error = classify_terminal_provider_error(e)
         if terminal_error is not None:
             raise terminal_error from e
 
-        # Batch failed - report errors only for items that never produced a result
+        # Batch failed - report the results already built, then errors for the rest
+        for result in results:
+            result_queue.put(result)
+        reported = len(results)
         error_detail = _format_error_detail(e)
         log.error(
             f"Batch error ({len(items) - reported} of {len(items)} items affected): {error_detail}"
@@ -253,10 +297,16 @@ async def process_batch(
                     outputs=[],
                     error=error_detail,
                     attempt=item.attempt,
+                    sent_at=sent_at,
                 )
             )
     else:
-        _flush_batch_metrics(harness, items, log)
+        batch = _flush_batch_metrics(harness, items, log)
+        for result, seconds in zip(
+            results, attribute_batch_seconds(batch, len(results)), strict=True
+        ):
+            result.attributed_seconds = seconds
+            result_queue.put(result)
 
 
 async def process_items(
@@ -343,6 +393,7 @@ async def process_items(
 
 
 __all__ = [
+    "attribute_batch_seconds",
     "process_chat_request",
     "process_batch",
     "process_items",

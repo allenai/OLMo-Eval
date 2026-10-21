@@ -381,7 +381,10 @@ class OlmoCoreProvider(InferenceProvider):
         return input_ids
 
     def _build_generation_kwargs(self, params: SamplingParams) -> dict[str, object]:
-        if params.max_tokens <= 0:
+        # ``max_tokens=None`` means "generate to the context limit"; the
+        # generation path resolves it per prompt via ``_resolve_max_tokens``,
+        # and the request-trace path never resolves it at all.
+        if params.max_tokens is not None and params.max_tokens <= 0:
             raise ValueError("OlmoCoreProvider requires sampling max_tokens > 0")
         if params.num_samples <= 0:
             raise ValueError("OlmoCoreProvider requires sampling num_samples > 0")
@@ -688,7 +691,8 @@ class OlmoCoreProvider(InferenceProvider):
                     f"({len(continuation_ids)} > {max_len})"
                 )
 
-            truncated = (context_ids + continuation_ids)[-(max_len + 1) :]
+            full_ids = context_ids + continuation_ids
+            truncated = full_ids[-(max_len + 1) :]
             model_input = truncated[:-1]
             rows.append(
                 core_utils.LogprobInput(
@@ -697,6 +701,7 @@ class OlmoCoreProvider(InferenceProvider):
                     num_tokens_all=len(truncated),
                     continuation_token_ids=continuation_ids,
                     continuation=continuation,
+                    prompt_truncated_tokens=len(full_ids) - len(truncated),
                 )
             )
         return rows
@@ -716,6 +721,7 @@ class OlmoCoreProvider(InferenceProvider):
                     "num_tokens": 0,
                     "num_tokens_all": row.num_tokens_all,
                     "is_greedy": True,
+                    "prompt_truncated_tokens": row.prompt_truncated_tokens,
                 },
             )
 
@@ -752,6 +758,7 @@ class OlmoCoreProvider(InferenceProvider):
                 "num_tokens": len(entries),
                 "num_tokens_all": row.num_tokens_all,
                 "is_greedy": is_greedy,
+                "prompt_truncated_tokens": row.prompt_truncated_tokens,
             },
         )
 

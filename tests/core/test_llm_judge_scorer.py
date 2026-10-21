@@ -1,5 +1,11 @@
 """Tests for olmo_eval.core.llm_judge_scorer module."""
 
+import asyncio
+import inspect
+import json
+import sys
+import types
+
 import pytest
 
 from olmo_eval.common.execution import ScoringContext
@@ -7,7 +13,188 @@ from olmo_eval.common.scorers import (
     RubricJudgeScorer,
     SimpleQAJudgeScorer,
 )
+from olmo_eval.common.scorers.llm_judge import ConfiguredJudgeFn, build_openai_judge_fn
 from olmo_eval.common.types import Instance, LMOutput
+
+_MAX_TOKENS_REJECTION = (
+    "Unsupported parameter: 'max_tokens' is not supported with this model. "
+    "Use 'max_completion_tokens' instead."
+)
+
+
+def _stub_openai(monkeypatch, create, clients: list[dict] | None = None):
+    """Install a stub ``openai`` module whose completions call is ``create``.
+
+    Client constructor arguments are appended to ``clients`` when it is given.
+    """
+    calls: list[dict] = []
+
+    async def recording_create(**kwargs):
+        calls.append(dict(kwargs))
+        return await create(**kwargs)
+
+    def make_message(content):
+        message = types.SimpleNamespace(content=content)
+        return types.SimpleNamespace(choices=[types.SimpleNamespace(message=message)])
+
+    class FakeAsyncOpenAI:
+        def __init__(self, **kwargs):
+            if clients is not None:
+                clients.append(kwargs)
+            self.chat = types.SimpleNamespace(
+                completions=types.SimpleNamespace(create=recording_create)
+            )
+
+    module = types.ModuleType("openai")
+    module.AsyncOpenAI = FakeAsyncOpenAI
+    monkeypatch.setitem(sys.modules, "openai", module)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    return calls, make_message
+
+
+class TestBuildOpenAIJudgeFn:
+    """Tests for the adaptive request shape in build_openai_judge_fn."""
+
+    @pytest.mark.anyio
+    async def test_switches_to_max_completion_tokens_on_rejection(self, monkeypatch):
+        reply = []
+
+        async def create(**kwargs):
+            if "max_tokens" in kwargs:
+                raise RuntimeError(_MAX_TOKENS_REJECTION)
+            return reply[0]
+
+        calls, make_message = _stub_openai(monkeypatch, create)
+        reply.append(make_message("VERDICT: CORRECT"))
+
+        judge = build_openai_judge_fn(model="gpt-5", max_tokens=64)
+
+        assert await judge("grade this") == "VERDICT: CORRECT"
+        assert [set(call) & {"max_tokens", "max_completion_tokens"} for call in calls] == [
+            {"max_tokens"},
+            {"max_completion_tokens"},
+        ]
+
+    @pytest.mark.anyio
+    async def test_concurrent_first_calls_both_adapt(self, monkeypatch):
+        """A call that loses the adaptation race must retry, not surface the error."""
+        reply = []
+        barrier = asyncio.Barrier(2)
+
+        async def create(**kwargs):
+            if "max_tokens" in kwargs:
+                # Hold both first attempts in flight so they race on one fix.
+                await barrier.wait()
+                raise RuntimeError(_MAX_TOKENS_REJECTION)
+            return reply[0]
+
+        calls, make_message = _stub_openai(monkeypatch, create)
+        reply.append(make_message("VERDICT: INCORRECT"))
+
+        judge = build_openai_judge_fn(model="gpt-5", max_tokens=64)
+        results = await asyncio.gather(judge("first"), judge("second"))
+
+        assert results == ["VERDICT: INCORRECT", "VERDICT: INCORRECT"]
+        assert sum("max_tokens" in call for call in calls) == 2
+        assert sum("max_completion_tokens" in call for call in calls) == 2
+
+    @pytest.mark.anyio
+    async def test_unrelated_errors_still_surface(self, monkeypatch):
+        async def create(**kwargs):
+            raise RuntimeError("rate limit exceeded")
+
+        _stub_openai(monkeypatch, create)
+        judge = build_openai_judge_fn(model="gpt-5", max_tokens=64)
+
+        with pytest.raises(RuntimeError, match="rate limit exceeded"):
+            await judge("grade this")
+
+    @pytest.mark.anyio
+    async def test_falls_back_to_openrouter(self, monkeypatch):
+        reply = []
+
+        async def create(**kwargs):
+            return reply[0]
+
+        clients: list[dict] = []
+        calls, make_message = _stub_openai(monkeypatch, create, clients)
+        monkeypatch.delenv("OPENAI_API_KEY")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+        reply.append(make_message("VERDICT: CORRECT"))
+
+        judge = build_openai_judge_fn(model="gpt-4o-mini", max_tokens=64)
+
+        assert await judge("grade this") == "VERDICT: CORRECT"
+        assert clients == [{"api_key": "or-key", "base_url": "https://openrouter.ai/api/v1"}]
+        assert calls[0]["model"] == "openai/gpt-4o-mini"
+
+    @pytest.mark.anyio
+    async def test_missing_keys_name_both_options(self, monkeypatch):
+        async def create(**kwargs):
+            raise AssertionError("no request should be sent")
+
+        _stub_openai(monkeypatch, create)
+        monkeypatch.delenv("OPENAI_API_KEY")
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        judge = build_openai_judge_fn(model="gpt-4o-mini", scorer_name="MyScorer")
+
+        with pytest.raises(ValueError, match="OPENAI_API_KEY or OPENROUTER_API_KEY .*MyScorer"):
+            await judge("grade this")
+
+    def test_records_the_settings_that_affect_judge_output(self):
+        judge = build_openai_judge_fn(
+            model="gpt-5", max_tokens=64, temperature=0.5, reasoning_effort="low"
+        )
+
+        assert judge.judge_config == {
+            "model": "gpt-5",
+            "max_tokens": 64,
+            "temperature": 0.5,
+            "reasoning_effort": "low",
+        }
+
+    def test_records_the_default_model(self):
+        default_model = inspect.signature(build_openai_judge_fn).parameters["model"].default
+
+        assert build_openai_judge_fn().judge_config["model"] == default_model
+
+    def test_is_a_configured_judge(self):
+        assert isinstance(build_openai_judge_fn(), ConfiguredJudgeFn)
+
+    def test_a_plain_judge_function_is_not_a_configured_judge(self):
+        async def custom_judge(prompt: str) -> str:
+            return "A"
+
+        assert not isinstance(custom_judge, ConfiguredJudgeFn)
+
+
+class TestLLMJudgeScorerSerialization:
+    """Tests for how LLM judge scorers describe their judge when serialized."""
+
+    def test_records_the_judge_model(self):
+        scorer = SimpleQAJudgeScorer(judge_fn=build_openai_judge_fn(model="gpt-5"))
+
+        judge = scorer.to_dict()["judge_fn"]
+
+        assert judge["name"] == "build_openai_judge_fn.<locals>.judge"
+        assert judge["model"] == "gpt-5"
+
+    def test_different_judge_models_serialize_differently(self):
+        first = SimpleQAJudgeScorer(judge_fn=build_openai_judge_fn(model="gpt-4o-mini"))
+        second = SimpleQAJudgeScorer(judge_fn=build_openai_judge_fn(model="gpt-5"))
+
+        assert json.dumps(first.to_dict()) != json.dumps(second.to_dict())
+
+    def test_custom_judge_is_recorded_by_name(self):
+        async def custom_judge(prompt: str) -> str:
+            return "A"
+
+        assert SimpleQAJudgeScorer(judge_fn=custom_judge).to_dict()["judge_fn"] == {
+            "name": custom_judge.__qualname__
+        }
+
+    def test_provider_judge_has_no_judge_fn(self):
+        assert SimpleQAJudgeScorer(provider_name="judge").to_dict()["judge_fn"] is None
 
 
 class TestSimpleQAJudgeScorer:

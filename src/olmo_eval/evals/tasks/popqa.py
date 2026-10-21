@@ -39,13 +39,24 @@ class PopQAContainsScorer(Scorer):
 
     A response is correct if any accepted alias appears in it verbatim,
     lowercased, or capitalized — the matching rule used by the reference
-    implementation.
+    implementation. With ``first_line`` set, only the first non-blank line
+    is searched: models that ramble past their answer invent follow-up Q/A
+    pairs full of plausible entity names, and whole-output containment
+    credits those accidental hits. Leading blank lines are skipped rather
+    than treated as the answer — a reasoning model's answer starts on the
+    line after the stripped ``<think>`` trace.
     """
 
     name: str = "popqa_contains"
+    first_line: bool = False
 
     def score(self, instance: Instance, output: LMOutput) -> float:
         response = output.text or ""
+        if self.first_line:
+            response = next(
+                (line for line in response.split("\n") if line.strip()),
+                "",
+            )
         aliases = instance.metadata.get("aliases") or []
         if not aliases and instance.gold_answer:
             aliases = [instance.gold_answer]
@@ -56,11 +67,28 @@ class PopQAContainsScorer(Scorer):
         return 0.0
 
 
+_FIRST_LINE = PopQAContainsScorer(name="popqa_contains_first_line", first_line=True)
+_CONTAINMENT = PopQAContainsScorer()
+
+# First-line containment is the primary metric: it is robust to ramble-rate
+# differences between models, where whole-output containment awards verbose
+# models free credit. Whole-output containment is what the reference
+# implementation computes, so it stays reported for cross-harness and
+# historical comparison.
+_FIRST_LINE_ACCURACY = AccuracyMetric(name="exact_match_first_line", scorer=_FIRST_LINE)
+_CONTAINMENT_ACCURACY = AccuracyMetric(name="exact_match_containment", scorer=_CONTAINMENT)
+
+
 @register("popqa")
 class PopQA(Task):
     data_source = DataSource(path="akariasai/PopQA", split="test")
     split = Split.TEST
-    metrics = (AccuracyMetric(scorer=PopQAContainsScorer),)
+    metrics = (_FIRST_LINE_ACCURACY, _CONTAINMENT_ACCURACY)
+    primary_metric = _FIRST_LINE_ACCURACY
+    # A completed trace fits the 15-token budget (``<think>USA</think>\nFrance``
+    # is 8 tokens), and scoring one credits the reasoning rather than the answer,
+    # so the strip is enabled here as well as on the reasoning variant.
+    strip_thinking = True
     num_fewshot = 15
     sampling_params = SamplingParams(
         max_tokens=15,
@@ -91,6 +119,9 @@ class PopQA(Task):
         )
 
     def _build_fewshot(self) -> list[Instance]:
+        num_fewshot = self.config.num_fewshot or 0
+        if num_fewshot <= 0:
+            return []
         instances = [
             Instance(
                 question=_format_query(str(doc["question"])),
@@ -99,9 +130,7 @@ class PopQA(Task):
             )
             for index, doc in enumerate(POPQA_FIXED_FEWSHOT)
         ]
-        if self.config.num_fewshot and self.config.num_fewshot < len(instances):
-            instances = instances[: self.config.num_fewshot]
-        return instances
+        return instances[:num_fewshot]
 
     def format_request(self, instance: Instance) -> LMRequest:
         parts = [f"{ex.question} {ex.gold_answer}" for ex in self.get_fewshot()]

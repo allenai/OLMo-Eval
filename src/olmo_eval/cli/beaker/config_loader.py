@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -29,7 +30,8 @@ class LaunchConfig:
 
     max_gpus_per_node: int = 8
     priority: str = "normal"
-    preemptible: bool = True
+    preemptible: bool | None = True
+    min_runtime: str | None = None
     timeout: str = "6h"
     retries: int | None = None
     image: str | None = None
@@ -37,12 +39,13 @@ class LaunchConfig:
 
     gpus: int = 0
 
-    s3_bucket: str = "ai2-llm"
-    s3_prefix: str = "olmo-eval"
-    s3_endpoint_url: str | None = None
-    s3_region: str = "us-east-1"
+    # Dashboard upload: resolved at launch so a local OLMO_EVAL_UPLOAD=0 carries over
+    upload: bool = True
+    api_url: str | None = None
+    tags: list[str] = field(default_factory=list)
+    # Shared by every job of one launch; the dashboard groups runs by it
+    launch_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
 
-    store: bool = False
     debug_requests: bool = False
     debug_provider: bool = False
     force_download_model: bool = False
@@ -59,13 +62,36 @@ class LaunchConfig:
 
     uv_cache_dir: str | None = None
 
+    # Weka buckets mounted in addition to the defaults
+    weka_buckets: list[str] = field(default_factory=list)
+
     # Secret env overrides: maps beaker_secret_name -> env_var_name
     # Allows overriding default {username}_{ENV_VAR} pattern
     secret_env_overrides: dict[str, str] = field(default_factory=dict)
 
     # User-supplied plain env vars forwarded/set on the job via --env/-e.
-    # These win over infra and store defaults.
+    # These win over infra defaults.
     env_vars: dict[str, str] = field(default_factory=dict)
+
+
+def resolve_preemption(
+    preemptible: bool | None, min_runtime: str | None
+) -> tuple[bool | None, str | None]:
+    """Resolve the preemption settings from one source into (preemptible, min_runtime).
+
+    A min runtime replaces preemptible, so the returned preemptible is None when a min
+    runtime is set. Without either setting, jobs are preemptible.
+
+    Raises:
+        ValueError: If both are set, or the min runtime is not a valid duration.
+    """
+    from olmo_eval.launch.beaker import validate_min_runtime
+
+    if min_runtime is None:
+        return (True if preemptible is None else preemptible), None
+    if preemptible is not None:
+        raise ValueError("preemptible and min_runtime cannot both be set; set min_runtime alone")
+    return None, validate_min_runtime(min_runtime)
 
 
 class LaunchConfigLoader:
@@ -100,6 +126,7 @@ class LaunchConfigLoader:
         cli_max_gpus_per_node = self.cli_args.get("max_gpus_per_node")
         cli_priority = self.cli_args.get("priority")
         cli_preemptible = self.cli_args.get("preemptible")
+        cli_min_runtime = self.cli_args.get("min_runtime")
         cli_timeout = self.cli_args.get("timeout")
         cli_retries = self.cli_args.get("retries")
         cli_workspace = self.cli_args.get("workspace")
@@ -122,7 +149,11 @@ class LaunchConfigLoader:
                 else cfg.max_gpus_per_node
             )
             priority = cli_priority if cli_priority is not None else cfg.priority
-            preemptible = cli_preemptible if cli_preemptible is not None else cfg.preemptible
+            # Preemption settings come from one source: the CLI if it sets either, else the file.
+            if cli_preemptible is not None or cli_min_runtime is not None:
+                preemptible, min_runtime = cli_preemptible, cli_min_runtime
+            else:
+                preemptible, min_runtime = cfg.preemptible, cfg.min_runtime
             timeout = cli_timeout if cli_timeout is not None else cfg.timeout
             gpus = cli_gpus if cli_gpus is not None else cfg.gpus
             image = cli_image or cfg.beaker_image
@@ -137,6 +168,7 @@ class LaunchConfigLoader:
             max_gpus_per_node = cli_max_gpus_per_node
             priority = cli_priority
             preemptible = cli_preemptible
+            min_runtime = cli_min_runtime
             timeout = cli_timeout
             gpus = cli_gpus  # None means auto-detect from provider
             image = cli_image
@@ -160,7 +192,11 @@ class LaunchConfigLoader:
             max_gpus_per_node if max_gpus_per_node is not None else DEFAULT_MAX_GPUS_PER_NODE
         )
         priority = priority or "normal"
-        preemptible = preemptible if preemptible is not None else True
+        try:
+            preemptible, min_runtime = resolve_preemption(preemptible, min_runtime)
+        except ValueError as e:
+            console.print(f"[red]Error:[/red] {e}")
+            raise SystemExit(1) from None
         timeout = timeout or "24h"
 
         self._validate_required(model_specs, task_specs, cluster, workspace, budget)
@@ -172,11 +208,6 @@ class LaunchConfigLoader:
         assert name is not None
         assert cluster is not None
         assert workspace is not None
-
-        from olmo_eval.launch.beaker.constants import DEFAULT_S3_BUCKET, DEFAULT_S3_PREFIX
-
-        s3_bucket = self.cli_args.get("s3_bucket") or DEFAULT_S3_BUCKET
-        s3_prefix = self.cli_args.get("s3_prefix") or DEFAULT_S3_PREFIX
 
         effective_groups = list(cli_groups)
         if cfg is not None and cfg.groups:
@@ -195,16 +226,15 @@ class LaunchConfigLoader:
             max_gpus_per_node=max_gpus_per_node,
             priority=priority,
             preemptible=preemptible,
+            min_runtime=min_runtime,
             timeout=timeout,
             retries=retries,
             image=image,
             groups=effective_groups,
             gpus=gpus,
-            s3_bucket=s3_bucket,
-            s3_prefix=s3_prefix,
-            s3_endpoint_url=self.cli_args.get("s3_endpoint_url"),
-            s3_region=self.cli_args.get("s3_region", "us-east-1"),
-            store=self.cli_args.get("store", False),
+            upload=self.cli_args.get("upload", True),
+            api_url=self.cli_args.get("api_url"),
+            tags=list(self.cli_args.get("tags", [])),
             debug_requests=self.cli_args.get("debug_requests", False),
             debug_provider=self.cli_args.get("debug_provider", False),
             force_download_model=self.cli_args.get("force_download_model", False),
@@ -218,6 +248,7 @@ class LaunchConfigLoader:
             harness=self.cli_args.get("harness"),
             harness_overrides=self.cli_args.get("harness_overrides", []),
             uv_cache_dir=self.cli_args.get("uv_cache_dir"),
+            weka_buckets=list(self.cli_args.get("weka_buckets", [])),
             secret_env_overrides=self.cli_args.get("secret_env_overrides", {}),
             env_vars=self.cli_args.get("env_vars", {}),
         )
@@ -309,7 +340,11 @@ class LaunchConfigLoader:
             provider_config = None
 
         if harness_config and provider_config:
-            harness_config = harness_config.merge_provider(provider_config)
+            from olmo_eval.cli.run.config import merge_model_provider
+
+            harness_config = merge_model_provider(
+                harness_config, provider_config, harness_overrides
+            )
 
         # Calculate main provider GPU requirements
         main_instances = 1
@@ -374,8 +409,8 @@ class LaunchConfigLoader:
         if not harness_name:
             return None
 
-        from olmo_eval.cli.run.config import _apply_dotlist_overrides
-        from olmo_eval.harness import HarnessConfig, get_harness_preset
+        from olmo_eval.cli.run.config import _apply_harness_overrides
+        from olmo_eval.harness import get_harness_preset
 
         try:
             harness_config = get_harness_preset(harness_name)
@@ -383,8 +418,6 @@ class LaunchConfigLoader:
             return None
 
         if harness_overrides:
-            harness_dict = harness_config.to_dict()
-            harness_dict = _apply_dotlist_overrides(harness_dict, harness_overrides)
-            harness_config = HarnessConfig.from_dict(harness_dict)
+            harness_config = _apply_harness_overrides(harness_config, harness_overrides)
 
         return harness_config

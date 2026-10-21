@@ -3,14 +3,26 @@
 from __future__ import annotations
 
 import functools
+import os
 from collections.abc import Callable
 from typing import Any, TypeVar, cast
 
 import click
 
-from olmo_eval.common.constants.infrastructure import LOCAL_RESULT_DIR
+from olmo_eval.common.constants.infrastructure import BEAKER_RESULT_DIR, LOCAL_RESULT_DIR
 
 F = TypeVar("F", bound=Callable[..., Any])
+
+
+def default_output_dir() -> str:
+    """The Beaker result dir on a Beaker job that has one, else the local result dir.
+
+    Output under /tmp is lost when a Beaker container exits, so a job launched without
+    ``-O`` (e.g. by gantry or a wrapper script) keeps its results in the result dataset.
+    """
+    if os.environ.get("BEAKER_JOB_ID") and os.path.isdir(BEAKER_RESULT_DIR):
+        return BEAKER_RESULT_DIR
+    return LOCAL_RESULT_DIR
 
 
 def parallelism_options(func: F) -> F:  # noqa: UP047
@@ -36,58 +48,28 @@ def parallelism_options(func: F) -> F:  # noqa: UP047
     return cast(F, wrapper)
 
 
-def storage_options(func: F) -> F:  # noqa: UP047
-    """S3 and database storage options."""
+def upload_options(func: F) -> F:  # noqa: UP047
+    """Dashboard upload options."""
 
     @click.option(
-        "--store",
-        is_flag=True,
-        help="Persist results to the configured database",
-    )
-    @click.option("--s3-bucket", help="S3 bucket for storing evaluation results")
-    @click.option("--s3-prefix", help="S3 prefix/path within bucket for results")
-    @click.option("--s3-group", help="S3 group name (used in path structure)")
-    @click.option(
-        "--s3-endpoint-url",
-        envvar="S3_ENDPOINT_URL",
-        help="S3 endpoint URL (for S3-compatible storage)",
+        "--upload/--no-upload",
+        "upload",
+        default=None,
+        help=(
+            "Upload results to the olmo-eval dashboard with your Google credentials "
+            "(default: on; OLMO_EVAL_UPLOAD=0 turns it off)"
+        ),
     )
     @click.option(
-        "--s3-region",
-        default="us-east-1",
-        envvar="AWS_REGION",
-        help="S3 region (default: us-east-1)",
+        "--api-url",
+        default=None,
+        help="Dashboard ingest service URL (default: $OLMO_EVAL_API_URL, else production)",
     )
     @click.option(
-        "--db-host",
-        default="localhost",
-        envvar="PGHOST",
-        help="PostgreSQL host",
-    )
-    @click.option(
-        "--db-port",
-        default=5432,
-        type=int,
-        envvar="PGPORT",
-        help="PostgreSQL port",
-    )
-    @click.option(
-        "--db-name",
-        default="olmo_eval",
-        envvar="PGDATABASE",
-        help="PostgreSQL database name",
-    )
-    @click.option(
-        "--db-user",
-        default="postgres",
-        envvar="PGUSER",
-        help="PostgreSQL user",
-    )
-    @click.option(
-        "--db-password",
-        default="postgres",
-        envvar="PGPASSWORD",
-        help="PostgreSQL password",
+        "--tag",
+        "tags",
+        multiple=True,
+        help="Label to attach to the uploaded run (repeatable)",
     )
     @functools.wraps(func)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -101,7 +83,7 @@ def experiment_options(func: F) -> F:  # noqa: UP047
 
     @click.option(
         "--experiment-name",
-        help="Human-readable experiment name for database storage",
+        help="Human-readable experiment name (Beaker launches use the experiment name)",
     )
     @click.option(
         "--experiment-group",
@@ -120,8 +102,11 @@ def output_options(func: F) -> F:  # noqa: UP047
     @click.option(
         "--output-dir",
         "-O",
-        default=LOCAL_RESULT_DIR,
-        help="Output directory",
+        default=default_output_dir,
+        help=(
+            f"Output directory (default: {BEAKER_RESULT_DIR} on a Beaker job, "
+            f"else {LOCAL_RESULT_DIR})"
+        ),
     )
     @click.option(
         "--save-predictions/--no-save-predictions",

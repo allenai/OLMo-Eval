@@ -119,3 +119,24 @@ class TestDataSourceMethods:
         source = DataSource(path="cais/mmlu", subset="math")
         new_source = source.with_subset(None)
         assert new_source.subset is None
+
+
+class TestDataSourceDataFiles:
+    """Tests for selecting specific data files."""
+
+    def test_multiple_data_files_survive_split_and_subset_changes(self):
+        source = DataSource(path="org/repo", data_files=("a.jsonl", "b.jsonl"))
+        assert source.with_split("train").data_files == ("a.jsonl", "b.jsonl")
+        assert source.with_subset("other").data_files == ("a.jsonl", "b.jsonl")
+
+    def test_multiple_data_files_serialize_as_a_list(self):
+        source = DataSource(path="org/repo", data_files=("a.jsonl", "b.jsonl"))
+        assert source.to_dict()["data_files"] == ["a.jsonl", "b.jsonl"]
+
+    def test_single_data_file_serializes_unchanged(self):
+        source = DataSource(path="org/repo", data_files="a.jsonl")
+        assert source.to_dict()["data_files"] == "a.jsonl"
+
+    def test_source_with_multiple_data_files_is_hashable(self):
+        source = DataSource(path="org/repo", data_files=("a.jsonl", "b.jsonl"))
+        assert hash(source) == hash(DataSource(path="org/repo", data_files=("a.jsonl", "b.jsonl")))

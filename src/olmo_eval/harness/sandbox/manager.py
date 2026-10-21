@@ -8,7 +8,7 @@ import concurrent.futures
 import contextlib
 import time
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import TypeVar
@@ -50,6 +50,12 @@ class ExecutorBinding:
         if self._released:
             raise RuntimeError("Binding has been released")
         return await self.executor.execute_in_session(command, timeout)
+
+    async def interrupt_session(self) -> None:
+        """Interrupt the command running in the bound executor's bash session."""
+        if self._released:
+            raise RuntimeError("Binding has been released")
+        await self.executor.interrupt_session()
 
     async def release(self) -> None:
         if not self._released:
@@ -99,6 +105,20 @@ class CapabilityExecutionEnvironment:
         return await self.manager.execute_code(
             code,
             language,
+            timeout,
+            capabilities=self.capabilities,
+            failover_on_quarantine=True,
+        )
+
+    async def execute_with_files(
+        self,
+        command: str,
+        files: Mapping[str, str],
+        timeout: float | None = None,
+    ) -> ExecutionResult:
+        return await self.manager.execute_with_files(
+            command,
+            files,
             timeout,
             capabilities=self.capabilities,
             failover_on_quarantine=True,
@@ -300,6 +320,14 @@ class SandboxManager:
         self._round_robin_indices.clear()
         self._active_operations.clear()
         self._logger.info("All sandboxes stopped")
+
+        if self._modal_app_name is not None:
+            from .modal_deployment import stop_modal_app
+
+            try:
+                await stop_modal_app(self._modal_app_name)
+            except Exception as e:
+                self._logger.warning(f"Failed to stop Modal app {self._modal_app_name}: {e}")
 
         with contextlib.suppress(Exception):
             atexit.unregister(self._atexit_cleanup)
@@ -528,6 +556,44 @@ class SandboxManager:
         return await self._execute_with_lease(
             required,
             lambda executor: executor.execute_code(code, language, timeout),
+            failover_on_quarantine=failover_on_quarantine,
+        )
+
+    async def execute_with_files(
+        self,
+        command: str,
+        files: Mapping[str, str],
+        timeout: float | None = None,
+        capabilities: frozenset[str] | None = None,
+        *,
+        failover_on_quarantine: bool = False,
+    ) -> ExecutionResult:
+        """Stage files and run a command against them on one executor.
+
+        Both steps hold the same lease, so the command sees the files that
+        were written for it rather than the contents of another executor.
+
+        Args:
+            command: The command to execute once the files are in place.
+            files: Mapping of absolute sandbox path to file content.
+            timeout: Seconds allowed for each step, applied to every file
+                write and to the command separately rather than to the
+                operation as a whole. Defaults to the executor's command
+                timeout.
+            capabilities: Optional required capabilities. If None, uses default.
+
+        Returns:
+            ExecutionResult with success status, output, and exit code.
+        """
+        required = capabilities or Capability.DEFAULT
+
+        async def stage_and_execute(executor: SandboxExecutor) -> ExecutionResult:
+            await executor.write_files(files, timeout)
+            return await executor.execute_command(command, timeout)
+
+        return await self._execute_with_lease(
+            required,
+            stage_and_execute,
             failover_on_quarantine=failover_on_quarantine,
         )
 

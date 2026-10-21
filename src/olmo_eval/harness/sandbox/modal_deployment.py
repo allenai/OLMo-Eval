@@ -7,8 +7,19 @@ import contextlib
 import time
 
 import modal
+import modal.experimental
 from swerex.deployment.modal import ModalDeployment
 from swerex.runtime.remote import RemoteRuntime
+
+
+async def stop_modal_app(app_name: str) -> None:
+    """Stop a named Modal app so it does not outlive the run that created it.
+
+    Apps created by ``modal.App.lookup(name, create_if_missing=True)`` stay
+    deployed after their sandboxes exit. An app that is already gone is fine.
+    """
+    with contextlib.suppress(modal.exception.NotFoundError):
+        await modal.experimental.stop_app.aio(app_name)
 
 
 class ManagedModalDeployment(ModalDeployment):

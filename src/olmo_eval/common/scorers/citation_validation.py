@@ -11,9 +11,9 @@ them. It has two layers:
    the expected scores. This proves the plumbing, GIVEN a correct judge. See
    tests/core/test_citation_validation.py.
 
-2. Judge layer (needs OPENAI_API_KEY, run manually): run the same cases through
-   real judges to test whether they ARE correct judges on these adversarial
-   cases. Run `python -m olmo_eval.common.scorers.citation_validation` to sweep a
+2. Judge layer (needs OPENAI_API_KEY or OPENROUTER_API_KEY, run manually): run
+   the same cases through real judges to test whether they ARE correct judges on
+   these adversarial cases. Run `python -m olmo_eval.common.scorers.citation_validation` to sweep a
    ladder of judges; pass rung specs as args (`model` or `model:effort`, e.g.
    `gpt-5.5:low`) and `--repeat N` to average over runs (the gpt-5 series runs at
    temperature 1, so single runs are noisy).

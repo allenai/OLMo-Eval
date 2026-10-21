@@ -8,7 +8,8 @@ from typing import Any
 
 from olmo_eval.common.metrics import Metric
 from olmo_eval.common.metrics.predictions import augment_prediction_instance_metrics
-from olmo_eval.common.types import Response, SamplingParams
+from olmo_eval.common.scorers.base import SCORER_RESULTS_KEY
+from olmo_eval.common.types import TURNS_KEY, Response, SamplingParams
 
 
 def build_predictions(scored: Sequence[Any], metrics: Sequence[Metric] = ()) -> list[dict]:
@@ -28,8 +29,12 @@ def build_predictions(scored: Sequence[Any], metrics: Sequence[Metric] = ()) -> 
         for out in resp.outputs:
             # Get values from metadata (set by backend) or compute from logprobs
             meta = out.metadata or {}
-            num_bytes = len(out.text.encode("utf-8")) if out.text else 0
             num_chars = len(out.text) if out.text else 0
+            # Logprobs describe the whole generation. If strip_thinking removed a
+            # reasoning trace, normalize by the original text, not the stripped answer.
+            full_text = meta.get("original_text") or out.text or ""
+            num_bytes = len(full_text.encode("utf-8"))
+            num_chars_all = len(full_text)
 
             # Use metadata values if available (from vLLM provider), else compute
             sum_logits: float | None
@@ -62,12 +67,18 @@ def build_predictions(scored: Sequence[Any], metrics: Sequence[Metric] = ()) -> 
 
                 if num_tokens:
                     out_data["logits_per_token"] = sum_logits / num_tokens
-                if num_chars > 0:
-                    out_data["logits_per_char"] = sum_logits / num_chars
+                if num_chars_all > 0:
+                    out_data["logits_per_char"] = sum_logits / num_chars_all
                 if num_bytes > 0:
                     out_data["bits_per_byte"] = -sum_logits / (num_bytes * math.log(2))
 
+            for key in ("finish_reason", "completion_tokens", "prompt_tokens"):
+                if key in meta:
+                    out_data[key] = meta[key]
+
             out_data["num_chars"] = num_chars
+            if "original_text" in meta:
+                out_data["num_chars_all"] = num_chars_all
 
             sample_metrics: dict[str, dict[str, float]] = {}
             for key, value in meta.items():
@@ -77,11 +88,27 @@ def build_predictions(scored: Sequence[Any], metrics: Sequence[Metric] = ()) -> 
             if sample_metrics:
                 out_data["sample_metrics"] = sample_metrics
 
+            # Full text before strip_thinking removed the reasoning trace, so the
+            # trace length and termination can be audited from the predictions file.
+            if "original_text" in meta:
+                out_data["original_text"] = meta["original_text"]
+
             # Include execution result if present
             if "execution_result" in meta:
                 out_data["execution_result"] = meta["execution_result"]
             if "scoring_errors" in meta:
                 out_data["scoring_errors"] = meta["scoring_errors"]
+            if "judge_result" in meta:
+                out_data["judge_result"] = meta["judge_result"]
+            # Whether the answer was stated in the requested format (scorer-set).
+            if "answer_format_correct" in meta:
+                out_data["answer_format_correct"] = meta["answer_format_correct"]
+            # Per-instance results scorers keep, keyed by scorer name.
+            if SCORER_RESULTS_KEY in meta:
+                out_data[SCORER_RESULTS_KEY] = meta[SCORER_RESULTS_KEY]
+            # Each turn of a scripted conversation; ``text`` is only the last reply.
+            if TURNS_KEY in meta:
+                out_data[TURNS_KEY] = meta[TURNS_KEY]
 
             model_output.append(out_data)
 

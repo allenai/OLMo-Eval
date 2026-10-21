@@ -199,6 +199,7 @@ tasks:
         )
 
         assert config.priority == "normal"
-        assert config.preemptible is True
+        assert config.preemptible is None
+        assert config.min_runtime is None
         assert config.timeout == "24h"
         assert config.gpus == 1

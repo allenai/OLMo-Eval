@@ -6,9 +6,10 @@ import logging
 from types import SimpleNamespace
 from typing import Any
 
+import modal
 import pytest
 
-from olmo_eval.harness.sandbox.modal_deployment import ManagedModalDeployment
+from olmo_eval.harness.sandbox.modal_deployment import ManagedModalDeployment, stop_modal_app
 
 
 @pytest.mark.anyio
@@ -140,6 +141,28 @@ async def test_modal_deployment_terminates_sandbox_when_startup_fails(
     assert captured["terminate_calls"] == 1
     assert deployment._sandbox is None
     assert deployment._runtime is None
+
+
+@pytest.mark.anyio
+async def test_stop_modal_app_stops_by_name_and_ignores_missing_apps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stopped: list[str] = []
+
+    async def stop_app(name: str) -> None:
+        if stopped:
+            raise modal.exception.NotFoundError(f"App '{name}' not found")
+        stopped.append(name)
+
+    monkeypatch.setattr(
+        "olmo_eval.harness.sandbox.modal_deployment.modal.experimental.stop_app",
+        SimpleNamespace(aio=stop_app),
+    )
+
+    await stop_modal_app("swerex-abc")
+    await stop_modal_app("swerex-abc")
+
+    assert stopped == ["swerex-abc"]
 
 
 def _return_value(value: Any):

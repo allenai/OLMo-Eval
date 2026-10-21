@@ -237,7 +237,7 @@ def _get_olmo3_tool_template_path() -> str:
 
 
 # Kwargs that are used for deployment/setup, not vLLM server CLI arguments
-_NON_VLLM_KWARGS = frozenset({"patch_olmo3_tool_parser"})
+_NON_VLLM_KWARGS = frozenset({"patch_olmo3_tool_parser", "add_bos_token"})
 
 
 def _apply_olmo3_tool_parser_patch() -> None:
@@ -277,6 +277,8 @@ def _build_server_command(
     tool_call_parser: str | None = None,
     enable_prefix_caching: bool = True,
     chat_template_kwargs: dict[str, Any] | None = None,
+    enable_lora: bool = False,
+    lora_modules: list[str] | None = None,
     **kwargs: Any,
 ) -> list[str]:
     """Build the vLLM server command.
@@ -296,6 +298,9 @@ def _build_server_command(
         chat_template_kwargs: Extra kwargs for chat template (e.g., {"enable_thinking": false}).
             These are applied at request time by the provider for broad vLLM compatibility,
             rather than being forwarded as server CLI flags.
+        enable_lora: Enable LoRA (Low-Rank Adaptation) support for model loading
+        lora_modules: List of LoRA module paths to load (format: "module_name=/path/to/lora").
+            Only used if enable_lora is True.
         **kwargs: Additional vLLM server arguments. May include patch_olmo3_tool_parser
             which controls whether to use the custom OLMo3 chat template.
 
@@ -360,6 +365,13 @@ def _build_server_command(
         cmd.append("--enable-prefix-caching")
     else:
         cmd.append("--no-enable-prefix-caching")
+
+    # LoRA (Low-Rank Adaptation) support
+    if enable_lora:
+        cmd.append("--enable-lora")
+        if lora_modules:
+            # lora_modules should be a list of strings in format "name=/path/to/lora"
+            cmd.extend(["--lora-modules"] + lora_modules)
 
     # Disable tqdm loading bar by default, enable with --debug-provider
     if is_debug_provider():
@@ -498,6 +510,15 @@ class VLLMServerProcess:
 
         # Build environment for subprocess (child only, don't mutate parent)
         env = os.environ.copy()
+        # VLLM_PYTHON can point at an isolated environment whose console tools
+        # (for example ninja, used by FlashInfer JIT compilation) are installed
+        # beside its Python executable. Make those tools visible to the child
+        # without changing the launcher's environment.
+        python_bin_dir = os.path.dirname(cmd[0])
+        if python_bin_dir:
+            python_bin_dir = os.path.abspath(python_bin_dir)
+        inherited_path = env.get("PATH")
+        env["PATH"] = os.pathsep.join(part for part in (python_bin_dir, inherited_path) if part)
         # VLLM_PYTHON is our own steering variable for selecting which Python
         # interpreter launches the server. Once the command is built, vLLM
         # itself does not need to see it, and forwarding it triggers a warning

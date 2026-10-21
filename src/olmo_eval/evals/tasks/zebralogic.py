@@ -17,7 +17,6 @@ from olmo_eval.common.types import (
     Instance,
     LMOutput,
     LMRequest,
-    RequestType,
     Response,
     SamplingParams,
 )
@@ -26,11 +25,9 @@ from olmo_eval.evals.tasks.common.base import Task
 from olmo_eval.evals.tasks.common.registry import register, register_variant
 
 ZEBRA_GRID = """
-# Example Puzzle
+# Example Puzzle 
 
-There are 3 houses, numbered 1 to 3 from left to right, as seen from across the street.
-Each house is occupied by a different person. Each house has a unique attribute for each
-of the following characteristics:
+There are 3 houses, numbered 1 to 3 from left to right, as seen from across the street. Each house is occupied by a different person. Each house has a unique attribute for each of the following characteristics:
  - Each person has a unique name: `Peter`, `Eric`, `Arnold`.
  - Each person has a unique favorite drink: `tea`, `water`, `milk`
 
@@ -42,29 +39,27 @@ of the following characteristics:
 
 ## Answer to the Example Puzzle
 
-{{
-    "reasoning": "Given Clue 1, we know Peter is in House 2. According to Clue 2,
-Arnold is directly left of the one who only drinks water. The person in House 3
-cannot be on the left of anyone, so Arnold must be in House 1. Thus, Peter drinks
-water, and Eric lives in House 3. Then, according to Clue 3, Eric drinks milk.
-Therefore, Arnold drinks tea.",
-    "solution": {{
-        "House 1": {{
+{
+    "reasoning": "Given Clue 1, we know Peter is in House 2. According to Clue 2, Arnold is directly left of the one who only drinks water. The person in House 3 cannot be on the left of anyone, so Arnold must be in House 1. Thus, Peter drinks water, and Eric lives in House 3. Then, according to Clue 3, Eric drinks milk. Therefore, Arnold drinks tea.",
+    "solution": {
+        "House 1": {
             "Name": "Arnold",
             "Drink": "tea"
-        }},
-        "House 2": {{
+        },
+        "House 2": {
             "Name": "Peter",
             "Drink": "water"
-        }},
-        "House 3": {{
+        },
+        "House 3": {
             "Name": "Eric",
             "Drink": "milk"
-        }}
-    }}
-}}
+        }
+    }
+}
 
-# Puzzle to Solve \n\n{puzzle}
+# Puzzle to Solve 
+
+{puzzle}
 
 
 # Instruction
@@ -261,6 +256,9 @@ class ParsedMetric(Metric):
 class ZebraLogic(Task):
     """ZebraLogic grid puzzle evaluation task."""
 
+    #: When set, keep only docs of this difficulty ("easy" or "hard").
+    _difficulty: str | None = None
+
     data_source = DataSource(
         path="allenai/ZebraLogicBench-private", subset="grid_mode", split="test"
     )
@@ -304,6 +302,8 @@ class ZebraLogic(Task):
             total_cells += len(columns) - 1
 
         difficulty = "easy" if size in EASY_SIZES else "hard"
+        if self._difficulty is not None and difficulty != self._difficulty:
+            return None
 
         return Instance(
             question=prompt_str,
@@ -316,31 +316,45 @@ class ZebraLogic(Task):
             },
         )
 
-    @property
-    def request_type(self) -> RequestType:
-        return RequestType.COMPLETION
-
     def format_request(self, instance: Instance) -> LMRequest:
+        if self.config.formatter is not None:
+            return self.config.formatter.format(instance, self.get_fewshot())
         return LMRequest(
             request_type=self.request_type,
             prompt=instance.question,
         )
 
 
+@register("zebralogic_easy")
+class ZebraLogicEasy(ZebraLogic):
+    """ZebraLogic restricted to easy puzzles (grid sizes 2*2 through 3*3)."""
+
+    _difficulty = "easy"
+
+
+@register("zebralogic_hard")
+class ZebraLogicHard(ZebraLogic):
+    """ZebraLogic restricted to hard puzzles (grid sizes 3*4 through 6*6)."""
+
+    _difficulty = "hard"
+
+
 # ---------------------------------------------------------------------------
 # Variants
 # ---------------------------------------------------------------------------
 
-# Chat variant for instruct and reasoning models.
-# Drops "\n\n" from stop sequences (which would truncate chain-of-thought
-# reasoning) and applies the model's chat template via ChatFormatter.
-register_variant(
-    "zebralogic",
-    "chat",
-    formatter=ChatFormatter(),
-    sampling_params=SamplingParams(
-        max_tokens=16384,
-        temperature=0.0,
-        stop_sequences=("Problem:",),
-    ),
-)
+# Chat variant for instruct and reasoning models. Mirrors oe-eval's
+# `zebralogic::olmo3:adapt` regime: sampled decoding, generation bounded only
+# by the model's context (``max_tokens=None``), and no stop sequences (the
+# chat template supplies end-of-turn).
+for _task_name in ("zebralogic", "zebralogic_easy", "zebralogic_hard"):
+    register_variant(
+        _task_name,
+        "chat",
+        formatter=ChatFormatter(),
+        sampling_params=SamplingParams(
+            max_tokens=None,
+            temperature=0.6,
+            top_p=0.95,
+        ),
+    )

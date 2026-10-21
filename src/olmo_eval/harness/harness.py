@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, cast
 
 from olmo_eval.common.types import LMOutput, LMRequest, SamplingParams
+from olmo_eval.inference.base import require_tool_support
 
 from .config import HarnessConfig
 from .result import HarnessResult
@@ -17,6 +18,7 @@ from .scaffolds import Scaffold, get_scaffold
 
 if TYPE_CHECKING:
     from olmo_eval.inference.base import InferenceProvider
+    from olmo_eval.inference.metrics.core.schema import BatchMetrics
 
 
 class Harness:
@@ -94,6 +96,18 @@ class Harness:
     # Single-turn interface (same as Provider, but with config)
     # ─────────────────────────────────────────────────────────
 
+    def _check_images_supported(self, requests: list[LMRequest]) -> None:
+        if getattr(self.provider, "supports_images", False):
+            return
+        n = sum(1 for r in requests if r.images)
+        if n:
+            raise ValueError(
+                f"{type(self.provider).__name__} does not support image requests, but "
+                f"{n} of {len(requests)} requests carry images. Run this task with a "
+                "multimodal provider (e.g. provider.kind=olmo_core_vlm or an hf "
+                "multimodal preset)."
+            )
+
     def generate(
         self,
         requests: list[LMRequest],
@@ -112,6 +126,7 @@ class Harness:
             List of output lists, one per request.
         """
         transformed = [self._apply_config(r) for r in requests]
+        self._check_images_supported(transformed)
         return self.provider.generate(transformed, sampling_params)
 
     def logprobs(
@@ -128,6 +143,7 @@ class Harness:
             List of output lists with logprobs populated.
         """
         transformed = [self._apply_config(r) for r in requests]
+        self._check_images_supported(transformed)
         return self.provider.logprobs(transformed, sampling_params)
 
     async def agenerate(
@@ -137,6 +153,7 @@ class Harness:
     ) -> list[list[LMOutput]]:
         """Async single-turn generation with config injected."""
         transformed = [self._apply_config(r) for r in requests]
+        self._check_images_supported(transformed)
         return await self.provider.agenerate(transformed, sampling_params)
 
     async def alogprobs(
@@ -146,6 +163,7 @@ class Harness:
     ) -> list[list[LMOutput]]:
         """Async log probability computation."""
         transformed = [self._apply_config(r) for r in requests]
+        self._check_images_supported(transformed)
         return await self.provider.alogprobs(transformed, sampling_params)
 
     # ─────────────────────────────────────────────────────────
@@ -191,7 +209,7 @@ class Harness:
         if self._scaffold is not None:
             await self._scaffold.cleanup()
 
-    def flush_metrics(self, batch_hash: str, clear: bool = True) -> None:
+    def flush_metrics(self, batch_hash: str, clear: bool = True) -> BatchMetrics | None:
         """Flush collected metrics to configured reporters.
 
         Call this after each batch to write metrics incrementally.
@@ -200,22 +218,26 @@ class Harness:
         Args:
             batch_hash: Batch hash computed from native instance IDs.
             clear: If True, clear collected metrics after reporting.
+
+        Returns:
+            The reported batch with its per-request metrics attached (in the order
+            the provider recorded them), or None when nothing was reported.
         """
         if self.config.metrics is None or not self.config.metrics.enabled:
-            return
+            return None
 
         # Check if provider is instrumented
         if self._provider is None:
-            return
+            return None
 
         from olmo_eval.inference.metrics import InstrumentedProvider
 
         if not isinstance(self._provider, InstrumentedProvider):
-            return
+            return None
 
         metrics = self._provider.get_metrics()
         if not metrics:
-            return
+            return None
 
         # Initialize reporters and report
         from olmo_eval.inference.metrics.core.stats import compute_batch_metrics
@@ -247,10 +269,14 @@ class Harness:
         if clear:
             self._provider.clear_metrics()
 
+        from dataclasses import replace
+
+        return replace(batch, requests=tuple(metrics))
+
     def initialize_reporters(self) -> None:
         """Initialize metrics reporters eagerly.
 
-        Call this at job start to establish database connections early rather than
+        Call this at job start to surface reporter setup errors early rather than
         waiting until the first batch is processed. This is optional - reporters
         will be lazily initialized on first use if not called.
         """
@@ -331,6 +357,11 @@ class Harness:
         """
 
         messages = self._inject_system_prompt(request.messages)
+        tools = self.config.tool_schemas if self.config.has_tools else request.tools
+        # A scaffold sends its tools itself; only a request the provider sends
+        # directly depends on the provider honouring its tool schemas.
+        if request.tools and not self.config.scaffold:
+            require_tool_support(self.provider)
 
         return LMRequest(
             request_type=request.request_type,
@@ -338,9 +369,11 @@ class Harness:
             prompt=request.prompt,
             continuations=request.continuations,
             continuation_prompts=request.continuation_prompts,
-            tools=self.config.tool_schemas if self.config.has_tools else request.tools,
+            tools=tools,
             system_prompt=self.config.system_prompt or request.system_prompt,
             max_length=request.max_length,
+            images=request.images,
+            metadata=request.metadata,
         )
 
     def _inject_system_prompt(

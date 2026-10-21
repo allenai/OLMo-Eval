@@ -1,0 +1,33 @@
+{
+  "status": "partial",
+  "finished_at": "2026-10-01T03:12:44.100000+00:00",
+  "duration_seconds": 1834.2,
+  "suites": [
+    {
+      "name": "arc:rc:olmo3base",
+      "aggregation": "average",
+      "parent": null,
+      "description": "ARC easy and challenge, rank classification",
+      "children": [
+        {
+          "type": "task",
+          "name": "arc_easy:rc:olmo3base"
+        },
+        {
+          "type": "task",
+          "name": "arc_challenge:rc:olmo3base"
+        }
+      ],
+      "metrics": {
+        "primary_score": {
+          "average": 0.7342
+        }
+      },
+      "primary_metric": "primary_score:average",
+      "score": 0.7342,
+      "num_tasks": 2
+    }
+  ],
+  "expected_task_results": 3,
+  "expected_artifacts": 7
+}

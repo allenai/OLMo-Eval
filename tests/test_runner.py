@@ -90,6 +90,41 @@ def _make_process_tracker(
     )
 
 
+class TestRequiredScaffold:
+    """A task that needs a scaffold fails while tasks are prepared, before generation."""
+
+    def _runner(self, scaffold: str | None) -> AsyncEvalRunner:
+        harness = replace(make_harness_config(), scaffold=scaffold)
+        return AsyncEvalRunner(
+            harness_config=harness,
+            task_specs=["mt_bench"],
+            task_overrides={"mt_bench": {"limit": 2}},
+        )
+
+    def test_a_harness_without_the_scaffold_is_refused(self):
+        with pytest.raises(RuntimeError, match="mt_bench has to run under a harness with scaffold"):
+            self._runner(scaffold=None)._prepare_tasks()
+
+    def test_a_harness_with_another_scaffold_is_refused(self):
+        with pytest.raises(RuntimeError, match="harness 'test' has scaffold=openai_agents"):
+            self._runner(scaffold="openai_agents")._prepare_tasks()
+
+    def test_the_scaffold_is_checked_before_the_data_loads(self, monkeypatch):
+        def load_data(*args, **kwargs):
+            raise AssertionError("the data was loaded")
+
+        monkeypatch.setattr("olmo_eval.runners.asynq.runner.prepare_task_items", load_data)
+
+        with pytest.raises(RuntimeError, match="mt_bench has to run under a harness with scaffold"):
+            self._runner(scaffold=None)._prepare_tasks()
+
+    def test_the_required_scaffold_is_accepted(self):
+        _, trackers, items = self._runner(scaffold="multi_turn_chat")._prepare_tasks()
+
+        assert trackers["mt_bench"].error is None
+        assert len(items) == 2
+
+
 class TestAsyncEvalRunnerValidation:
     """Tests for AsyncEvalRunner.validate method."""
 
@@ -930,6 +965,231 @@ class TestSuiteAggregations:
         finally:
             # Clean up
             del _REGISTRY["_test_aoa"]
+
+    def test_suite_aggregation_weighted_average(self):
+        """Test WEIGHTED_AVERAGE weights each task by its instance count."""
+        from olmo_eval.evals.suites.registry import (
+            _REGISTRY,
+            AggregationStrategy,
+            Suite,
+        )
+        from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
+
+        weighted_suite = Suite(
+            name="_test_weighted",
+            tasks=("task_small", "task_large"),
+            aggregation=AggregationStrategy.WEIGHTED_AVERAGE,
+        )
+        _REGISTRY["_test_weighted"] = weighted_suite
+
+        try:
+            task_results = {
+                "task_small": {
+                    "metrics": {"accuracy": {"exact_match": 0.9}},
+                    "primary_metric": "accuracy:exact_match",
+                    "num_instances": 100,
+                },
+                "task_large": {
+                    "metrics": {"accuracy": {"exact_match": 0.5}},
+                    "primary_metric": "accuracy:exact_match",
+                    "num_instances": 300,
+                },
+            }
+
+            result = compute_suite_aggregations(["_test_weighted"], task_results)
+
+            # (0.9 * 100 + 0.5 * 300) / 400 = 0.6, versus 0.7 unweighted.
+            assert result["_test_weighted"]["metrics"]["accuracy"]["exact_match"] == pytest.approx(
+                0.6
+            )
+            assert result["_test_weighted"]["metrics"]["primary_score"]["average"] == pytest.approx(
+                0.6
+            )
+            assert result["_test_weighted"]["aggregation"] == "weighted_average"
+        finally:
+            del _REGISTRY["_test_weighted"]
+
+    def test_suite_aggregation_weighted_average_without_counts(self):
+        """Test WEIGHTED_AVERAGE omits the aggregate when a count is missing."""
+        from olmo_eval.evals.suites.registry import (
+            _REGISTRY,
+            AggregationStrategy,
+            Suite,
+        )
+        from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
+
+        weighted_suite = Suite(
+            name="_test_weighted_no_counts",
+            tasks=("task_small", "task_large"),
+            aggregation=AggregationStrategy.WEIGHTED_AVERAGE,
+        )
+        _REGISTRY["_test_weighted_no_counts"] = weighted_suite
+
+        try:
+            task_results = {
+                "task_small": {
+                    "metrics": {"accuracy": {"exact_match": 0.9}},
+                    "num_instances": 100,
+                },
+                "task_large": {"metrics": {"accuracy": {"exact_match": 0.5}}},
+            }
+
+            result = compute_suite_aggregations(["_test_weighted_no_counts"], task_results)
+
+            # An unweighted mean under a weighted suite's name would be a
+            # different statistic wearing the same label.
+            assert "_test_weighted_no_counts" not in result
+        finally:
+            del _REGISTRY["_test_weighted_no_counts"]
+
+    def test_weighted_child_of_average_of_averages_is_weighted(self):
+        """Test a WEIGHTED_AVERAGE child is collapsed with its own weighting."""
+        from olmo_eval.evals.suites.registry import (
+            _REGISTRY,
+            AggregationStrategy,
+            Suite,
+        )
+        from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
+
+        child = Suite(
+            name="_test_weighted_child_runner",
+            tasks=("task_small", "task_large"),
+            aggregation=AggregationStrategy.WEIGHTED_AVERAGE,
+        )
+        parent = Suite(
+            name="_test_weighted_child_runner_parent",
+            tasks=("task_standalone", child),
+            aggregation=AggregationStrategy.AVERAGE_OF_AVERAGES,
+        )
+        _REGISTRY["_test_weighted_child_runner_parent"] = parent
+
+        try:
+            task_results = {
+                "task_standalone": {
+                    "metrics": {"accuracy": {"exact_match": 1.0}},
+                    "num_instances": 50,
+                },
+                "task_small": {
+                    "metrics": {"accuracy": {"exact_match": 0.9}},
+                    "num_instances": 100,
+                },
+                "task_large": {
+                    "metrics": {"accuracy": {"exact_match": 0.5}},
+                    "num_instances": 300,
+                },
+            }
+
+            result = compute_suite_aggregations(
+                ["_test_weighted_child_runner_parent"], task_results
+            )
+
+            # The child collapses to its weighted mean of 0.6, then the parent
+            # weights its two children equally: (1.0 + 0.6) / 2.
+            child_metrics = result["_test_weighted_child_runner"]["metrics"]
+            assert child_metrics["accuracy"]["exact_match"] == pytest.approx(0.6)
+            parent_metrics = result["_test_weighted_child_runner_parent"]["metrics"]
+            assert parent_metrics["accuracy"]["exact_match"] == pytest.approx(0.8)
+        finally:
+            del _REGISTRY["_test_weighted_child_runner_parent"]
+
+    def test_weighted_child_without_counts_is_dropped_from_parent(self):
+        """Test a WEIGHTED_AVERAGE child missing a count is left out of its parent."""
+        from olmo_eval.evals.suites.registry import (
+            _REGISTRY,
+            AggregationStrategy,
+            Suite,
+        )
+        from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
+
+        child = Suite(
+            name="_test_weighted_child_no_counts",
+            tasks=("task_small", "task_large"),
+            aggregation=AggregationStrategy.WEIGHTED_AVERAGE,
+        )
+        parent = Suite(
+            name="_test_weighted_child_no_counts_parent",
+            tasks=("task_standalone", child),
+            aggregation=AggregationStrategy.AVERAGE_OF_AVERAGES,
+        )
+        _REGISTRY["_test_weighted_child_no_counts_parent"] = parent
+
+        try:
+            task_results = {
+                "task_standalone": {
+                    "metrics": {"accuracy": {"exact_match": 1.0}},
+                    "num_instances": 50,
+                },
+                "task_small": {
+                    "metrics": {"accuracy": {"exact_match": 0.9}},
+                    "num_instances": 100,
+                },
+                "task_large": {"metrics": {"accuracy": {"exact_match": 0.5}}},
+            }
+
+            result = compute_suite_aggregations(
+                ["_test_weighted_child_no_counts_parent"], task_results
+            )
+
+            # The child has no weighted mean, so the parent averages only the
+            # standalone task.
+            assert "_test_weighted_child_no_counts" not in result
+            parent_result = result["_test_weighted_child_no_counts_parent"]
+            assert parent_result["metrics"]["accuracy"]["exact_match"] == pytest.approx(1.0)
+            assert parent_result["num_children"] == 1
+            assert parent_result["nested_suites"] == []
+        finally:
+            del _REGISTRY["_test_weighted_child_no_counts_parent"]
+
+    def test_weighted_child_suite_tasks_are_collapsed_in_log_summary(self, capsys):
+        """Test a WEIGHTED_AVERAGE child collapses its tasks in log_summary."""
+        from olmo_eval.evals.suites.registry import (
+            _REGISTRY,
+            AggregationStrategy,
+            Suite,
+        )
+        from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
+        from olmo_eval.runners.processing.metrics import log_summary
+
+        child = Suite(
+            name="_test_weighted_child_display",
+            tasks=("task_small", "task_large"),
+            aggregation=AggregationStrategy.WEIGHTED_AVERAGE,
+        )
+        parent = Suite(
+            name="_test_weighted_child_display_parent",
+            tasks=("task_standalone", child),
+            aggregation=AggregationStrategy.AVERAGE_OF_AVERAGES,
+        )
+        _REGISTRY["_test_weighted_child_display_parent"] = parent
+
+        try:
+            task_results = {
+                "task_standalone": {
+                    "metrics": {"accuracy": {"exact_match": 1.0}},
+                    "num_instances": 50,
+                },
+                "task_small": {
+                    "metrics": {"accuracy": {"exact_match": 0.9}},
+                    "num_instances": 100,
+                },
+                "task_large": {
+                    "metrics": {"accuracy": {"exact_match": 0.5}},
+                    "num_instances": 300,
+                },
+            }
+
+            suite_aggs = compute_suite_aggregations(
+                ["_test_weighted_child_display_parent"], task_results
+            )
+            log_summary({"tasks": task_results, "suites": suite_aggs})
+            captured = capsys.readouterr().out
+
+            assert "task_standalone" in captured
+            assert "_test_weighted_child_display" in captured
+            assert "task_small" not in captured
+            assert "task_large" not in captured
+        finally:
+            del _REGISTRY["_test_weighted_child_display_parent"]
 
     def test_collapsed_tasks_in_log_summary(self, capsys):
         """Test that child suite tasks are collapsed in log_summary display.

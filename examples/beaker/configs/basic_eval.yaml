@@ -1,5 +1,6 @@
 # Basic evaluation config
-# Usage: olmo-eval beaker launch -f examples/configs/basic_eval.yaml --dry-run
+# Usage: olmo-eval beaker launch -f examples/beaker/configs/basic_eval.yaml \
+#            -w <workspace> [-B <budget>] --dry-run
 
 name: eval-llama3-core
 models:
@@ -10,7 +11,8 @@ tasks:
   - hellaswag
   - arc_challenge
 
-cluster: ai2/ceres
+cluster: h100
 gpus: 1
 priority: normal
+min_runtime: 2h
 timeout: 24h

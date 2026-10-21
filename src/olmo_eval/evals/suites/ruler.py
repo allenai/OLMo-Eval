@@ -50,3 +50,11 @@ for size in CONTEXT_SIZES:
             description=f"All RULER tasks at {size} context length (flat average of all tasks)",
         )
         register(all_tasks_suite)
+        register(
+            Suite(
+                name=f"ruler_all_chat__{size}",
+                tasks=tuple(f"{t}:chat" for t in all_tasks),
+                aggregation=AggregationStrategy.AVERAGE,
+                description=f"ruler_all__{size}, every task served through the chat template",
+            )
+        )

@@ -356,3 +356,24 @@ class TestFormatTransformersRuntimeRows:
             ("Transformers (main)", "[dim]NOT INSTALLED[/dim]"),
             ("Transformers (vLLM)", "5.0.0.dev0"),
         ]
+
+
+def test_task_override_accepts_every_representable_task_config_field() -> None:
+    """The accepted-override list is derived from TaskConfig, so it cannot go stale."""
+    import dataclasses
+
+    import click
+    import pytest
+
+    from olmo_eval.cli.utils import _NON_CLI_TASK_FIELDS, FlaggedArg, process_ordered_args
+    from olmo_eval.evals.tasks.common.base import TaskConfig
+
+    for field in dataclasses.fields(TaskConfig):
+        ordered = [FlaggedArg("t", "mmlu"), FlaggedArg("o", f"{field.name}=x")]
+        if field.name in _NON_CLI_TASK_FIELDS:
+            with pytest.raises(click.UsageError):
+                process_ordered_args(ordered)
+            continue
+        task_overrides, _ = process_ordered_args(ordered)
+        assert task_overrides["mmlu"] == [f"{field.name}=x"], field.name
+    assert {"answer_extractor", "sandbox_env"} == _NON_CLI_TASK_FIELDS
