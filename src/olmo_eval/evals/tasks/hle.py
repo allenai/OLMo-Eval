@@ -4,7 +4,7 @@ HLE has 2,500 expert-written, closed-ended questions across eight categories; ab
 42% are mathematics. Each has a short reference answer, either an exact-match string
 or a multiple-choice letter. 342 questions include an image; these tasks drop them,
 so they run on any model. A model judge grades the responses, so both tasks need
-``OPENAI_API_KEY``.
+``OPENAI_API_KEY`` or ``OPENROUTER_API_KEY``.
 
 Variants
 --------
@@ -82,20 +82,17 @@ model's context: the longest text-only HLE prompt is about 13.6k tokens.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import math
-import os
 import re
 from collections.abc import Iterator, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any
 
 from olmo_eval.common.metrics import Metric
-from olmo_eval.common.scorers import ScoringIncompleteError
 from olmo_eval.common.scorers.base import Scorer
-from olmo_eval.common.scorers.llm_judge import JudgeFn, build_openai_judge_fn
+from olmo_eval.common.scorers.llm_judge import JudgeFn
 from olmo_eval.common.types import (
     Instance,
     LMOutput,
@@ -106,14 +103,14 @@ from olmo_eval.common.types import (
     Split,
 )
 from olmo_eval.data import DataSource
-from olmo_eval.evals.tasks.common import (
-    OutputScoreAggregation,
-    Task,
-    TaskConfig,
-    register,
+from olmo_eval.evals.tasks.common import OutputScoreAggregation, register
+from olmo_eval.evals.tasks.common.judge import (
+    JudgedScoreMetric,
+    JudgedTask,
+    JudgeScorer,
+    TruncationRateMetric,
+    is_truncated,
 )
-from olmo_eval.evals.tasks.common.base import _format_scoring_error, _store_output_score
-from olmo_eval.inference.retry import retry_with_backoff
 
 logger = logging.getLogger(__name__)
 
@@ -130,8 +127,6 @@ HLE_VERIFIED_GOLD_CLASS = "Gold subset"
 # (checked 2026-10-05), so the model behind this name can change under the same hash.
 HLE_DEFAULT_JUDGE_MODEL = "gpt-6-luna"
 HLE_JUDGE_MAX_TOKENS = 8192
-HLE_JUDGE_ATTEMPTS = 3
-HLE_DEFAULT_SCORING_CONCURRENCY = 16
 
 #: Official calibration bin size, in outputs.
 HLE_CALIBRATION_BIN_SIZE = 100
@@ -186,9 +181,6 @@ HLE_JUDGE_PROMPT = (
     "Put 100 if there is no confidence score available."
 )
 
-_THINK_OPEN = "<think>"
-_THINK_CLOSE = "</think>"
-
 # Judges wrap field names in markdown emphasis and sometimes quote the value.
 _FIELD_PREFIX = r"^[\s>*_#-]*{name}[\s*_]*:[\s*_]*"
 _CORRECT_FIELD = re.compile(
@@ -214,10 +206,6 @@ class JudgeVerdict:
     extracted_final_answer: str | None
 
 
-class HLEJudgeParseError(ScoringIncompleteError):
-    """The judge gave no parseable verdict after every attempt."""
-
-
 def parse_judge_reply(raw: str) -> JudgeVerdict | None:
     """Read the verdict, confidence, and extracted answer from a judge reply.
 
@@ -236,18 +224,6 @@ def parse_judge_reply(raw: str) -> JudgeVerdict | None:
         confidence=min(max(confidence, 0.0), 100.0) / 100.0,
         extracted_final_answer=answers[0].group(1).strip() if answers else None,
     )
-
-
-def visible_response(text: str) -> str:
-    """Return the response after any reasoning block, or "" if the block never closed.
-
-    Text without a ``<think>`` tag is returned as is.
-    """
-    if _THINK_CLOSE in text:
-        return text.rpartition(_THINK_CLOSE)[2].strip()
-    if _THINK_OPEN in text:
-        return ""
-    return text.strip()
 
 
 def calibration_error(
@@ -278,67 +254,18 @@ def calibration_error(
     return math.sqrt(squared_error)
 
 
-def _parse_judge_spec(spec: str) -> tuple[str, str | None]:
-    """Split ``model[:reasoning_effort]``."""
-    model, separator, effort = spec.partition(":")
-    if not model:
-        raise ValueError("OLMO_EVAL_JUDGE must name a judge model")
-    return model, effort if separator and effort else None
-
-
-_JUDGE_SEMAPHORE_ATTR = "_hle_judge_semaphore"
-
-
 @dataclass(frozen=True)
-class HLEScorer(Scorer):
-    """Placeholder scorer; HLE scores are computed in ``score_responses``."""
+class HLEScorer(JudgeScorer):
+    """Serves the HLE judge's stored per-output accuracy."""
 
     name: str = HLE_SCORER_NAME
 
-    def score(self, instance: Instance, output: LMOutput) -> float:
-        value = (output.metadata or {}).get(f"score:{self.name}", 0.0)
-        return float(value) if isinstance(value, (int, float)) else 0.0
-
 
 @dataclass(frozen=True)
-class HLEAccuracyMetric(Metric):
+class HLEAccuracyMetric(JudgedScoreMetric):
     """Mean judged accuracy, optionally restricted to instances with one metadata value."""
 
-    name: str = "accuracy"
     scorer: type[Scorer] | Scorer = HLEScorer
-    metadata_key: str | None = None
-    metadata_value: str | None = None
-
-    def compute_instance(self, response: Response) -> float | None:
-        """Return the instance's accuracy if it is in this slice and was judged, else None.
-
-        An instance whose judging failed has no accuracy score; it is left out rather
-        than counted as wrong.
-        """
-        if (
-            self.metadata_key is not None
-            and response.instance.metadata.get(self.metadata_key) != self.metadata_value
-        ):
-            return None
-        value = response.scores.get("accuracy")
-        return float(value) if isinstance(value, (int, float)) else None
-
-    def compute(self, responses: Sequence[Response]) -> float:
-        values = [
-            value
-            for response in responses
-            if (value := self.compute_instance(response)) is not None
-        ]
-        return sum(values) / len(values) if values else 0.0
-
-    def supports_scorer_fallback(self) -> bool:
-        return False
-
-    def display_format(self) -> str:
-        return "percentage"
-
-    def metric_unit(self) -> str:
-        return "proportion"
 
 
 @dataclass(frozen=True)
@@ -378,31 +305,10 @@ class HLECalibrationErrorMetric(Metric):
 
 
 @dataclass(frozen=True)
-class HLETruncationRateMetric(Metric):
+class HLETruncationRateMetric(TruncationRateMetric):
     """Share of questions with no complete response; lower is better."""
 
-    name: str = "truncation_rate"
     scorer: type[Scorer] | Scorer = HLEScorer
-
-    def compute(self, responses: Sequence[Response]) -> float:
-        values = [
-            value
-            for response in responses
-            if (value := self.compute_instance(response)) is not None
-        ]
-        return sum(values) / len(values) if values else 0.0
-
-    def supports_scorer_fallback(self) -> bool:
-        return False
-
-    def higher_is_better(self) -> bool:
-        return False
-
-    def display_format(self) -> str:
-        return "percentage"
-
-    def metric_unit(self) -> str:
-        return "proportion"
 
 
 HLE_ACCURACY = HLEAccuracyMetric()
@@ -425,31 +331,18 @@ HLE_METRICS = (
 )
 
 
-class _HLE(Task):
-    """Shared HLE loading, prompting, and judge orchestration for the text-only tasks."""
+class _HLE(JudgedTask):
+    """Shared HLE loading, prompting, and judging for the text-only tasks."""
 
     split = Split.TEST
     metrics = HLE_METRICS
     primary_metric = HLE_ACCURACY
     sampling_params = SamplingParams(temperature=0.6, top_p=0.95, max_tokens=32768)
     output_score_aggregation = OutputScoreAggregation.MEAN
-    required_secrets = ("OPENAI_API_KEY",)
 
     judge_model = HLE_DEFAULT_JUDGE_MODEL
     judge_max_tokens = HLE_JUDGE_MAX_TOKENS
-
-    def __init__(self, config: TaskConfig) -> None:
-        # The project-wide environment override applies only where the task's own
-        # judge model was left at its default, so ``-o judge_model=...`` wins.
-        spec = os.getenv("OLMO_EVAL_JUDGE")
-        if spec and config.judge_model == type(self).judge_model:
-            model, reasoning_effort = _parse_judge_spec(spec)
-            config = replace(
-                config,
-                judge_model=model,
-                judge_reasoning_effort=config.judge_reasoning_effort or reasoning_effort,
-            )
-        super().__init__(config)
+    judge_scorer_name = HLE_SCORER_NAME
 
     @property
     def instances(self) -> Iterator[Instance]:
@@ -486,59 +379,11 @@ class _HLE(Task):
             ),
         )
 
-    def extract_answer(self, output: LMOutput) -> str:
-        """Hand the judge the visible response; the judge extracts the answer itself."""
-        return visible_response(output.text)
-
-    def _get_judge_fn(self) -> JudgeFn:
-        """Return this task's judge, built once so its request-shape cache persists."""
-        judge_fn = getattr(self, "_judge_fn", None)
-        if judge_fn is None:
-            if self.config.judge_model is None or self.config.judge_max_tokens is None:
-                raise ValueError("HLE requires a complete judge configuration")
-            judge_fn = build_openai_judge_fn(
-                model=self.config.judge_model,
-                scorer_name=type(self).__name__,
-                max_tokens=self.config.judge_max_tokens,
-                temperature=0.0,
-                reasoning_effort=self.config.judge_reasoning_effort,
-            )
-            self._judge_fn = judge_fn
-        return judge_fn
-
-    def _get_judge_semaphore(self, context: Any) -> asyncio.Semaphore:
-        """Return the judge limiter, shared by every HLE task in the run when possible."""
-        owner = context if context is not None else self
-        semaphore = getattr(owner, _JUDGE_SEMAPHORE_ATTR, None)
-        if semaphore is None:
-            concurrency = getattr(context, "scoring_concurrency", HLE_DEFAULT_SCORING_CONCURRENCY)
-            semaphore = asyncio.Semaphore(max(1, concurrency))
-            setattr(owner, _JUDGE_SEMAPHORE_ATTR, semaphore)
-        return semaphore
-
-    async def _judge(self, judge_fn: JudgeFn, prompt: str) -> tuple[JudgeVerdict | None, str]:
-        """Call the judge, retrying API failures and unparseable replies."""
-        raw = ""
-        for attempt in range(HLE_JUDGE_ATTEMPTS):
-            raw = await retry_with_backoff(lambda: judge_fn(prompt), context="hle judge")
-            verdict = parse_judge_reply(raw)
-            if verdict is not None:
-                return verdict, raw
-            if attempt < HLE_JUDGE_ATTEMPTS - 1:
-                await asyncio.sleep(2**attempt)
-        return None, raw
-
-    async def _score_output(
-        self, response: Response, output: LMOutput, judge_fn: JudgeFn
-    ) -> dict[str, float]:
-        """Judge one output and record its scores; raise if the judge gave no verdict."""
-        answer = output.extracted_answer
-        if not isinstance(answer, str):
-            answer = visible_response(output.text)
-
-        truncated = output.metadata.get("finish_reason") == "length"
+    async def _score_output(self, response: Response, output: LMOutput, judge_fn: JudgeFn) -> float:
+        """Judge one output; an unfinished response scores wrong without the judge."""
+        answer = self._judged_answer(output)
+        truncated = is_truncated(output)
         judge_result: dict[str, Any] = {"scorer": HLE_SCORER_NAME, "truncated": truncated}
-        verdict: JudgeVerdict | None
         if truncated or not answer:
             # Nothing finished to grade. Score it wrong at 100% confidence, as the judge
             # prompt directs for a response that states no confidence.
@@ -550,14 +395,8 @@ class _HLE(Task):
                 response=answer,
                 correct_answer=response.instance.gold_answer or "",
             )
-            verdict, raw = await self._judge(judge_fn, prompt)
-            judge_result["raw_judge_response"] = raw
-
-        if verdict is None:
-            judge_result["parse_error"] = True
-            output.metadata["judge_result"] = judge_result
-            raise HLEJudgeParseError(
-                f"no parseable verdict after {HLE_JUDGE_ATTEMPTS} judge attempts"
+            verdict = await self._judge_output(
+                output, judge_fn, prompt, parse_judge_reply, judge_result
             )
 
         judge_result.update(
@@ -566,111 +405,11 @@ class _HLE(Task):
             extracted_final_answer=verdict.extracted_final_answer,
             parse_error=False,
         )
-        output.metadata["judge_result"] = judge_result
-        scores = {"accuracy": 1.0 if verdict.correct else 0.0, "confidence": verdict.confidence}
-        for key, value in scores.items():
-            output.metadata[f"score:{key}"] = value
-        _store_output_score(output, scorer_name=HLE_SCORER_NAME, score=scores["accuracy"])
-        return scores
-
-    async def score_responses(
-        self,
-        responses: Sequence[Response],
-        context: Any = None,
-    ) -> Sequence[Response]:
-        """Judge every output concurrently, then average each instance over its samples."""
-        self._extract_answers(responses)
-        judge_fn = self._get_judge_fn()
-        semaphore = self._get_judge_semaphore(context)
-
-        truncated = sum(
-            1
-            for response in responses
-            for output in response.outputs
-            if output.metadata.get("finish_reason") == "length"
+        return self._record_judgement(
+            output,
+            judge_result,
+            {"accuracy": 1.0 if verdict.correct else 0.0, "confidence": verdict.confidence},
         )
-        if truncated:
-            logger.warning(
-                "HLE generation hit the token limit on %d output(s); they score wrong "
-                "without judging. Check truncation_rate before reading accuracy as capability.",
-                truncated,
-            )
-        unanswered = [response for response in responses if not response.outputs]
-        if unanswered:
-            logger.warning(
-                "HLE got no model output for %d question(s), e.g. %s; they score wrong. A "
-                "prompt longer than the context leaves room for no answer.",
-                len(unanswered),
-                unanswered[0].instance.metadata.get("id"),
-            )
-
-        jobs = [
-            (response_index, output_index)
-            for response_index, response in enumerate(responses)
-            for output_index in range(len(response.outputs))
-        ]
-
-        async def run(response_index: int, output_index: int) -> dict[str, float]:
-            response = responses[response_index]
-            async with semaphore:
-                try:
-                    return await self._score_output(
-                        response, response.outputs[output_index], judge_fn
-                    )
-                except ScoringIncompleteError:
-                    raise
-                except Exception as exc:
-                    # A judge call that failed after its retries left the output unscored,
-                    # which the runner must report as incomplete rather than as wrong.
-                    raise ScoringIncompleteError(
-                        f"HLE judge call failed: {type(exc).__name__}: {exc}"
-                    ) from exc
-
-        results = await asyncio.gather(*(run(*job) for job in jobs), return_exceptions=True)
-
-        accuracy_by_response: list[dict[int, float]] = [{} for _ in responses]
-        judge_errors: list[Exception] = []
-        failed_by_response = [0] * len(responses)
-        for (response_index, output_index), scores in zip(jobs, results, strict=True):
-            if isinstance(scores, BaseException):
-                if not isinstance(scores, Exception):
-                    raise scores
-                judge_errors.append(scores)
-                failed_by_response[response_index] += 1
-                _store_output_score(
-                    responses[response_index].outputs[output_index],
-                    scorer_name=HLE_SCORER_NAME,
-                    score=0.0,
-                    scoring_error=_format_scoring_error(scores, phase="judge"),
-                )
-                continue
-            accuracy_by_response[response_index][output_index] = scores["accuracy"]
-
-        if judge_errors:
-            logger.warning(
-                "HLE judging failed on %d/%d output(s) (API errors or no parseable verdict); "
-                "they are recorded as scoring errors and excluded from their instance average. "
-                "First error: %s",
-                len(judge_errors),
-                len(jobs),
-                judge_errors[0],
-            )
-        for response_index, response in enumerate(responses):
-            if response.outputs and failed_by_response[response_index] == len(response.outputs):
-                raise ScoringIncompleteError(
-                    "HLE judging failed for every sample of instance "
-                    f"{response.instance.metadata.get('id', response_index)}: {judge_errors[0]}"
-                ) from judge_errors[0]
-
-        for response, accuracy in zip(responses, accuracy_by_response, strict=True):
-            response.scores["accuracy"] = self._aggregate_output_scores(accuracy)
-            response.scores["truncation_rate"] = (
-                sum(output.metadata.get("finish_reason") == "length" for output in response.outputs)
-                / len(response.outputs)
-                if response.outputs
-                else 1.0
-            )
-        return responses
 
 
 @register("hle:text")

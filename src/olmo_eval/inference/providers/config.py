@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from olmo_eval.common.openai_credentials import describe_secret, secret_available
 from olmo_eval.common.repr import hide_unset
 from olmo_eval.common.types import ProviderKind
 
@@ -134,7 +134,9 @@ class ProviderConfig:
 
         missing = self.validate_secrets()
         if missing:
-            raise ValueError(f"Missing required secrets: {', '.join(missing)}")
+            raise ValueError(
+                f"Missing required secrets: {', '.join(describe_secret(m) for m in missing)}"
+            )
 
         kind_str = str(self.kind)
         provider_kwargs: dict[str, Any] = dict(self.kwargs)
@@ -167,11 +169,7 @@ class ProviderConfig:
         Returns:
             List of missing secret names (empty if all present).
         """
-        missing = []
-        for secret in self.required_secrets:
-            if not os.getenv(secret):
-                missing.append(secret)
-        return missing
+        return [secret for secret in self.required_secrets if not secret_available(secret)]
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization.

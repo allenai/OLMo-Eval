@@ -10,7 +10,12 @@ import httpx
 import pytest
 from sqlalchemy import text
 
-from olmo_eval_api.services.runtime import RunTiming, derive_runtime, run_startup_seconds
+from olmo_eval_api.services.runtime import (
+    RunTiming,
+    derive_runtime,
+    run_startup_seconds,
+    run_timing_from_row,
+)
 from tests.factories import seed_run, suite
 from tests.test_api_endpoints import check, get, post
 
@@ -76,6 +81,29 @@ def test_attributed_beats_estimated() -> None:
     assert rt.token_share == 0.25
     # No startup recorded: with_startup is unknown.
     assert rt.startup_seconds is None and rt.with_startup_seconds is None
+
+
+def test_attributed_worker_time_becomes_wall_time() -> None:
+    # Four workers ran three tasks; attributed seconds are summed over the workers.
+    run = RunTiming(processing_seconds=100.0, n_task_results=3, inference_workers=4)
+    rt = derive_runtime(tr(attributed_inference_seconds=200.0), run)
+    assert rt.basis == "attributed"
+    assert rt.inference_seconds == 50.0
+    assert rt.seconds_per_1k_instances == 250.0
+
+
+def test_worker_count_comes_from_provider_init() -> None:
+    row = {
+        "startup_seconds": None,
+        "processing_started_at": None,
+        "processing_seconds": 10.0,
+        "provider_init_seconds": {"m-w0": 30.0, "m-w1": 31.0},
+        "n": 2,
+        "all_tokens": False,
+        "tokens": None,
+    }
+    assert run_timing_from_row(row).inference_workers == 2
+    assert run_timing_from_row({**row, "provider_init_seconds": None}).inference_workers == 1
 
 
 def test_estimated_from_token_share() -> None:
@@ -226,6 +254,21 @@ async def runtime_runs(client: httpx.AsyncClient, session: Any) -> dict[str, str
     await _set_run(session, ids["D"], gpu="H100", count=4)
     await session.commit()
     return ids
+
+
+async def test_attributed_runtime_divides_by_the_run_workers(
+    client: httpx.AsyncClient, session: Any, runtime_runs: dict[str, str]
+) -> None:
+    await session.execute(
+        text("UPDATE runs SET provider_init_seconds = CAST(:init AS jsonb) WHERE run_id = :r"),
+        {"init": '{"m-w0": 30.0, "m-w1": 31.0}', "r": runtime_runs["C"]},
+    )
+    await _set_task(session, runtime_runs["C"], "arc", attributed_inference_seconds=80.0)
+    await session.commit()
+
+    c = await get(client, f"/api/runs/{runtime_runs['C']}/task-results", "RunTaskResultsResponse")
+    by_task = {item["task_name"]: item["runtime"] for item in c["items"]}
+    assert by_task["arc"]["basis"] == "attributed" and by_task["arc"]["inference_seconds"] == 40.0
 
 
 async def test_task_results_include_runtime(

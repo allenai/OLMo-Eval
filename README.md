@@ -13,8 +13,12 @@ Features:
 - Harness abstraction that separates execution policy from task definition, so any task can be run baseline or tool-augmented without modification.
 - Multi-turn agentic evaluation with tool calling, scaffolds, and sandboxed environments via Docker, Podman, or Modal.
 - LLM-as-judge scoring with auxiliary providers, including locally served judge models.
-- Results upload to the olmo-eval dashboard, with run metadata, per-instance predictions, and links to Beaker and GCS.
+- Aggregate and instance-level prediction storage.
 - Inspection tooling for viewing instances, formatted prompts, token arrays, and model responses.
+
+To contribute, start with [CONTRIBUTING.md](CONTRIBUTING.md). The reasoning behind the
+design is in [docs/design.md](docs/design.md), and [AGENTS.md](AGENTS.md) holds the
+instructions for coding agents.
 
 ## Quick Start
 
@@ -33,12 +37,12 @@ uv python install 3.12
 
 # Install dependencies + the package (editable) from the lockfile.
 # The default groups (`dev` + `vllm`) are installed automatically, which
-# pulls in s3, beaker, hf, and the vLLM inference provider. vLLM
+# pulls in storage, beaker, hf, and the vLLM inference provider. vLLM
 # deps are marked Linux-only via PEP 508 markers, so this works on macOS
 # too — no extra flags needed.
 uv sync --frozen
 
-# Install git hooks (ruff, ty, file sizes)
+# Install pre-commit hooks
 make setup
 
 # To update the lockfile after changing pyproject.toml
@@ -359,18 +363,9 @@ harness = Harness(config)
 outputs = harness.generate(requests)  # No scaffold needed
 ```
 
-**Built-in scaffolds:**
-
-| Scaffold | Loop |
-|----------|------|
-| `openai_agents` | OpenAI Agents SDK: any registered tools, optional context compaction |
-| `vanillux` | One `bash` tool in a persistent shell with the mini-swe-agent prompts: THOUGHT plus exactly one command per step, head/tail output truncation, format-error recovery, and a submit marker to finish. Defaults to 64 steps and sampling at temperature 0.7, top_p 0.95, 16384 max tokens, matching the Vanillux2 agent used for Terminal-Bench |
-| `openhands` | OpenHands SDK agent |
-| `bfcl_multi_turn` | BFCL multi-turn rollouts |
-
 #### Inference Metrics
 
-Harness configurations can include `MetricsConfig` to collect inference performance metrics during evaluation:
+Harness configurations can include `MetricsConfig` to collect inference performance metrics during evaluation. A run without `--harness` or `--harness-config` collects them with the default `MetricsConfig()`, writing `metrics/<provider>_<model>-inference.jsonl` in the output directory, as the built-in presets do:
 
 ```python
 from olmo_eval.harness import HarnessConfig, ProviderConfig
@@ -381,16 +376,24 @@ config = HarnessConfig(
     provider=ProviderConfig(model="llama3.1-8b", kind="vllm_server"),
     metrics=MetricsConfig(
         enabled=True,
-        reporters=("file",),  # Write metrics/*-inference.jsonl
+        reporters=("file", "db"),  # Save to file and database
         collect_vllm_server=True,  # Poll vLLM server /metrics endpoint
     ),
 )
 ```
 
-The file reporter writes `metrics/<provider>_<model>-inference.jsonl` in the output
-directory. The results upload sends batch throughput, latency, and downsampled GPU
-utilization from this file to the dashboard (see
-[Uploading Results and the Dashboard](#uploading-results-and-the-dashboard)).
+**Visualizing Metrics:**
+
+```bash
+# Plot metrics from database (requires at least one filter)
+uv run olmo-eval metrics plot -G my-benchmark-group
+uv run olmo-eval metrics plot -m OLMo-3 --metric throughput
+
+# Show statistics table without interactive plots
+uv run olmo-eval metrics plot -e experiment_123 --stats-only
+```
+
+When using the `db` reporter, metrics are stored in a PostgreSQL database (default name: `olmo_eval_metrics`). You must configure your own database connection using the `OLMO_EVAL_DB_*` environment variables (see [Database Configuration](#database-configuration)).
 
 #### Auxiliary Providers and Local Judge Models
 
@@ -508,87 +511,97 @@ This section explains how to create new evaluation tasks.
 
 ### Quick Start: Minimal Task Example
 
+A multiple-choice task scored by the log-likelihood of each answer choice:
+
 ```python
-"""Example: Minimal task implementation."""
+"""Example: a minimal multiple-choice task scored by log-likelihood."""
+
 from collections.abc import Iterator
 from typing import Any
 
-from olmo_eval.common.types import Instance, LMOutput, LMRequest, RequestType
-from olmo_eval.data import DataLoader, DataSource
+from olmo_eval.common.formatters import MultipleChoiceFormatter
+from olmo_eval.common.metrics import LogprobMCAccuracyMetric
+from olmo_eval.common.types import Instance, LMRequest
+from olmo_eval.data import DataSource
 from olmo_eval.evals.tasks.common import Task, register
 
 
 @register("my_task")
 class MyTask(Task):
-    """My task implementation."""
+    """MMLU abstract algebra, scored by the highest-likelihood answer choice."""
 
-    # DataSource arguments:
-    #   path: HuggingFace dataset path (e.g., "cais/mmlu")
-    #   subset: Dataset subset/config (e.g., "abstract_algebra")
-    #   split: Dataset split (e.g., "test", "validation")
-    data_source = DataSource(path="cais/mmlu", subset="abstract_algebra", split="test")
+    # Pin the revision so the task's data cannot change underneath stored results.
+    data_source = DataSource(
+        path="cais/mmlu",
+        subset="abstract_algebra",
+        split="test",
+        revision="c30699e8356da336a370243923dbaf21066bb9fe",
+    )
+    formatter = MultipleChoiceFormatter(
+        template="Question: {question}",
+        choice_template=" {choice}",
+        prompt_suffix="\nAnswer:",
+    )
+    metrics = (LogprobMCAccuracyMetric(),)
 
     @property
     def instances(self) -> Iterator[Instance]:
-        """Load and yield instances from the dataset."""
-        if self._instances_cache is None:
-            self._instances_cache = []
-            loader = DataLoader()
-            source = self.config.get_data_source()
-            for doc in loader.load(source):
-                self._instances_cache.append(self.process_doc(doc))
-        yield from self._instances_cache
+        # Loads the configured data source, calls process_doc, and caches the result.
+        yield from self._load_instances_cached()
 
-    def process_doc(self, doc: dict[str, Any]) -> Instance:
-        """Convert a dataset document to an Instance."""
+    def process_doc(self, doc: dict[str, Any], index: int = 0) -> Instance | None:
         return Instance(
             question=doc["question"],
-            gold_answer=doc["answer"],
-            choices=tuple(doc["choices"]),  # For MC tasks
-            metadata={"id": doc["id"]},
+            choices=tuple(doc["choices"]),
+            gold_answer=doc["choices"][doc["answer"]],
+            metadata={"id": f"my_task_{index}", "gold_idx": doc["answer"]},
         )
 
     def format_request(self, instance: Instance) -> LMRequest:
-        """Format instance for the language model."""
-        if self.config.formatter is not None:
-            return self.config.formatter.format(instance, self.get_fewshot())
-        # Fallback formatting
-        return LMRequest(request_type=RequestType.COMPLETION, prompt=instance.question)
-
-    def extract_answer(self, output: LMOutput) -> str | None:
-        """Extract the answer from model output."""
-        return output.text.strip()
+        assert self.config.formatter is not None
+        return self.config.formatter.format(instance, self.get_fewshot())
 ```
+
+Class attributes that match `TaskConfig` fields (`data_source`, `formatter`, `metrics`,
+and so on) become the task's default configuration. Put the module in
+`src/olmo_eval/evals/tasks/` and it is registered on import. Check it with
+`uv run olmo-eval task inspect my_task --request -n 1` and
+`uv run olmo-eval run -m mock -t my_task -o limit=5`. Generation tasks use a chat or
+completion formatter instead, extract an answer in `extract_answer`, and score it with a
+metric such as `AccuracyMetric(scorer=ExactMatchScorer)`.
 
 ### Task Class Overview
 
 | Method | Required | Purpose |
 |--------|----------|---------|
-| `instances` | Yes | Property that yields `Instance` objects from the dataset |
-| `process_doc(doc)` | Yes | Converts a raw document dict into an `Instance` |
+| `instances` | Yes | Property that yields `Instance` objects; usually `yield from self._load_instances_cached()` |
 | `format_request(instance)` | Yes | Converts an `Instance` into an `LMRequest` for the model |
-| `extract_answer(output)` | Yes | Extracts the answer string from `LMOutput` |
+| `process_doc(doc, index)` | When using `_load_instances*` | Converts a raw document into an `Instance`, or `None` to skip it |
+| `extract_answer(output)` | No | Extracts the answer from `LMOutput`; defaults to `config.answer_extractor` or the raw text |
 | `_build_fewshot()` | No | Override to customize few-shot example loading |
 | `score_responses(...)` | No | Override to customize scoring logic |
 | `compute_metrics(...)` | No | Override to customize metric computation |
 
 ### TaskConfig Reference
 
+Commonly used fields. `TaskConfig` in `src/olmo_eval/evals/tasks/common/base.py`
+documents the rest.
+
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `name` | `str` | Required | Task identifier used in CLI |
-| `data_source` | `DataSource \| str` | `None` | Dataset source (HuggingFace, S3, GCS, local, or URI string) |
-| `fewshot_source` | `DataSource \| str` | `None` | Optional separate source for few-shot examples |
-| `formatter` | `Formatter` | `None` | Request formatter |
+| `data_source` | `DataSource \| str \| None` | `None` | Dataset source (HuggingFace, S3, GCS, local, or URI string) |
+| `formatter` | `Formatter \| None` | `None` | Request formatter |
 | `metrics` | `tuple[Metric, ...]` | `()` | Evaluation metrics (scorers are inferred from metrics) |
 | `num_fewshot` | `int` | `0` | Number of few-shot examples |
-| `fewshot_seed` | `int` | `42` | Random seed for few-shot selection |
-| `seed` | `int` | `42` | General random seed for task |
 | `limit` | `int \| None` | `None` | Max instances to evaluate |
 | `split` | `Split` | `Split.TEST` | Dataset split to use |
 | `primary_metric` | `MetricName \| Metric \| None` | `None` | Primary metric for ranking (defaults to single metric if only one) |
 | `sampling_params` | `SamplingParams \| None` | `None` | Default sampling parameters for this task |
+| `answer_extractor` | `Callable[[str], str] \| None` | `None` | Function applied to output text by the default `extract_answer` |
+| `strip_thinking` | `bool` | `False` | Drop `<think>...</think>` traces before scoring |
 | `dependencies` | `list[str] \| None` | `None` | Runtime packages to install (e.g., `["pkg==1.0"]`) |
+| `judge_model` | `str \| None` | `None` | Judge model for LLM-as-judge scoring |
 
 ### Data Sources
 
@@ -626,7 +639,8 @@ DataSource(path="gs://my-bucket/datasets/data.parquet")
 | `path` | `str` | Required | Dataset path (HuggingFace repo, S3/GCS URI, or local path) |
 | `subset` | `str \| None` | `None` | Dataset subset/config name |
 | `split` | `str` | `"test"` | Dataset split |
-| `data_files` | `str \| None` | `None` | Specific data files to load |
+| `source_type` | `SourceType \| None` | `None` | Backend type; inferred from `path` when unset |
+| `data_files` | `str \| tuple[str, ...] \| None` | `None` | Specific data files to load |
 | `revision` | `str \| None` | `None` | Dataset revision/version |
 
 ### Common Patterns
@@ -701,18 +715,13 @@ See the [Harness](#harness) section above for full documentation on:
 ## Function Calling (BFCL)
 
 The Berkeley Function Calling Leaderboard v3 single-turn categories are
-registered as `bfcl_*` tasks, in three regimes: native function calling,
-BFCL's prompting mode, and a plain completion for a pretrained model with no
-chat template. The multi-turn categories are registered too, driven by the
-`bfcl_multi_turn` scaffold and graded on the state their calls leave behind.
-See
+registered as `bfcl_*` tasks, reformulated as a completion so a pretrained
+model with no chat template can be measured on them. See
 [`src/olmo_eval/evals/tasks/bfcl/README.md`](src/olmo_eval/evals/tasks/bfcl/README.md)
-for the task list, suites, server flags, exemplar settings, and what is not
-implemented.
+for the task list, suites, exemplar settings, and what is not implemented.
 
 ```bash
-uv run olmo-eval run -m my-model -t bfcl
-uv run olmo-eval run -m my-base-model -t bfcl:base
+uv run olmo-eval run -m my-base-model -t bfcl
 ```
 
 ## Multimodal Evaluation
@@ -812,8 +821,9 @@ Images live under `$MOLMO_DATA_DIR/torch_datasets/`. Manifests that recorded
 absolute paths on another machine are re-anchored under the current root
 automatically.
 
-Four tasks call the OpenAI API and need `OPENAI_API_KEY`, so the
-`molmo2_imageqa` suite needs it as a whole:
+Four tasks call the OpenAI API and need `OPENAI_API_KEY` or `OPENROUTER_API_KEY`
+(see [OpenAI models through OpenRouter](#openai-models-through-openrouter)), so the
+`molmo2_imageqa` suite needs one of them as a whole:
 
 - `math_vista` defaults to the official `gpt-4-0613` answer extraction. Use the
   `math_vista:offline` variant for an API-free heuristic instead.
@@ -822,8 +832,9 @@ Four tasks call the OpenAI API and need `OPENAI_API_KEY`, so the
   cached, so the key is only needed on a cache miss.
 
 The launcher resolves the key as the user-scoped beaker secret
-`{beaker-username}_OPENAI_API_KEY`; if it is missing, the launch fails up front
-and prints the `beaker secret write` command to run.
+`{beaker-username}_OPENAI_API_KEY`, or `{beaker-username}_OPENROUTER_API_KEY` when
+that is missing. If neither exists, the launch fails up front and prints the
+`beaker secret write` command to run.
 
 ### Running
 
@@ -980,96 +991,87 @@ of PIL images / zero-arg callables / file paths — and sends them all on one
 request. Registration and variants work exactly as described in
 [Adding New Tasks](#adding-new-tasks).
 
-## Uploading Results and the Dashboard
+## Querying Results
 
-`olmo-eval run`, `olmo-eval run-external`, and Beaker jobs upload their results to the
-olmo-eval dashboard at <https://olmo-eval.allen.ai> (Ai2 accounts only). The upload uses
-your Google credentials, so run `gcloud auth application-default login` once. Beaker
-jobs never get your personal credentials: they upload as the shared
-`olmo-eval-uploader` service account, whose key `olmo-eval beaker launch` reads from
-Secret Manager (with your local credentials) and copies into the workspace's
-`olmo_eval_uploader_key` Beaker secret. The run still records you as its author.
+Evaluation results can be stored in PostgreSQL and queried via the CLI.
 
-Without Google credentials, uploads turn off on their own: the eval runs as usual, keeps
-its results on disk, and prints a note. This applies to `olmo-eval beaker launch` too.
-Passing `--upload` or setting `OLMO_EVAL_UPLOAD=1` asks for an upload explicitly, so a
-missing credential is then an error.
-
-### Who can see uploaded results
-
-Everyone at Ai2 who can sign in to the dashboard can see every uploaded run: its
-configs, command line, metrics, instance previews, and every file in the output
-directory, including predictions, requests and logs. Pass `--no-upload` (or set
-`OLMO_EVAL_UPLOAD=0`) for private or licensed datasets whose examples must not be
-shared.
-
-Keep credentials out of anything that is uploaded. Put API keys in environment
-variables, and on Beaker map them from Beaker secrets (`--secret-env BEAKER_SECRET:ENV_VAR` on
-`olmo-eval beaker launch`). Do not pass them as literal values in `-o` overrides,
-other command-line arguments or harness config files. Secret names, such as a
-provider's `required_secrets`, are references and are safe to upload. Before upload,
-olmo-eval replaces the values of secret-looking keys (`api_key`, `token`, `password`,
-`secret` and similar) in the uploaded configs and command line with `[redacted]`.
-The uploaded files are sent as they are, so a key printed into a log, or written into
-`metrics.json`, is uploaded with it.
-
-What is uploaded:
-
-- Run metadata: model and provider config, task specs, harness config, git commit,
-  Beaker experiment/job/result dataset IDs, cluster, GPU type, and package versions.
-- Every task's metrics, metric directions, and suite aggregations.
-- One compact row per instance (scores, finish reason, token counts, short previews).
-- Every file in the output directory (`metrics.json`, `manifest.json`, predictions,
-  requests, inference metrics, logs). Files go to GCS, and the dashboard links to them.
-  In a reused output directory, files last modified before the run started are skipped.
-
-The run registers when it starts and uploads when it finishes. A crashed run is
-recorded as failed. An upload failure never fails the eval: the results stay on disk
-and the log prints the command that retries the upload.
+### Basic Queries
 
 ```bash
-# Turn uploads off for one run (or set OLMO_EVAL_UPLOAD=0)
-uv run olmo-eval run -m llama3.1-8b -t gsm8k --no-upload
+# Query by experiment ID
+uv run olmo-eval results query --experiment exp_001
 
-# Label a run so it is easy to find in the dashboard
-uv run olmo-eval run -m llama3.1-8b -t gsm8k --tag sweep-42
+# Query by model
+uv run olmo-eval results query --model llama3.1-8b
 
-# Upload (or re-upload) a results directory; re-uploading updates the same run
-uv run olmo-eval results upload /tmp/results/
+# Query by task (shows comparison matrix)
+uv run olmo-eval results query --task mmlu --task gsm8k
 
-# Check what would be uploaded without sending anything
-uv run olmo-eval results upload /tmp/results/ --dry-run
+# Query by experiment group
+uv run olmo-eval results query -G my-benchmark-group --format json
 
-# Re-upload a Beaker job's results
-beaker dataset fetch <result-dataset-id> -o ./results
-uv run olmo-eval results upload ./results
+# Combine filters
+uv run olmo-eval results query --model llama3.1-8b --task mmlu --format json
 ```
 
-| Setting | Flag | Environment variable | Default |
-|---------|------|----------------------|---------|
-| Upload on/off | `--upload/--no-upload` | `OLMO_EVAL_UPLOAD` | on when Google credentials exist |
-| Ingest service | `--api-url` | `OLMO_EVAL_API_URL` | `https://prod-ingest.olmo-eval.apps.allenai.org` |
-| Run labels | `--tag` (repeatable) | | none |
-| Upload deadline | | `OLMO_EVAL_UPLOAD_TIMEOUT` (seconds) | `1800` |
+### Instance-Level Predictions
 
-### Migrating from the Postgres results store
+Include `--instances` to retrieve instance-level predictions:
 
-The dashboard replaces the Postgres results database, the S3 result uploads and the
-commands built on them. Data in the old database was not migrated, so the dashboard
-holds only runs uploaded since it launched.
+```bash
+# Get instances for an experiment
+uv run olmo-eval results query --experiment exp_001 --task mmlu --instances --format json
 
-| Before | Now |
-|--------|-----|
-| `--store`, `--db-*` | Uploads are on by default; `--no-upload` turns them off |
-| `--s3-bucket`, `--s3-prefix` and the other `--s3-*` result flags | Files upload to the dashboard's GCS bucket with the run |
-| `olmo-eval results query`, `groups`, `group`, `suites` | The Runs, Groups and Suites pages in the dashboard |
-| `olmo-eval results viewer` and the pairwise viewer | The Run and Compare pages in the dashboard |
-| `olmo-eval metrics` | The run's Inference tab (upload with `-o metrics.enabled=true`) |
+# Paginate through large result sets using keyset pagination
+uv run olmo-eval results query --task mmlu --instances --limit 1000 --format json
 
-The removed flags and commands now fail with a usage error. S3 *dataset* loading is
-unchanged.
+# Get next page using last_id from previous response
+uv run olmo-eval results query --task mmlu --instances --limit 1000 --after-id 1000 --format json
+```
 
-The dashboard code lives in `dashboard/` (see `dashboard/README.md`).
+JSON output includes pagination metadata:
+```json
+{
+  "experiments": [...],
+  "pagination": {
+    "last_id": 12345,
+    "has_more": true
+  }
+}
+```
+
+### Output Formats
+
+| Format | Flag | Description |
+|--------|------|-------------|
+| Table | `--format table` | Rich terminal tables (default) |
+| JSON | `--format json` | Structured JSON with pagination metadata |
+| CSV | `--format csv` | CSV output to stdout |
+
+### Database Configuration
+
+#### AI2 Users (Recommended)
+
+Set these two environment variables to connect to the shared database:
+
+```bash
+export OLMO_EVAL_DB_HOST="<database-host>"
+export OLMO_EVAL_DB_SECRET_ARN="arn:aws:secretsmanager:us-west-2:..."
+```
+
+The password is automatically fetched from AWS Secrets Manager on first connection.
+This requires AWS credentials configured (via `~/.aws/credentials` or environment variables).
+
+#### All Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OLMO_EVAL_DB_HOST` | `localhost` | Database host |
+| `OLMO_EVAL_DB_PORT` | `5432` | Database port |
+| `OLMO_EVAL_DB_NAME` | `olmo_eval` | Database name |
+| `OLMO_EVAL_DB_USER` | `postgres` | Database user |
+| `OLMO_EVAL_DB_PASSWORD` | - | Database password (use this OR `OLMO_EVAL_DB_SECRET_ARN`) |
+| `OLMO_EVAL_DB_SECRET_ARN` | - | AWS Secrets Manager ARN for password (fetched on auth failure) |
 
 ## Advanced Usage
 
@@ -1184,48 +1186,68 @@ against an external repo or runner.
 
 ### Defining an External Eval
 
+`SandboxedExternalEval` runs a benchmark inside one container. This sketch runs a
+benchmark's own CLI against the model under evaluation and reads its score file:
+
 ```python
+import json
+import time
 from typing import Any
 
-from olmo_eval.evals.external import SandboxedExternalEval, ExternalEvalResult, register_external_eval
+from olmo_eval.evals.external import (
+    ExternalEvalResult,
+    SandboxedExternalEval,
+    register_external_eval,
+)
+from olmo_eval.harness.sandbox import SandboxExecutor
+
 
 class MyBenchmarkExternalEval(SandboxedExternalEval):
     """My benchmark evaluation."""
 
     name = "my_benchmark"
-    description = "Evaluates model on my benchmark"
-    timeout_seconds = 3600
+    description = "Evaluates a model on my benchmark"
+    timeout_seconds = 3600.0
     required_secrets = ("MY_API_KEY",)
-
-    @property
-    def sandbox_image(self) -> str:
-        return "my-benchmark:latest"
-
-    @property
-    def working_dir(self) -> str:
-        return "/workspace"
-
-    @property
-    def setup_command(self) -> tuple[str, ...]:
-        return ("pip install -r requirements.txt",)
+    sandbox_image = "my-benchmark:latest"
+    working_dir = "/workspace"
+    setup_command = ("pip install -r requirements.txt",)
 
     @property
     def arguments(self) -> dict[str, tuple[str, Any | None]]:
-        # Returns dict of arg_name -> (description, default_value)
+        # arg_name -> (description, default_value)
         return {"subset": ("Which subset to evaluate", "default")}
 
-    async def execute(self, provider, args, output_dir, container_runtime):
-        # Run benchmark in sandbox
-        result = await self.run_in_sandbox(provider, args, output_dir)
+    async def execute(self, provider, args, output_dir=None, container_runtime="podman"):
+        start_time = time.time()
+        output: list[str] = []
+        config = self._create_sandbox_config(container_runtime, output_dir)
+        async with SandboxExecutor(config, name=self.name) as executor:
+            if error := await self._run_setup(executor, output, start_time):
+                return error
+            run = await executor.execute_command(
+                f"my-benchmark --model {provider.model_name} --subset {args['subset']} "
+                f"--out {self.results_dir}/score.json",
+                timeout=self.timeout_seconds,
+            )
+            output.append(run.output)
+            if not run.success:
+                return self._error_result("Benchmark run failed", start_time, "\n".join(output))
+            scores = await executor.execute_command(f"cat {self.results_dir}/score.json")
         return ExternalEvalResult(
             name=self.name,
-            metrics={"accuracy": result.score},
-            success=True,
+            metrics={"accuracy": json.loads(scores.output)["accuracy"]},
+            raw_output="\n".join(output),
+            duration_seconds=time.time() - start_time,
         )
 
-# Register the eval
+
 register_external_eval(MyBenchmarkExternalEval())
 ```
+
+Benchmark modules under `src/olmo_eval/evals/external/benchmarks/` are registered
+automatically. See `benchmarks/tau2/eval.py` for a complete implementation, including how
+a sandboxed benchmark reaches a locally served model.
 
 ### Running External Evals
 
@@ -1235,63 +1257,6 @@ uv run olmo-eval external-evals
 
 # Run a built-in external eval
 uv run olmo-eval run-external -e tau2_bench --model llama3.1-8b -a domain=airline -a num_tasks=1
-```
-
-### Terminal-Bench
-
-`terminal_bench_2` runs the [Terminal-Bench 2.1](https://github.com/harbor-framework/terminal-bench-2-1)
-release, pinned by commit in the loader. Each trial starts the task's prebuilt image in its own
-container, with the task's CPU and memory limits applied, runs the agent under the task's
-wall-clock timeout, then injects the task's tests and reads the reward they write. The image is
-left pristine: swe-rex is installed into a private virtualenv without touching the task's
-packages, PATH or environment.
-
-The default scaffold is `vanillux`, a port of the agent tmax uses for its Terminal-Bench numbers.
-`openai_agents` remains available for comparison.
-
-```bash
-# Full run, 5 attempts per task, 8 containers at a time
-uv run olmo-eval run-external -e terminal_bench_2 --model my-model \
-    -a n_attempts=5 -a max_concurrency=8
-
-# Smoke test a few tasks with the reference solutions
-uv run olmo-eval run-external -e terminal_bench_2 --model my-model \
-    -a oracle=true -a task_ids=fix-git,build-cython-ext
-```
-
-| Argument | Default | Meaning |
-|----------|---------|---------|
-| `task_ids` | all | Comma-separated task names |
-| `repo_path` / `repo_ref` | clone at pinned commit | Local checkout, or another git ref |
-| `n_attempts` | 1 | Attempts per task; adds `pass@k`, `pass_rate_std` and `pass_rate_sem` |
-| `max_concurrency` | 1 | Containers running at once |
-| `max_turns` | 64 | Agent steps per trial |
-| `command_timeout` | 120 | Seconds a single command may run |
-| `scaffold` | `vanillux` | `vanillux` or `openai_agents` |
-| `resource_limits` | true | Apply each task's `cpus` and `memory_mb` to the container |
-| `temperature`, `top_p`, `max_tokens` | 0.7, 0.95, 16384 | Sampling for the agent |
-| `oracle` | false | Run each task's reference solution instead of the model |
-
-Metrics: `pass_rate` counts every trial, with errored trials as 0; `pass_rate_adjusted` leaves
-errored trials out; `error_rate` is the share of trials where the harness, not the agent, failed
-(no reward file, verifier timeout, container failure). An agent that runs out of time is still
-verified and counted under `num_agent_timeouts`.
-
-Models with hybrid attention such as Qwen3.5 need vLLM's Triton kernels on hosts without a CUDA
-compiler, and the Qwen3.5 family needs its XML tool parser:
-`-K gdn_prefill_backend=triton -K tool_call_parser=qwen3_xml`. On Beaker, where Podman runs with
-cgroups disabled, pass `-A resource_limits=false`.
-
-#### OpenThoughts-TBLite
-
-`openthoughts_tblite` runs [OpenThoughts-TBLite](https://github.com/open-thoughts/OpenThoughts-TBLite),
-100 difficulty-calibrated tasks in the Terminal-Bench format, through the same harness, agent,
-arguments and metrics. Its tasks ship a Dockerfile instead of a prebuilt image, so each task's
-image is built once per run from its environment directory (bounded by the task's build timeout)
-and cached by content hash; the swe-rex layer and any registry caching apply on top.
-
-```bash
-uv run olmo-eval run-external -e openthoughts_tblite --model my-model -a n_attempts=5
 ```
 
 ### ExternalEvalResult
@@ -1305,9 +1270,9 @@ External evals return structured results:
 | `metadata` | `dict` | Additional metadata |
 | `success` | `bool` | Whether the eval completed successfully |
 | `error` | `str \| None` | Error message if failed |
-| `duration_seconds` | `float` | Execution time |
+| `duration_seconds` | `float \| None` | Execution time |
 | `raw_output` | `str \| None` | Raw stdout/stderr from the evaluation |
-| `predictions` | `list` | Instance-level predictions |
+| `predictions` | `list[dict] \| None` | Instance-level predictions |
 
 ## Sandboxes
 
@@ -1333,30 +1298,30 @@ config = SandboxConfig(
 
 ### SandboxConfig Fields
 
+Commonly used fields. `SandboxConfig` in `src/olmo_eval/harness/sandbox/config.py`
+documents the rest, including Modal and SWE-ReX options.
+
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `image` | `str` | Required | Container image |
-| `mode` | `SandboxMode` | `DOCKER` | `LOCAL`, `DOCKER`, or `MODAL` |
+| `mode` | `SandboxMode` | Required | `LOCAL`, `DOCKER`, or `MODAL` |
+| `capabilities` | `frozenset[str]` | `Capability.DEFAULT` | Capabilities this sandbox provides, such as `Capability.BASH` or `Capability.PYTHON` |
+| `instances` | `int \| None` | `None` | Executors to create; `None` lets the caller allocate capacity, otherwise one executor |
 | `container_runtime` | `str` | `"podman"` | `"docker"` or `"podman"` |
-| `command_timeout` | `float` | `30.0` | Timeout per command (seconds) |
-| `startup_timeout` | `float` | `60.0` | Container startup timeout |
-| `instances` | `int` | `1` | Number of parallel executors |
-| `working_dir` | `str` | `"/workspace"` | Working directory in container |
-| `environment` | `tuple` | `()` | Environment variables |
-| `volumes` | `tuple` | `()` | Volume mounts (host, container) |
-| `capabilities` | `frozenset[str]` | `Capability.DEFAULT` | Capabilities like `Capability.BASH`, `Capability.PYTHON` |
-| `remove_container` | `bool` | `True` | Remove container after use |
-| `docker_args` | `tuple[str, ...]` | `()` | Additional Docker/Podman arguments |
-| `log_dir` | `str \| None` | `None` | Directory for container logs |
-| `exec_shell` | `tuple[str, ...] \| None` | `None` | Custom shell for command execution |
-| `enable_diagnostics` | `bool` | `True` | Run background diagnostics monitor |
+| `command_timeout` | `float` | `30.0` | Default timeout per command (seconds) |
+| `working_dir` | `str` | `"/workspace"` | Working directory in the container |
+| `environment` | `tuple[tuple[str, str], ...]` | `()` | Environment variables as `(name, value)` pairs |
+| `volumes` | `tuple[tuple[str, str], ...]` | `()` | Volume mounts as `(host_path, container_path)` pairs |
 
 ### Using SandboxManager
 
-The `SandboxManager` manages multiple executors with capability-based routing:
+The `SandboxManager` manages multiple executors and routes each command to an executor
+with the required capabilities:
 
 ```python
-from olmo_eval.harness.sandbox import SandboxConfig, SandboxManager, SandboxMode, Capability
+import asyncio
+
+from olmo_eval.harness.sandbox import Capability, SandboxConfig, SandboxManager, SandboxMode
 
 configs = [
     SandboxConfig(image="python:3.12", mode=SandboxMode.DOCKER, capabilities=Capability.PYTHON, instances=2),
@@ -1366,17 +1331,16 @@ configs = [
 manager = SandboxManager(configs, owner="my-scorer")
 await manager.start()
 
-# Execute with specific capability - routes to matching executor
-result = await manager.execute_with_capabilities(
-    "print('hello')",
-    Capability.PYTHON
-)
+# Run on an executor that provides the python capability
+output = await manager.execute("python -c 'print(1)'", capabilities=Capability.PYTHON)
 
-# Round-robin across matching executors
-results = await asyncio.gather(*[
-    manager.execute_with_capabilities(cmd, Capability.PYTHON)
-    for cmd in commands
+# Commands that need the same capability are spread across matching executors
+outputs = await asyncio.gather(*[
+    manager.execute(command, capabilities=Capability.PYTHON) for command in commands
 ])
+
+# execute_command and execute_code return an ExecutionResult with exit code and output
+result = await manager.execute_code("print('hello')", capabilities=Capability.PYTHON)
 
 await manager.stop()
 ```
@@ -1610,16 +1574,14 @@ budget: ai2/oe-other
 | `--provider-kwarg` | `-K` | none | Provider kwargs for external evals (`key=value`) |
 | `--force-download-model` | | `false` | Refresh Hugging Face model/tokenizer cache before loading |
 | `--uv-cache-dir` | | default | UV cache directory for package downloads |
+| `--weka-bucket` | | none | Extra Weka bucket to mount at `/weka/<bucket>`, on top of `oe-training-default`, `oe-eval-default` and `oe-adapt-default` (can specify multiple) |
 | `--dry-run` | `-d` | `false` | Print spec without launching |
 | `--yes` | `-y` | `false` | Skip confirmation prompt |
 | `--follow/--no-follow` | | `true` | Follow logs after launch |
 | `--secret-env` | | none | Map Beaker secret to env var (`SECRET:VAR`) |
-| `--hf-token/--no-hf-token` | | auto | Inject `HF_TOKEN`; see [Hugging Face and Beaker tokens](#hugging-face-and-beaker-tokens) |
 | `--aws-credentials` | | auto | Inject AWS credentials (auto-detected from s3:// paths) |
-| `--gcp-credentials` | | auto | Inject Google credentials (auto-detected from gs:// model paths) |
-| `--upload/--no-upload` | | `true` | Upload results to the dashboard from the job (injects the shared uploader key) |
-| `--api-url` | | production | Ingest service URL passed to the job |
-| `--tag` | | none | Label attached to uploaded runs (can specify multiple) |
+| `--gcp-credentials` | | auto | Inject GCP credentials (auto-detected from gs:// model paths) |
+| `--store` | | `false` | Persist results to configured database |
 
 ### Preemption
 
@@ -1660,44 +1622,61 @@ uv run olmo-eval beaker launch -n "eval" \
     -B "ai2/oe-other"
 ```
 
-The `-o` flag uses OmegaConf dotlist syntax, supporting:
+Task overrides accept `TaskConfig` fields and `SamplingParams` fields (sampling shortcuts
+such as `temperature` or `max_tokens`). Any other key after `-t` is rejected; harness keys
+belong after `--harness`.
 
-| Type | Syntax | Example |
-|------|--------|---------|
-| String | `key=value` | `-o formatter.template="Q: {q}"` |
-| Number | `key=123` | `-o limit=100` |
-| Boolean | `key=true` | `-o preemptible=false` |
-| Nested | `a.b.c=val` | `-o scorer.normalize=true` |
-| List | `key=[a,b]` | `-o 'dependencies=[pkg1, pkg2]'` |
+| Kind | Example |
+|------|---------|
+| Number | `-o limit=100`, `-o num_fewshot=5` |
+| Sampling shortcut | `-o temperature=0.6`, `-o max_tokens=512` |
+| Boolean | `-o strip_thinking=true` |
+| List (JSON) | `-o 'dependencies=["pkg1==1.0", "pkg2"]'` |
+| Harness, nested | `--harness default -o provider.max_model_len=16384` |
 
-**Note:** Quote complex values to prevent shell interpretation:
+Quote values that contain brackets, braces, or spaces so the shell passes them through
+unchanged.
+
+### OpenAI models through OpenRouter
+
+Anything that needs `OPENAI_API_KEY` also accepts an
+[OpenRouter](https://openrouter.ai) key in `OPENROUTER_API_KEY` (or
+`OPEN_ROUTER_KEY`). This covers LLM
+judges, the OpenAI models in the model registry (`gpt-4o`, `gpt-4o-mini`, ...),
+and the OpenAI models that external evals such as tau2 and DeepScholar call.
+When both keys are set, the OpenAI key is used.
+
+With only an OpenRouter key, requests go to OpenRouter's OpenAI-compatible
+endpoint, and OpenAI model names are sent as OpenRouter slugs (`gpt-4o` becomes
+`openai/gpt-4o`). Judge response caches are still keyed by the OpenAI model name,
+so existing caches keep working.
+
+Locally, export the key:
+
 ```bash
-# Good - single quotes protect the value
--o 'extra_config={key: value, nested: {a: 1}}'
+export OPENROUTER_API_KEY=sk-or-...
 ```
 
-### Hugging Face and Beaker tokens
+On Beaker, store it as a user-scoped secret. A task that requires
+`OPENAI_API_KEY` uses `{beaker-username}_OPENROUTER_API_KEY` when
+`{beaker-username}_OPENAI_API_KEY` does not exist:
 
-`beaker launch` does not copy personal tokens into the Beaker workspace unless the job
-needs them.
+```bash
+beaker secret write --workspace <workspace> {beaker-username}_OPENROUTER_API_KEY sk-or-...
+```
 
-- **`HF_TOKEN`**: if the secret `{username}_HF_TOKEN` already exists in the workspace, it
-  is injected. Otherwise your local Hugging Face token (`HF_TOKEN` or `hf auth login`) is
-  copied there only when the job needs it: you passed `--hf-token`, a task or model
-  declares `HF_TOKEN` in `required_secrets`, or a model, tokenizer or task dataset is gated
-  or private on the Hub. Public models such as `Qwen/Qwen2.5-0.5B` do not trigger a copy.
-  If the Hub cannot be reached, the launch prints a warning and does not copy the token;
-  pass `--hf-token` for gated models. `--no-hf-token` never injects it.
-- **`BEAKER_TOKEN`**: the job uses it only to post status updates to the Beaker UI. It is
-  injected when the secret `{username}_BEAKER_TOKEN` exists in the workspace, and is never
-  created for you. Without it the launch prints a warning and the job runs without status
-  updates. To enable them:
+External evals run third-party code in a sandbox. There, the OpenRouter key is
+exported as both `OPENROUTER_API_KEY` and `OPENAI_API_KEY`, and `OPENAI_BASE_URL`
+points the OpenAI SDK at OpenRouter. olmo-eval rewrites the model names it passes
+to tau2, DeepScholar and AstaBench, but it cannot rewrite names hardcoded inside a benchmark,
+such as AstaBench's scorer models. OpenRouter resolves most bare OpenAI names
+(`gpt-4o-mini`, `o3-mini-2025-01-31`), but rejects dated snapshots it does not list,
+such as `gpt-4-0613`.
 
-  ```bash
-  beaker secret write --workspace <workspace> {username}_BEAKER_TOKEN <your Beaker token>
-  ```
-
-A dry run (`--dry-run`) checks the Hub but does not read or write Beaker secrets.
+The `openai_agents` harness compacts long agent histories through OpenAI's
+`responses.compact` endpoint. OpenRouter does not serve that endpoint, so with
+only an OpenRouter key the harness skips compaction, logs a warning and keeps
+the full history.
 
 ### Secret Environment Overrides
 
@@ -1764,7 +1743,7 @@ uv run olmo-eval beaker launch -f eval_config.yaml --dry-run
 # Override specific values
 uv run olmo-eval beaker launch -f eval_config.yaml --gpus 4
 
-# Add additional models via CLI
+# Replace the config's model list from the CLI
 uv run olmo-eval beaker launch -f eval_config.yaml -m olmo-2-7b
 ```
 
@@ -1786,7 +1765,7 @@ budget: ai2/oe-other
 gpus: 1
 ```
 
-**Per-task priorities in config** (`examples/configs/prioritized_tasks.yaml`):
+**Per-task priorities in config** (`examples/beaker/configs/prioritized_tasks.yaml`):
 
 Use `@priority` suffix on tasks to run different tasks at different priority levels.
 Tasks with different priorities create separate Beaker experiments:
@@ -1836,40 +1815,44 @@ workspace: ai2/olmo-eval-debug
 budget: ai2/oe-other
 gpus: 4
 priority: high
-preemptible: false
+min_runtime: 8h
 timeout: 48h
 retries: 2
-description: "Full evaluation suite for Llama 70B"
 ```
 
 **Config file fields**:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `name` | string | yes | Experiment name |
-| `models` | list | yes | List of model names or presets |
-| `tasks` | list | yes | List of task specs (with optional `@priority`) |
+| `name` | string | no | Experiment name (generated from models and tasks if omitted) |
+| `models` | list of strings | yes | Model names or presets |
+| `tasks` | list | yes | Task specs (with optional `@priority`) |
 | `cluster` | string | yes | Cluster alias or full name |
-| `gpus` | int | no | Default GPUs per model instance (auto-detected based on provider) |
+| `workspace` | string | yes | Beaker workspace |
+| `budget` | string | when the workspace has no bound budget | Beaker budget |
+| `gpus` | int | no | GPUs per model instance (auto-detected from the provider if omitted) |
 | `max_gpus_per_node` | int | no | Max GPUs per node, splits tasks if exceeded (default: `8`) |
 | `priority` | string | no | Default priority (default: `normal`) |
-| `preemptible` | bool | no | Allow preemption (default: `true`) |
-| `min_runtime` | string | no | Minimum runtime before preemption (e.g., `2h`); replaces `preemptible` |
+| `min_runtime` | string | no | Minimum runtime before preemption (e.g., `2h`); see [Preemption](#preemption) |
+| `preemptible` | bool | no | Deprecated by Beaker; cannot be combined with `min_runtime` |
 | `timeout` | string | no | Job timeout (default: `24h`) |
 | `retries` | int | no | Retry count on failure |
-| `workspace` | string | yes | Beaker workspace |
-| `budget` | string | yes | Beaker budget |
 | `beaker_image` | string | no | Container image to use (config-only) |
-| `description` | string | no | Optional Beaker description |
 | `groups` | list | no | Beaker groups to add experiments to |
+
+CLI options override config values. `-m` and `-t` replace the config's lists rather than
+adding to them.
 
 See `examples/beaker/configs/` for more configuration examples.
 
 ### Cluster Aliases
 
 ```bash
-# List available cluster aliases
+# List clusters with utilization
 uv run olmo-eval beaker clusters
+
+# Only show cluster aliases
+uv run olmo-eval beaker clusters --aliases
 ```
 
 ### Programmatic API
@@ -1881,6 +1864,8 @@ config = BeakerJobConfig(
     name="eval-llama3-mmlu",
     command=["uv", "run", "olmo-eval", "run", "-m", "llama3.1-8b", "-t", "mmlu"],
     cluster="h100",
+    workspace="<workspace>",
+    budget="<budget>",  # optional when the workspace has a bound budget
     num_gpus=1,
 )
 
@@ -1943,7 +1928,7 @@ The image contains:
 The image does NOT contain:
 - olmo-eval source code (provided by gantry at runtime)
 - olmo-eval dependencies like click, datasets, rich, etc. (installed at job startup)
-- Optional extras like boto3 (installed at job startup if needed)
+- Storage backends like boto3, psycopg (installed at job startup if needed)
 - Inference providers like vllm, transformers, litellm (installed at job startup)
 
 ### Installing Inference Providers at Runtime
@@ -2029,28 +2014,4 @@ uv run olmo-eval beaker launch -n "eval" -m llama3.1-8b \
 
 ## Development
 
-This repo uses `uv` with a checked-in `uv.lock` for reproducible installs.
-The default dependency groups (`dev` + `vllm`) are installed automatically,
-which covers s3, beaker, hf, and the vLLM inference provider.
-
-```bash
-# Install dependencies from the lockfile
-uv sync --frozen
-
-# Install git hooks (ruff, ty, file sizes)
-make setup
-
-# Run linter / formatter
-make lint
-make fix    # auto-fix
-
-# Run tests (and type checks)
-make test
-make verify
-
-# Update the lockfile after editing pyproject.toml
-uv lock
-```
-
-CI runs `uv sync --frozen` and `uv run --frozen ...`, so any change to
-`pyproject.toml` must be accompanied by a refreshed `uv.lock`.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, checks, and PR expectations.

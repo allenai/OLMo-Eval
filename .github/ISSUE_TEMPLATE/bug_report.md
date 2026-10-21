@@ -30,8 +30,9 @@ Steps to reproduce the behavior:
 
 - OS: [e.g., Ubuntu 22.04, macOS 14.0]
 - Python version: [e.g., 3.12.0]
-- olmo-eval version: [e.g., 0.1.0]
-- Backend: [e.g., vLLM, HuggingFace, LiteLLM]
+- olmo-eval commit: [output of `git rev-parse HEAD`]
+- Provider: [e.g., vllm, vllm_server, hf, litellm, olmo_core]
+- Task spec and harness: [e.g., `gsm8k:chat`, `--harness default`]
 
 ## Additional Context
 
