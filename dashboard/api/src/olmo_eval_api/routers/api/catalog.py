@@ -47,7 +47,7 @@ from olmo_eval_api.services.subjects import (
     models_task_results,
     resolve_subjects,
 )
-from olmo_eval_api.services.suites import SuiteNode, leaves
+from olmo_eval_api.services.suites import SuiteNode, leaves, walk_suites
 from olmo_eval_api.stats.mde import z
 
 from .deps import SessionDep, UserDep
@@ -240,6 +240,20 @@ async def model_series(
     )
 
 
+def _progression_gap_metric_keys(
+    node: SuiteNode, population: Sequence[Mapping[str, Mapping[Any, Any]]]
+) -> dict[str, str | None] | None:
+    """Carry complete descendant GAP anchors, withholding ambiguous shared leaves."""
+    selected: dict[str, str | None] = {}
+    for descendant, _, _ in walk_suites(node):
+        keys = primary_gap_metric_keys(descendant, population)
+        if keys is None or not any(keys.values()):
+            continue
+        for name, key in keys.items():
+            selected[name] = key if name not in selected or selected[name] == key else None
+    return selected or None
+
+
 def _panel_score(
     node: SuiteNode | None,
     task: str | None,
@@ -416,12 +430,10 @@ async def model_progression(
     population = list(merged.values()) if merge == "latest" else list(run_population)
     population.extend(subject.trs for subject in ref_subjects)
     inherited_keys = (
-        primary_gap_metric_keys(scope_node, population)
+        _progression_gap_metric_keys(scope_node, population)
         if scope_node is not None and metric == "primary"
         else None
     )
-    if inherited_keys is not None and not any(inherited_keys.values()):
-        inherited_keys = None
     panels = []
     for kind, name, node in panels_spec:
         if node is not None:

@@ -940,3 +940,61 @@ def test_no_score_matrix_suites_keep_paired_deltas_and_metadata(aggregation):
     assert row.cells[1].delta.delta == pytest.approx(0.2)
     assert row.meta is not None and row.meta.display_format == "percent"
     assert row.meta.higher_is_better is True
+
+
+def test_nested_gap_progression_carries_anchors_without_losing_unrelated_leaves():
+    from olmo_eval_api.routers.api.catalog import _panel_score, _progression_gap_metric_keys
+
+    node = build_tree(
+        "root",
+        {
+            "root": (
+                "none",
+                [{"type": "suite", "name": "pair"}, {"type": "task", "name": "other"}],
+            ),
+            "pair": ("gap", [{"type": "task", "name": "in"}, {"type": "task", "name": "out"}]),
+        },
+    )
+    population = [
+        {
+            name: {
+                "primary_metric": metric,
+                "score": score,
+                "metrics": {metric: score},
+                "stderr": None,
+                "num_instances": 10,
+                "display_format": "percent",
+                "higher_is_better": True,
+            }
+            for name in ("in", "out", "other")
+        }
+        for metric, score in (("strict", 0.4), ("flex", 0.9))
+    ]
+    selected = _progression_gap_metric_keys(node, population)
+    assert selected == {"in": "strict", "out": "strict"}
+    assert _panel_score(None, "out", population[0], "primary", selected)[0] == 0.4
+    assert _panel_score(None, "out", population[1], "primary", selected)[0] is None
+    average = build_tree("root", {"root": ("average", [{"type": "task", "name": "other"}])})
+    assert _panel_score(average, None, population[1], "primary")[0] == 0.9
+
+
+def test_progression_withholds_a_leaf_with_conflicting_gap_anchors():
+    from olmo_eval_api.routers.api.catalog import _progression_gap_metric_keys
+
+    node = build_tree(
+        "root",
+        {
+            "root": ("none", [{"type": "suite", "name": "a"}, {"type": "suite", "name": "b"}]),
+            "a": ("gap", [{"type": "task", "name": "in"}, {"type": "task", "name": "shared"}]),
+            "b": ("gap", [{"type": "task", "name": "shared"}, {"type": "task", "name": "out"}]),
+        },
+    )
+    population = [
+        {name: {"primary_metric": "strict", "score": 0.5} for name in ("in", "shared")},
+        {name: {"primary_metric": "flex", "score": 0.5} for name in ("shared", "out")},
+    ]
+    assert _progression_gap_metric_keys(node, population) == {
+        "in": "strict",
+        "shared": None,
+        "out": "flex",
+    }
