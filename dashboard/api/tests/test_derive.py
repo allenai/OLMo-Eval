@@ -840,3 +840,39 @@ def test_generated_gap_task_panel_uses_its_parent_anchor(secondary):
     }
     result = _panel_score(None, "in", {"in": tr}, "primary", {"in": "strict"})
     assert result[0] == (0.4 if secondary else None)
+
+
+def test_nested_gap_task_rows_use_the_nearest_gap_ancestor():
+    from olmo_eval_api.routers.api.compare import _suite_rows, matrix_metric_keys
+    from olmo_eval_api.services.subjects import Subject
+
+    defs = {
+        "pair": ("gap", [{"type": "suite", "name": "wrapped"}]),
+        "wrapped": ("average", [{"type": "task", "name": "in"}, {"type": "task", "name": "out"}]),
+    }
+    rows = []
+    _suite_rows(build_tree("pair", defs), 0, None, rows)
+    subjects = [
+        Subject(
+            key=f"r:{name}",
+            kind="run",
+            model={},
+            run={"run_id": name},
+            trs={
+                task: {
+                    "primary_metric": metric,
+                    "metrics": {metric: 0.5},
+                    "score": 0.5,
+                    "num_instances": 10,
+                    "display_format": "percent",
+                    "higher_is_better": True,
+                }
+                for task, metric in zip(("in", "out"), metrics, strict=True)
+            },
+        )
+        for name, metrics in (("mixed001", ("flex", "strict")), ("anchor01", ("strict", "strict")))
+    ]
+    keys = matrix_metric_keys(rows, "primary", subjects, None)
+    for row, selected in zip(rows, keys, strict=True):
+        if row.kind == "task":
+            assert selected[row.name] == "strict"

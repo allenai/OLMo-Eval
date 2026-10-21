@@ -177,13 +177,23 @@ def matrix_metric_keys(
     require_gap_anchor: bool = True,
 ) -> list[dict[str, str | None]]:
     """Select comparison metrics independently for each matrix row."""
-    parents = {spec.name: spec.node for spec in rows if spec.kind == "suite"}
+    ancestors: list[RowSpec] = []
     row_metrics = []
     for spec in rows:
-        parent = parents.get(spec.parent) if spec.kind == "task" else spec.node
-        node_for_metrics = (
-            parent if parent is not None and parent.aggregation == "gap" else spec.node
-        )
+        while ancestors and ancestors[-1].depth >= spec.depth:
+            ancestors.pop()
+        node_for_metrics = spec.node
+        if node_for_metrics is None or node_for_metrics.aggregation != "gap":
+            node_for_metrics = next(
+                (
+                    ancestor.node
+                    for ancestor in reversed(ancestors)
+                    if ancestor.node is not None and ancestor.node.aggregation == "gap"
+                ),
+                node_for_metrics,
+            )
+        if spec.kind == "suite":
+            ancestors.append(spec)
         names = leaves(node_for_metrics) if node_for_metrics is not None else [spec.name]
         row_metrics.append(
             scope_metric_keys(
