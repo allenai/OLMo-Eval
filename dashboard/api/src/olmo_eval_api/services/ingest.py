@@ -47,6 +47,7 @@ from olmo_eval_api.services import derive
 from olmo_eval_api.services.common import detect_scale, latest_by_task, now_utc
 from olmo_eval_api.services.search_text import build_search_text
 from olmo_eval_api.services.suites import (
+    NO_SCORE_AGGREGATIONS,
     build_tree,
     current_suite_defs,
     leaf_weights,
@@ -1113,8 +1114,13 @@ async def complete_run(
             tree = build_tree(x.name, defs)
         except ValueError as exc:
             raise bad_request(str(exc)) from exc
-        if any(node.aggregation == "gap" for node, _, parent in walk_suites(tree) if parent):
-            raise bad_request("GAP suites cannot be nested under another suite")
+        for ancestor, _, _ in walk_suites(tree):
+            if ancestor.aggregation != "none" and any(
+                node.aggregation == "gap" for node, _, parent in walk_suites(ancestor) if parent
+            ):
+                raise bad_request(
+                    "GAP suites cannot be nested under an aggregating suite; use none"
+                )
         leaf_names = leaves(tree)
         present = {name: by_task[name] for name in leaf_names if name in by_task}
         scored = {name for name, tr in present.items() if tr.score is not None}
@@ -1147,6 +1153,10 @@ async def complete_run(
                 "primary_score:gap": derive.finite_or_none(companion - reference),
             }
             primary_metric = "primary_score:companion"
+        if x.aggregation in NO_SCORE_AGGREGATIONS:
+            score = None
+            primary_metric = None
+            weights = {}
         row = SuiteResult(
             run_id=run_id,
             suite_name=x.name,
