@@ -24,6 +24,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from olmo_eval.common.openai_credentials import litellm_model_name, openai_endpoint_model_name
 from olmo_eval.evals.external.base import SandboxedExternalEval
 from olmo_eval.evals.external.benchmarks.deepscholar.args import DeepScholarArgs
 from olmo_eval.evals.external.benchmarks.deepscholar.result_parser import (
@@ -415,7 +416,9 @@ class DeepScholarExternalEval(SandboxedExternalEval):
             lm["api_base"] = sandbox_url
             lm["api_key"] = "EMPTY"
         else:
-            lm["model"] = model_name
+            # Upstream's agentic search sends lm.model verbatim to a raw OpenAI client,
+            # so use a name both that client and litellm accept.
+            lm["model"] = openai_endpoint_model_name(model_name)
         return lm
 
     async def _write_config(
@@ -638,7 +641,7 @@ class DeepScholarExternalEval(SandboxedExternalEval):
             "--output-folder",
             shlex.quote(self._eval_dir),
             "--model-name",
-            shlex.quote(ds_args.judge_model),
+            shlex.quote(litellm_model_name(ds_args.judge_model)),
         ]
         parts.extend(ds_args.extra_eval_args)
         return " ".join(parts)

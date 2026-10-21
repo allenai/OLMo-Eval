@@ -210,6 +210,7 @@ def validate_scaffold(name: str) -> None:
 
 # Import scaffolds to trigger registration
 from .bfcl_multi_turn import BFCLMultiTurnScaffold  # noqa: E402
+from .multi_turn_chat import MultiTurnChatScaffold  # noqa: E402
 from .openai_agents import OpenAIAgentsScaffold  # noqa: E402
 from .openhands import OpenHandsScaffold  # noqa: E402
 from .vanillux import VanilluxScaffold  # noqa: E402
@@ -218,6 +219,7 @@ __all__ = [
     "Scaffold",
     "SCAFFOLD_REGISTRY",
     "BFCLMultiTurnScaffold",
+    "MultiTurnChatScaffold",
     "OpenAIAgentsScaffold",
     "OpenHandsScaffold",
     "VanilluxScaffold",

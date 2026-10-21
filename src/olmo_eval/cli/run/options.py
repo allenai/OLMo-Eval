@@ -3,14 +3,26 @@
 from __future__ import annotations
 
 import functools
+import os
 from collections.abc import Callable
 from typing import Any, TypeVar, cast
 
 import click
 
-from olmo_eval.common.constants.infrastructure import LOCAL_RESULT_DIR
+from olmo_eval.common.constants.infrastructure import BEAKER_RESULT_DIR, LOCAL_RESULT_DIR
 
 F = TypeVar("F", bound=Callable[..., Any])
+
+
+def default_output_dir() -> str:
+    """The Beaker result dir on a Beaker job that has one, else the local result dir.
+
+    Output under /tmp is lost when a Beaker container exits, so a job launched without
+    ``-O`` (e.g. by gantry or a wrapper script) keeps its results in the result dataset.
+    """
+    if os.environ.get("BEAKER_JOB_ID") and os.path.isdir(BEAKER_RESULT_DIR):
+        return BEAKER_RESULT_DIR
+    return LOCAL_RESULT_DIR
 
 
 def parallelism_options(func: F) -> F:  # noqa: UP047
@@ -90,8 +102,11 @@ def output_options(func: F) -> F:  # noqa: UP047
     @click.option(
         "--output-dir",
         "-O",
-        default=LOCAL_RESULT_DIR,
-        help="Output directory",
+        default=default_output_dir,
+        help=(
+            f"Output directory (default: {BEAKER_RESULT_DIR} on a Beaker job, "
+            f"else {LOCAL_RESULT_DIR})"
+        ),
     )
     @click.option(
         "--save-predictions/--no-save-predictions",

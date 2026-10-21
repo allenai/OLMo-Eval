@@ -11,6 +11,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from olmo_eval.common.config import get_infra_config
+from olmo_eval.common.openai_credentials import litellm_model_name
 from olmo_eval.evals.external.base import SandboxedExternalEval
 from olmo_eval.evals.external.benchmarks.asta.args import ASTA_TASKS, AstaArgs
 from olmo_eval.evals.external.benchmarks.asta.result_parser import (
@@ -359,7 +360,8 @@ class AstaExternalEval(SandboxedExternalEval):
         asta_args: AstaArgs,
     ) -> str:
         """Build the astabench run command."""
-        model_spec = f"openai-api/vllm/{model_name}" if is_local else model_name
+        # Inspect names OpenRouter models "openrouter/<slug>", the same form as LiteLLM.
+        model_spec = f"openai-api/vllm/{model_name}" if is_local else litellm_model_name(model_name)
 
         args = [
             "uv",

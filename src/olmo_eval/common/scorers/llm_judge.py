@@ -13,6 +13,10 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol, cast, runtime_checkable
 
 from olmo_eval.common.execution import ScoringContext
+from olmo_eval.common.openai_credentials import (
+    create_async_openai_client,
+    require_openai_credentials,
+)
 from olmo_eval.common.scorers.execution import ContextScorer
 from olmo_eval.common.types import Instance, LMOutput, LMRequest, RequestType, SamplingParams
 
@@ -160,10 +164,10 @@ def build_openai_judge_fn(
 ) -> ConfiguredJudgeFn:
     """Build a lazy async judge function using OpenAI API.
 
-    The returned function validates OPENAI_API_KEY on first call, not at construction.
-    This allows scorers to be instantiated before the environment variable is set.
-    Its ``judge_config`` attribute records the settings that affect judge output, so
-    scorers can include them when serialized.
+    The returned function looks up OPENAI_API_KEY (or OPENROUTER_API_KEY) on first
+    call, not at construction. This allows scorers to be instantiated before the
+    environment variable is set. Its ``judge_config`` attribute records the settings
+    that affect judge output, so scorers can include them when serialized.
 
     Args:
         model: OpenAI model to use for judging.
@@ -186,24 +190,18 @@ def build_openai_judge_fn(
 
     async def judge(prompt: str, *, system_prompt: str | None = None) -> str:
         nonlocal _token_param, _send_temperature, _send_reasoning_effort
-        import os
 
         if not _client:
-            api_key = os.getenv("OPENAI_API_KEY")
-            if not api_key:
-                raise ValueError(
-                    f"OPENAI_API_KEY environment variable is required for {scorer_name}."
-                )
-
+            credentials = require_openai_credentials(scorer_name)
             try:
-                from openai import AsyncOpenAI
+                client = create_async_openai_client(credentials)
             except ImportError:
                 raise ValueError(
                     f"openai package is required for {scorer_name}. "
                     "Install with: pip install openai"
                 ) from None
-
-            _client.append(AsyncOpenAI(api_key=api_key))
+            _client.append((client, credentials.model_name(model)))
+        client, request_model = _client[0]
 
         messages: list[dict[str, str]] = []
         if system_prompt is not None:
@@ -222,14 +220,14 @@ def build_openai_judge_fn(
             send_temperature = _send_temperature
             send_reasoning_effort = _send_reasoning_effort
 
-            kwargs: dict[str, Any] = {"model": model, "messages": messages}
+            kwargs: dict[str, Any] = {"model": request_model, "messages": messages}
             kwargs[token_param] = max_tokens
             if send_temperature:
                 kwargs["temperature"] = temperature
             if send_reasoning_effort:
                 kwargs["reasoning_effort"] = reasoning_effort
             try:
-                response = await _client[0].chat.completions.create(**kwargs)
+                response = await client.chat.completions.create(**kwargs)
                 return response.choices[0].message.content or ""
             except Exception as e:
                 message = str(e).lower()
@@ -272,6 +270,14 @@ def build_openai_judge_fn(
 DEFAULT_JUDGE_SPEC = "gpt-5.5:medium"
 
 
+def parse_judge_spec(spec: str) -> tuple[str, str | None]:
+    """Split a ``model[:reasoning_effort]`` judge spec into a model and an optional effort."""
+    model, separator, effort = spec.partition(":")
+    if not model:
+        raise ValueError("OLMO_EVAL_JUDGE must name a judge model")
+    return model, effort if separator and effort else None
+
+
 def build_default_judge_fn(scorer_name: str, max_tokens: int = 4096) -> JudgeFn:
     """Build the default attributed-QA judge, overridable via ``$OLMO_EVAL_JUDGE``.
 
@@ -285,13 +291,12 @@ def build_default_judge_fn(scorer_name: str, max_tokens: int = 4096) -> JudgeFn:
     """
     import os
 
-    spec = os.getenv("OLMO_EVAL_JUDGE", DEFAULT_JUDGE_SPEC)
-    model, sep, effort = spec.partition(":")
+    model, reasoning_effort = parse_judge_spec(os.getenv("OLMO_EVAL_JUDGE", DEFAULT_JUDGE_SPEC))
     return build_openai_judge_fn(
         model=model,
         scorer_name=scorer_name,
         max_tokens=max_tokens,
-        reasoning_effort=(effort if sep else None),
+        reasoning_effort=reasoning_effort,
     )
 
 
@@ -421,6 +426,9 @@ class LLMJudgeScorer(ContextScorer):
         )
         results = await provider.alogprobs([request], SamplingParams(temperature=0, top_p=1))
         outputs = results[0] if results else []
+        from olmo_eval.inference.errors import first_output
+
+        first_output(outputs)
 
         return {
             output.text: sum(entry["logprob"] for entry in output.logprobs)
@@ -606,8 +614,8 @@ class RubricJudgeScorer(LLMJudgeScorer):
 class SafetyScorer(LLMJudgeScorer):
     """LLM safety judge.
 
-    By default uses OpenAI API with gpt-4o-mini. Requires OPENAI_API_KEY
-    environment variable to be set.
+    By default uses OpenAI API with gpt-4o-mini. Requires OPENAI_API_KEY or
+    OPENROUTER_API_KEY environment variable to be set.
     """
 
     name: str = "safety_judge"
