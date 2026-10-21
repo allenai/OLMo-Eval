@@ -206,7 +206,7 @@ class TestStreamingControlCommand(unittest.IsolatedAsyncioTestCase):
             await executor._quarantine_if_unresponsive(TimeoutError())
         self.assertFalse(executor.is_running)
 
-    async def test_slow_cleanup_uses_health_checks_before_quarantine(self) -> None:
+    async def test_failed_cleanup_retires_a_responsive_sandbox(self) -> None:
         executor = self._executor()
         executor._deployment.is_alive = mock.AsyncMock(return_value=True)
         from olmo_eval.harness.sandbox.errors import SandboxTransportError
@@ -224,8 +224,58 @@ class TestStreamingControlCommand(unittest.IsolatedAsyncioTestCase):
             self.assertRaises(SandboxTransportError),
         ):
             await executor.execute_command("blocked", timeout=0.01)
+        self.assertFalse(executor.is_running)
+        self.assertEqual(executor._deployment.is_alive.await_count, 1)
+
+    async def test_slow_record_removal_preserves_a_completed_result(self) -> None:
+        executor = self._executor()
+        executor._deployment.is_alive = mock.AsyncMock(return_value=True)
+        control = mock.AsyncMock(
+            side_effect=[
+                mock.Mock(stdout="__OLMO_STARTED_test__\ncompleted", stderr="", exit_code=0),
+                TimeoutError(),
+                mock.Mock(exit_code=0),
+            ]
+        )
+        with (
+            mock.patch(
+                "olmo_eval.harness.sandbox.executor.uuid.uuid4", return_value=mock.Mock(hex="test")
+            ),
+            mock.patch.object(executor, "_execute_stream_control", control),
+        ):
+            result = await executor.execute_command("true", timeout=60)
+        self.assertTrue(result.success)
+        self.assertEqual(result.output, "completed")
         self.assertTrue(executor.is_running)
-        self.assertEqual(executor._deployment.is_alive.await_count, 2)
+
+    async def test_repeated_cancellation_waits_for_cleanup(self) -> None:
+        for failed in (False, True):
+            executor = self._executor()
+            running = asyncio.Event()
+            cleaning = asyncio.Event()
+            release = asyncio.Event()
+
+            async def control(
+                command, timeout, running=running, cleaning=cleaning, release=release, failed=failed
+            ):
+                if command[0] == "setsid":
+                    running.set()
+                    await asyncio.Event().wait()
+                cleaning.set()
+                await release.wait()
+                return mock.Mock(exit_code=75 if failed else 0, stderr="survivor")
+
+            with mock.patch.object(executor, "_execute_stream_control", control):
+                task = asyncio.create_task(executor.execute_command("blocked", timeout=60))
+                await running.wait()
+                task.cancel()
+                await cleaning.wait()
+                task.cancel()
+                await asyncio.sleep(0)
+                release.set()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+            self.assertEqual(executor.is_running, not failed)
 
     async def test_local_execute_code_uses_the_bounded_command_path(self) -> None:
         from olmo_eval.common.execution import ExecutionResult
@@ -422,14 +472,16 @@ class TestSessionTimeout(unittest.IsolatedAsyncioTestCase):
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("cancel_before_record", [False, True])
+@pytest.mark.parametrize("cleanup_mode", ["immediate", "delayed", "stubborn"])
 async def test_session_cleanup_reaches_nested_process_groups(
-    monkeypatch, tmp_path, cancel_before_record
+    monkeypatch, tmp_path, cancel_before_record, cleanup_mode
 ):
     import shlex
     import subprocess
     import threading
     from types import SimpleNamespace
 
+    stubborn = cleanup_mode == "stubborn"
     proc = tmp_path / "proc"
     proc.mkdir()
     record = tmp_path / "record"
@@ -461,13 +513,23 @@ async def test_session_cleanup_reaches_nested_process_groups(
             return SimpleNamespace(stdout="__OLMO_STARTED_test__\n", stderr="", exit_code=124)
         script = command[2].replace("/proc", shlex.quote(str(proc)))
         # Intercept signals so the real cleanup script operates only on the fixture's process table.
-        script = 'kill() { printf "%s\\n" "$3" >> ' + shlex.quote(str(kills)) + "; };\n" + script
+        remove = "" if stubborn else "rm -f " + shlex.quote(str(proc)) + '/"$3"/stat; '
+        if cleanup_mode == "delayed":
+            remove = "(sleep 0.3; " + remove + ") >/dev/null 2>&1 & "
+        script = (
+            'kill() { printf "%s\\n" "$3" >> '
+            + shlex.quote(str(kills))
+            + "; "
+            + remove
+            + "};\n"
+            + script
+        )
         delayed_record = None
         if cancel_before_record:
             delayed_record = threading.Timer(0.1, record.write_text, args=(stat(100, 100, 100, 7),))
             delayed_record.start()
         result = subprocess.run(
-            ["bash", "-c", script, "_", str(record)], capture_output=True, text=True, check=True
+            ["bash", "-c", script, "_", str(record)], capture_output=True, text=True, check=False
         )
         if delayed_record is not None:
             delayed_record.join()
@@ -479,11 +541,17 @@ async def test_session_cleanup_reaches_nested_process_groups(
     if cancel_before_record:
         with pytest.raises(asyncio.CancelledError):
             await executor.execute_command("true")
+    elif stubborn:
+        from olmo_eval.harness.sandbox.errors import SandboxTransportError
+
+        with pytest.raises(SandboxTransportError, match="live processes"):
+            await executor.execute_command("true", timeout=0)
     else:
         result = await executor.execute_command("true", timeout=0)
         assert result.error == "timeout"
     assert {int(pid) for pid in kills.read_text().splitlines()} == {100, 101, 102}
-    assert not record.exists()
+    assert record.exists() is stubborn
+    assert executor.is_running is (not stubborn)
 
 
 @pytest.mark.anyio

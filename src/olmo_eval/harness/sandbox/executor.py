@@ -601,7 +601,7 @@ if IFS= read -r leader < /proc/$session/stat 2>/dev/null; then
     read -r -a current <<< "${leader##*) }"
     if [ "${recorded[19]}" != "${current[19]}" ]; then rm -f "$1"; exit 0; fi
 fi
-for pass in 1 2 3; do
+for pass in {1..40}; do
     found=0
     for file in /proc/[0-9]*/stat; do
         IFS= read -r row < "$file" 2>/dev/null || continue
@@ -611,6 +611,15 @@ for pass in 1 2 3; do
         found=1
     done
     [ "$found" = 1 ] || break
+    sleep 0.05
+done
+for file in /proc/[0-9]*/stat; do
+    IFS= read -r row < "$file" 2>/dev/null || continue
+    read -r -a fields <<< "${row##*) }"
+    if [ "${fields[3]}" = "$session" ] && [ "${fields[0]}" != Z ]; then
+        echo "Command session still has live processes after cleanup" >&2
+        exit 75
+    fi
 done
 rm -f "$1"
 """
@@ -618,6 +627,7 @@ rm -f "$1"
         argv = ["bash", "-c", command] if isinstance(command, str) else list(command)
         started = time.monotonic()
         cleanup_session = True
+        command_cancelled = False
         try:
             try:
                 response = await self._execute_stream_control(
@@ -645,20 +655,53 @@ rm -f "$1"
                 response.exit_code,
                 "timeout" if timed_out else None,
             )
+        except asyncio.CancelledError:
+            command_cancelled = True
+            raise
         finally:
             control = cleanup if cleanup_session else ["rm", "-f", pid_file]
-            cleanup_task = asyncio.create_task(self._execute_stream_control(control, timeout=5.0))
-            try:
-                cleaned = await asyncio.shield(cleanup_task)
-                if cleaned.exit_code != 0:
-                    raise RuntimeError(cleaned.stderr or "Command session cleanup failed")
-            except asyncio.CancelledError:
-                with contextlib.suppress(Exception):
-                    await cleanup_task
-                raise
-            except Exception as exc:
-                await self._quarantine_if_unresponsive(exc)
-                self._log(logging.WARNING, f"Could not clean up command session: {exc}")
+
+            async def clean_session() -> None:
+                try:
+                    cleaned = await self._execute_stream_control(
+                        control, timeout=10.0 if cleanup_session else 5.0
+                    )
+                    if cleaned.exit_code != 0:
+                        raise RuntimeError(cleaned.stderr or "Command session cleanup failed")
+                except Exception as exc:
+                    if not cleanup_session:
+                        await self._quarantine_if_unresponsive(exc)
+                        self._log(
+                            logging.WARNING, f"Could not remove command session record: {exc!r}"
+                        )
+                        return
+                    reason = f"Command session cleanup failed: {exc!r}"
+                    self._quarantined_reason = (
+                        f"{self._quarantined_reason}; {reason}"
+                        if self._quarantined_reason
+                        else reason
+                    )
+                    self._log(logging.WARNING, self._quarantined_reason)
+                    raise SandboxTransportError(self._quarantined_reason) from exc
+
+            cleanup_task = asyncio.create_task(clean_session())
+            interrupted: asyncio.CancelledError | None = None
+            while True:
+                try:
+                    await asyncio.shield(cleanup_task)
+                    break
+                except asyncio.CancelledError as exc:
+                    if cleanup_task.cancelled():
+                        self._quarantined_reason = "Command session cleanup was cancelled"
+                        raise
+                    interrupted = exc
+                    command_cancelled = True
+                except SandboxTransportError:
+                    if not command_cancelled:
+                        raise
+                    break
+            if interrupted is not None:
+                raise interrupted
 
     async def _execute_streaming(
         self, command: str, timeout: float, prefix: str
