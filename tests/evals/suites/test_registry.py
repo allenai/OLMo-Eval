@@ -97,10 +97,37 @@ class TestSuite:
         with pytest.raises(ValueError, match="exactly two tasks"):
             Suite(name="pair", tasks=(child, "c"), aggregation=AggregationStrategy.GAP)
 
-    def test_gap_suite_cannot_be_nested(self):
+    @pytest.mark.parametrize(
+        "aggregation",
+        [
+            strategy
+            for strategy in AggregationStrategy
+            if strategy not in (AggregationStrategy.NONE, AggregationStrategy.GAP)
+        ],
+    )
+    def test_gap_suite_cannot_be_nested(self, aggregation):
         gap = Suite(name="pair", tasks=("in", "out"), aggregation=AggregationStrategy.GAP)
-        with pytest.raises(ValueError, match="cannot be children"):
-            Suite(name="parent", tasks=(gap, "other"))
+        with pytest.raises(ValueError, match="cannot sit anywhere below"):
+            Suite(name="parent", tasks=(gap, "other"), aggregation=aggregation)
+
+    @pytest.mark.parametrize(
+        "aggregation",
+        [
+            strategy
+            for strategy in AggregationStrategy
+            if strategy not in (AggregationStrategy.NONE, AggregationStrategy.GAP)
+        ],
+    )
+    def test_gap_suite_cannot_hide_below_an_unaggregated_child(self, aggregation):
+        gap = Suite(name="pair", tasks=("in", "out"), aggregation=AggregationStrategy.GAP)
+        wrapper = Suite(name="wrapper", tasks=(gap,), aggregation=AggregationStrategy.NONE)
+        with pytest.raises(ValueError, match="'pair'"):
+            Suite(name="parent", tasks=(wrapper, "other"), aggregation=aggregation)
+
+    def test_gap_suite_can_be_nested_without_an_aggregate(self):
+        gap = Suite(name="pair", tasks=("in", "out"), aggregation=AggregationStrategy.GAP)
+        parent = Suite(name="parent", tasks=(gap, "other"), aggregation=AggregationStrategy.NONE)
+        assert parent.expand() == ("in", "out", "other")
 
     def test_expanded_tasks_simple(self):
         """Test expanding a suite with only string tasks."""

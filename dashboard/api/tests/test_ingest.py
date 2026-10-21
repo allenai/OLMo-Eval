@@ -699,19 +699,25 @@ async def test_complete_derivations(client: httpx.AsyncClient, session: Any) -> 
     assert run["num_tasks"] == 3 and run["num_instances"] == 120
 
 
-async def test_suite_with_missing_task_and_mean_headline(
-    client: httpx.AsyncClient, session: Any
+@pytest.mark.parametrize("unscored_suite", [False, True])
+async def test_headline_respects_unscored_suite_scopes(
+    client: httpx.AsyncClient, session: Any, unscored_suite: bool
 ) -> None:
     await seed_run(
         client,
         run_id="run000000002",
         tasks={"t1": [1.0, 0.0] * 10, "t2": [1.0] * 20},
-        suites=[suite("s", ["t1", "t3"], score=None, aggregation="display_only")],
+        suites=[suite("s", ["t1", "t3"], score=None, aggregation="display_only")]
+        if unscored_suite
+        else [],
     )
-    sr = (await session.execute(text("SELECT * FROM suite_results"))).mappings().one()
-    assert sr["tasks_missing"] == ["t3"]
     run = (await session.execute(text("SELECT headline FROM runs"))).scalar_one()
-    assert run["kind"] == "mean" and math.isclose(run["score"], 0.75)
+    if unscored_suite:
+        sr = (await session.execute(text("SELECT * FROM suite_results"))).mappings().one()
+        assert sr["tasks_missing"] == ["t3"]
+        assert run is None
+    else:
+        assert run["kind"] == "mean" and math.isclose(run["score"], 0.75)
 
 
 async def test_nested_average_suite_weighs_every_task_equally(
@@ -1012,3 +1018,46 @@ async def test_incomplete_gap_run_does_not_override_column_metadata(client, sess
     columns = await column_meta(session, [("suite:columnpair", "suite", "columnpair")])
     assert columns[0].display_format == "percent"
     assert columns[0].higher_is_better is True
+
+
+@pytest.mark.parametrize("aggregation", ["none", "display_only"])
+async def test_ingest_clears_legacy_no_score_suite_values(client, session, aggregation):
+    legacy = suite("legacy", ["a"], score=0.9, aggregation=aggregation)
+    legacy.update(
+        primary_metric="primary_score:average", metrics={"primary_score": {"average": 0.9}}
+    )
+    await seed_run(client, run_id="legacynone01", tasks={"a": [1.0]}, suites=[legacy])
+    row = (
+        await session.execute(
+            text(
+                "SELECT score,primary_metric,stderr FROM suite_results WHERE run_id='legacynone01'"
+            )
+        )
+    ).one()
+    assert row.score is None and row.primary_metric is None and row.stderr is None
+
+
+@pytest.mark.parametrize("aggregation", ["none", "average"])
+async def test_ingest_gap_requires_none_at_every_ancestor(client, aggregation):
+    run_id = "gapancestor01"
+    response = await client.put(
+        f"/v1/runs/{run_id}", json=run_payload(run_id=run_id, model_name="gap-ancestors")
+    )
+    assert response.status_code == 200, response.text
+    pair = suite("pair", ["in", "out"], aggregation="gap")
+    wrapper = suite("wrapper", [], aggregation="none")
+    wrapper["children"] = [{"type": "suite", "name": "pair"}]
+    parent = suite("parent", [], aggregation=aggregation)
+    parent["children"] = [{"type": "suite", "name": "wrapper"}]
+    response = await client.post(
+        f"/v1/runs/{run_id}/complete",
+        json={
+            "status": "complete",
+            "finished_at": None,
+            "duration_seconds": 1.0,
+            "suites": [pair, wrapper, parent],
+            "expected_task_results": 0,
+            "expected_artifacts": 0,
+        },
+    )
+    assert response.status_code == (200 if aggregation == "none" else 400), response.text

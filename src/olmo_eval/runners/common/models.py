@@ -85,3 +85,4 @@ class MetricsOutput(Serializable):
     startup_seconds: float | None = None
     processing_started_at: str | None = None
     processing_seconds: float | None = None
+    task_specs: list[str] | None = None

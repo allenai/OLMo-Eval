@@ -605,6 +605,29 @@ async def test_compare_matrix(client: httpx.AsyncClient, seeded: dict) -> None:
     assert response.status_code == 400
 
 
+@pytest.mark.parametrize("aggregation", ["none", "display_only"])
+async def test_pairwise_rejects_unscored_suite_roots(
+    client: httpx.AsyncClient, aggregation: str
+) -> None:
+    for run_id in ("unscored001", "unscored002"):
+        await seed_run(
+            client,
+            run_id=run_id,
+            tasks={"t1": [0.0, 1.0]},
+            suites=[suite("unscored", ["t1"], score=None, aggregation=aggregation)],
+        )
+    response = await client.post(
+        "/api/compare/pairwise",
+        json={
+            "subjects": ["r:unscored001", "r:unscored002"],
+            "scope": "suite:unscored",
+            "metric": "primary",
+        },
+    )
+    assert response.status_code == 400
+    assert "no aggregate score" in response.json()["error"]["message"]
+
+
 async def test_cached_compare_reflects_tag_and_suite_changes(
     client: httpx.AsyncClient, seeded: dict, session: Any
 ) -> None:

@@ -182,7 +182,10 @@ def _suite_result(raw_name: str, data: Mapping[str, Any]) -> dict[str, Any]:
         score = metrics.get(metric, {}).get(scorer)
     else:
         score = metrics.get("primary_score", {}).get("average")
-    parent = data.get("parent_suite")
+    if data.get("aggregation") in {"none", "display_only"}:
+        score = None
+        primary = None
+    parent = data.get("parent_suite") or data.get("container_suite")
     num_tasks = data.get("num_tasks")
     return {
         "name": name,
@@ -191,7 +194,7 @@ def _suite_result(raw_name: str, data: Mapping[str, Any]) -> dict[str, Any]:
         "description": _suite_description(name),
         "children": _suite_children(name, data.get("tasks") or []),
         "metrics": metrics,
-        "primary_metric": data.get("primary_metric"),
+        "primary_metric": primary,
         "score": score,
         "num_tasks": num_tasks if isinstance(num_tasks, int) and num_tasks >= 0 else None,
     }
@@ -219,19 +222,40 @@ def _nested_suites(name: str) -> list[tuple[str, str, str]]:
 def suite_results(
     suite_aggregations: Mapping[str, Mapping[str, Any]],
     task_results: Mapping[str, Mapping[str, Any]] | None = None,
+    *,
+    task_specs: Iterable[str] = (),
 ) -> list[dict[str, Any]]:
-    """Convert runner suite aggregations into SuiteResultIn payloads.
+    """Convert suite results and requested unscored containers into ingest payloads.
 
-    The runner only reports nested suites under average_of_averages parents. The server
-    needs a definition for every nested suite to build the tree, so the missing ones are
-    added here, scored from ``task_results`` when given (the same way the runner scores
-    a top-level suite) and otherwise sent as definitions with no score.
+    Include definitions for every nested suite so the dashboard can rebuild
+    the hierarchy, using task results for scores when available.
     """
-    results = [_suite_result(raw, data) for raw, data in suite_aggregations.items()]
+    from olmo_eval.evals.suites import get_suite, suite_exists
+    from olmo_eval.evals.suites.registry import AggregationStrategy
+
+    requested = list(task_specs)
+    requested_roots = {
+        strip_priority(spec) for spec in requested if suite_exists(strip_priority(spec))
+    }
+    definitions = dict(suite_aggregations)
+    containers = [data.get("container_suite") for data in definitions.values()]
+    for raw_name in [*requested, *containers]:
+        if not isinstance(raw_name, str) or not suite_exists(strip_priority(raw_name)):
+            continue
+        suite = get_suite(strip_priority(raw_name))
+        if suite.aggregation in {AggregationStrategy.NONE, AggregationStrategy.GAP}:
+            definitions.setdefault(
+                raw_name, {"aggregation": suite.aggregation.value, "tasks": suite.expand()}
+            )
+
+    results = [_suite_result(raw, data) for raw, data in definitions.items()]
+    by_name = {entry["name"]: entry for entry in results}
     seen = {r["name"] for r in results}
-    for raw_name in suite_aggregations:
+    parents: dict[str, set[str]] = {}
+    for raw_name in definitions:
         suffix = f"@{raw_name.rsplit('@', 1)[1]}" if "@" in raw_name else ""
         for child, parent, aggregation in _nested_suites(strip_priority(raw_name)):
+            parents.setdefault(child, set()).add(parent)
             if child in seen:
                 continue
             seen.add(child)
@@ -241,7 +265,15 @@ def suite_results(
                 data = dict(computed.get(f"{child}{suffix}") or {})
             data["parent_suite"] = parent
             data.setdefault("aggregation", aggregation)
-            results.append(_suite_result(child, data))
+            entry = _suite_result(child, data)
+            results.append(entry)
+            by_name[child] = entry
+    for entry in results:
+        if entry["name"] in requested_roots:
+            entry["parent"] = None
+        elif entry["name"] in parents:
+            # The dashboard stores one parent; choose a stable one for shared children.
+            entry["parent"] = min(parents[entry["name"]])
     return results
 
 

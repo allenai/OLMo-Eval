@@ -148,6 +148,121 @@ def test_gap_upload_uses_companion_score_and_keeps_diagnostic_metrics() -> None:
     assert metrics["summary"]["omega:dev"]["metric"] == "primary_score:companion"
 
 
+@pytest.mark.parametrize("suffix", ["", "@high"])
+@pytest.mark.parametrize("complete_pair", [True, False])
+def test_hillclimb_upload_keeps_unscored_parent(suffix: str, complete_pair: bool) -> None:
+    from olmo_eval.evals.suites import get_suite
+    from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
+
+    spec = f"hillclimb:dev{suffix}"
+    tasks = {
+        f"{name}{suffix}": {
+            "metrics": {"exact_match": {"exact_match": 0.45}},
+            "primary_metric": "exact_match:exact_match",
+            "num_instances": 500,
+        }
+        for name in get_suite("hillclimb:dev").expand()
+    }
+    if not complete_pair:
+        del tasks[f"omega_500_out{suffix}"]
+    aggregations = compute_suite_aggregations([spec], tasks)
+    by_name = {
+        entry["name"]: entry for entry in suite_results(aggregations, tasks, task_specs=[spec])
+    }
+    parent = by_name["hillclimb:dev"]
+    assert parent["aggregation"] == "none"
+    assert parent["score"] is None
+    assert parent["primary_metric"] is None
+    assert {"type": "suite", "name": "omega:dev"} in parent["children"]
+    assert by_name["omega:dev"]["parent"] == "hillclimb:dev"
+    assert by_name["omega:dev"]["score"] == (0.45 if complete_pair else None)
+    if complete_pair:
+        inferred = {entry["name"]: entry for entry in suite_results(aggregations, tasks)}
+        assert inferred["hillclimb:dev"]["score"] is None
+
+
+@pytest.mark.parametrize("suffix", ["", "@high"])
+def test_degraded_manifest_preserves_requested_none_suite(suffix: str, tmp_path: Path) -> None:
+    from olmo_eval.evals.suites import get_suite
+    from olmo_eval.runners.asynq.results import aggregate_results
+    from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
+    from olmo_eval.runners.processing.metrics import build_single_model_metrics
+
+    spec = f"hillclimb:dev{suffix}"
+    tasks = {
+        f"{name}{suffix}": {
+            "metrics": {"exact_match": {"exact_match": 0.5}},
+            "primary_metric": "exact_match:exact_match",
+            "num_instances": 500,
+            "task_hash": "deadbeef",
+        }
+        for name in get_suite("hillclimb:dev").expand()
+        if name != "omega_500_out"
+    }
+    metadata = aggregate_results(
+        {}, [], [spec], SimpleNamespace(model="mock", alias=None, kind="mock"), None
+    )
+    results = {
+        "tasks": tasks,
+        "suites": compute_suite_aggregations([spec], tasks),
+        "task_specs": metadata["task_specs"],
+    }
+    metrics = build_single_model_metrics(results, experiment_id="degraded001").to_dict()
+    assert metrics["task_specs"] == [spec]
+    manifest = degraded_manifest(tmp_path, metrics)
+    assert manifest["run"]["task_specs"] == [spec]
+    suites = {row["name"]: row for row in manifest["suites"]}
+    assert suites["hillclimb:dev"]["score"] is None
+    assert suites["omega:dev"]["parent"] == "hillclimb:dev"
+
+
+def test_nested_none_definitions_keep_their_parents() -> None:
+    from olmo_eval.evals.suites.registry import _REGISTRY, AggregationStrategy, Suite
+    from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
+
+    gap = Suite("_nested_gap", ("left", "right"), AggregationStrategy.GAP)
+    inner = Suite("_inner_none", (gap,), AggregationStrategy.NONE)
+    outer = Suite("_outer_none", (inner,), AggregationStrategy.NONE)
+    registered = {node.name: node for node in (gap, inner, outer)}
+    _REGISTRY.update(registered)
+    try:
+        tasks = {
+            name: {"metrics": {"acc": {"scorer": 0.5}}, "primary_metric": "acc:scorer"}
+            for name in ("left", "right")
+        }
+        aggregates = compute_suite_aggregations([outer.name], tasks)
+        uploaded = {
+            row["name"]: row for row in suite_results(aggregates, tasks, task_specs=[outer.name])
+        }
+        assert uploaded[inner.name]["parent"] == outer.name
+        assert uploaded[gap.name]["parent"] == inner.name
+    finally:
+        for name in registered:
+            del _REGISTRY[name]
+
+
+def test_requested_incomplete_gap_definition_is_preserved(tmp_path: Path) -> None:
+    from olmo_eval.runners.processing.metrics import build_single_model_metrics
+
+    tasks = {
+        "omega_500:hillclimb": {
+            "metrics": {"acc": {"x": 0.5}},
+            "primary_metric": "acc:x",
+            "num_instances": 500,
+        }
+    }
+    payload = {entry["name"]: entry for entry in suite_results({}, tasks, task_specs=["omega:dev"])}
+    assert payload["omega:dev"]["aggregation"] == "gap"
+    assert payload["omega:dev"]["score"] is None
+    assert len(payload["omega:dev"]["children"]) == 2
+    metrics = build_single_model_metrics(
+        {"tasks": tasks, "task_specs": ["omega:dev"]}, experiment_id="incomplete01"
+    ).to_dict()
+    manifest = degraded_manifest(tmp_path, metrics)
+    assert manifest["suites"][0]["name"] == "omega:dev"
+    assert manifest["suites"][0]["score"] is None
+
+
 def test_degraded_manifest_for_external_runner_metrics() -> None:
     metrics = {
         "timestamp": "2026-10-01T10:00:00+00:00",
@@ -526,3 +641,70 @@ def test_run_info_redacts_argv() -> None:
         capture_provenance=False,
     )
     assert "sk-1" not in json.dumps(run)
+
+
+@pytest.mark.parametrize("suffix", ["", "@high"])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_explicit_gap_root_stays_a_root_beside_its_container(suffix, reverse):
+    from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
+    from olmo_eval.upload.metadata import suite_results
+
+    requested = [f"omega:dev{suffix}", f"hillclimb:dev{suffix}"]
+    if reverse:
+        requested.reverse()
+    tasks = {
+        f"{name}{suffix}": {
+            "metrics": {"exact_match": {"exact_match": value}},
+            "primary_metric": "exact_match:exact_match",
+        }
+        for name, value in (("omega_500:hillclimb", 0.6), ("omega_500_out", 0.45))
+    }
+    rows = {
+        row["name"]: row
+        for row in suite_results(
+            compute_suite_aggregations(requested, tasks), tasks, task_specs=requested
+        )
+    }
+    assert rows["omega:dev"]["parent"] is None
+    assert rows["hillclimb:dev"]["parent"] is None
+    assert rows["omega:dev"]["score"] == pytest.approx(0.45)
+
+
+def test_display_only_upload_has_no_primary_score():
+    from olmo_eval.upload.metadata import suite_results
+
+    rows = suite_results(
+        {
+            "display": {
+                "aggregation": "display_only",
+                "metrics": {"primary_score": {"average": 0.5}},
+                "primary_metric": "primary_score:average",
+            }
+        }
+    )
+    assert rows[0]["score"] is None and rows[0]["primary_metric"] is None
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_shared_descendant_uses_a_stable_parent(monkeypatch, reverse):
+    from olmo_eval.evals.suites.registry import _REGISTRY, AggregationStrategy, Suite
+    from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
+    from olmo_eval.upload.metadata import suite_results
+
+    child = Suite("_shared_child", ("a", "b"), AggregationStrategy.AVERAGE)
+    left = Suite("_shared_parent_a", (child,), AggregationStrategy.NONE)
+    right = Suite("_shared_parent_z", (child,), AggregationStrategy.NONE)
+    for suite in (child, left, right):
+        monkeypatch.setitem(_REGISTRY, suite.name, suite)
+    specs = [left.name, right.name]
+    if reverse:
+        specs.reverse()
+    tasks = {
+        name: {"metrics": {"acc": {"default": 0.5}}, "primary_metric": "acc:default"}
+        for name in ("a", "b")
+    }
+    rows = {
+        r["name"]: r
+        for r in suite_results(compute_suite_aggregations(specs, tasks), tasks, task_specs=specs)
+    }
+    assert rows[child.name]["parent"] == left.name

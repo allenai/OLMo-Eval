@@ -43,7 +43,7 @@ from olmo_eval_api.services.subjects import (
     resolve_one,
     run_task_results,
 )
-from olmo_eval_api.services.suites import leaf_weights, leaves
+from olmo_eval_api.services.suites import NO_SCORE_AGGREGATIONS, leaf_weights, leaves
 from olmo_eval_api.stats.histograms import box_stats, histogram
 from olmo_eval_api.stats.paired import (
     Delta,
@@ -227,7 +227,9 @@ def suite_delta(
     corpus_delta: float | None,
     higher_is_better: bool | None,
 ) -> a.DeltaStats:
-    if node.aggregation == "gap" and corpus_delta is None:
+    if node.aggregation in NO_SCORE_AGGREGATIONS or (
+        node.aggregation == "gap" and corpus_delta is None
+    ):
         return accumulator_delta(
             PairAccumulator(n_boot=stats.n_boot), stats, None, higher_is_better
         )

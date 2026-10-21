@@ -466,6 +466,7 @@ def aggregate_results(
         "model_path": provider_config.model,
         "provider": str(provider_config.kind),
         "model_config": model_config,
+        "task_specs": list(task_specs),
         "tasks": {},
         "summary": {},
         "errors": [],

@@ -128,6 +128,7 @@ def build_single_model_metrics(
         tasks=[t.to_dict() for t in tasks_list],
         summary={k: v.to_dict() for k, v in summary.items()},
         errors=results.get("errors", []),
+        task_specs=results.get("task_specs"),
         experiment_id=experiment_id,
         experiment_name=experiment_name,
         experiment_group=experiment_group,
@@ -239,6 +240,7 @@ def build_multi_model_metrics(
             for model, tasks in summary.items()
         },
         errors=results.get("errors", []),
+        task_specs=results.get("task_specs"),
         experiment_id=experiment_id,
         experiment_name=experiment_name,
         experiment_group=experiment_group,
@@ -383,7 +385,11 @@ def log_summary(results: dict[str, Any], multi_model: bool = False) -> None:
         }
         collapsed: set[str] = set()
         for suite_data in suites.values():
-            if suite_data.get("parent_suite") and suite_data.get("aggregation") in averaging:
+            if (
+                suite_data.get("parent_suite")
+                and not suite_data.get("container_suite")
+                and suite_data.get("aggregation") in averaging
+            ):
                 collapsed.update(suite_data.get("tasks", []))
         return collapsed
 

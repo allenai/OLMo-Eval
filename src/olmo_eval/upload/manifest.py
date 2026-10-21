@@ -1,7 +1,7 @@
 """The run manifest (``<output_dir>/manifest.json``).
 
-metrics.json alone cannot rebuild a run: it lacks the original task specs, suite
-definitions, per-task errors, metric directions and provenance. The runner writes
+metrics.json alone cannot fully rebuild a run: suite definitions, metric
+directions and provenance may be unavailable. The runner writes
 this manifest next to it (once at start with status "running", again at the end),
 and the uploader reads only files on disk, so ``olmo-eval results upload`` and the
 in-run upload share one code path.
@@ -333,7 +333,7 @@ def _task_errors(metrics: Mapping[str, Any]) -> dict[str, str]:
 
 
 def degraded_manifest(output_dir: str | Path, metrics: Mapping[str, Any]) -> dict[str, Any]:
-    """Best-effort manifest for a directory written before manifests existed.
+    """Best-effort manifest for a results directory without a saved manifest.
 
     Provenance of the original run is unknown, so git, Beaker and environment are
     left empty instead of describing the machine doing the upload.
@@ -377,9 +377,17 @@ def degraded_manifest(output_dir: str | Path, metrics: Mapping[str, Any]) -> dic
     from olmo_eval.evals.suites import suite_exists
 
     summary = metrics.get("summary") or {}
-    suite_specs = [name for name in summary if suite_exists(strip_priority(name))]
+    recorded_specs = metrics.get("task_specs")
+    if isinstance(recorded_specs, list) and all(isinstance(spec, str) for spec in recorded_specs):
+        task_specs = recorded_specs
+    else:
+        suite_names = [name for name in summary if suite_exists(strip_priority(name))]
+        task_specs = [*suite_names, *[spec for spec in tasks if spec not in suite_names]]
+    suite_specs = [name for name in task_specs if suite_exists(strip_priority(name))]
     task_results = {str(row["task"]): dict(row) for row in task_rows}
-    suites = suite_results(recompute_suite_aggregations(suite_specs, task_results), task_results)
+    suites = suite_results(
+        recompute_suite_aggregations(suite_specs, task_results), task_results, task_specs=task_specs
+    )
 
     finished_at = to_utc_iso(metrics.get("timestamp"))
     duration = metrics.get("experiment_duration_seconds")
@@ -396,7 +404,7 @@ def degraded_manifest(output_dir: str | Path, metrics: Mapping[str, Any]) -> dic
         duration_seconds=float(duration) if isinstance(duration, (int, float)) else None,
         experiment_name=metrics.get("experiment_name"),
         experiment_group=metrics.get("experiment_group"),
-        task_specs=[*suite_specs, *[s for s in tasks if s not in suite_specs]],
+        task_specs=task_specs,
         output_dir=str(output_dir),
         harness_config=harness_config,
         provider_init_seconds=metrics.get("provider_init_seconds"),
