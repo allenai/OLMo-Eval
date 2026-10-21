@@ -1,4 +1,12 @@
-import type { DisplayFormat } from "@contract/api-types";
+import type { DisplayFormat, TaskResultRow } from "@contract/api-types";
+
+export function formatGenerationCounts(counts: TaskResultRow["generation_counts"]): string | null {
+  if (!counts?.generations) return null;
+  const parts = [`cap ${counts.cap_hit ?? 0}/${counts.generations}`, `empty ${counts.empty ?? 0}`];
+  if (counts.unclosed_think) parts.push(`unclosed ${counts.unclosed_think}`);
+  if (counts.finish_reason_unknown) parts.push(`unknown ${counts.finish_reason_unknown}`);
+  return parts.join(" · ");
+}
 
 const MINUS = "−";
 

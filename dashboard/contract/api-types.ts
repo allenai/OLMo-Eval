@@ -417,7 +417,7 @@ export interface RunDetail extends RunSummary {
 /**
  * How inference_seconds was obtained:
  * - measured: the run contained only this task, so its processing time is the task's time.
- * - attributed: from per-batch inference metrics split by the task's share of each batch.
+ * - attributed: the client's attributed worker time divided by the run's inference workers.
  * - estimated: the run's processing time times the task's share of the run's tokens.
  * - not_recorded: the run predates runtime recording or lacks token counts.
  */
@@ -450,6 +450,8 @@ export interface TaskRuntime {
 // ---------------------------------------------------------------------------
 
 export interface BaselineCell {
+    /** Generation diagnostics for the baseline task or suite. */
+    generation_counts?: { [count: string]: Count } | null;
     task_result_id: TaskResultId;
     run_id: RunId;
     task_hash: string;
@@ -480,6 +482,8 @@ export interface TaskResultRow {
     n: Count;
     instances_processed: Count | null;
     instances_failed: Count | null;
+    /** Per-generation diagnostics, available even when predictions were not uploaded. */
+    generation_counts?: { [count: string]: Count } | null;
     instances_stored: Count;
     metrics: FlatMetrics;
     error: string | null;
@@ -513,12 +517,16 @@ export interface RunTaskResultsResponse {
 // ---------------------------------------------------------------------------
 
 export interface SuiteBaselineCell {
+    /** Generation diagnostics for the baseline task or suite. */
+    generation_counts?: { [count: string]: Count } | null;
     score: number | null;
     stderr: number | null;
     delta: DeltaStats;
 }
 
 export interface SuiteResultRow {
+    /** Summed diagnostics from the suite's contributing task results. */
+    generation_counts?: { [count: string]: Count } | null;
     name: string;
     parent: string | null;
     depth: Count;
