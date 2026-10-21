@@ -22,6 +22,10 @@ from pathlib import Path
 from typing import Any
 
 from olmo_eval.common.execution import ScoringContext
+from olmo_eval.common.openai_credentials import (
+    create_async_openai_client,
+    require_openai_credentials,
+)
 from olmo_eval.common.scorers.base import Scorer
 from olmo_eval.common.scorers.execution import ContextScorer
 from olmo_eval.common.types import Instance, LMOutput
@@ -78,8 +82,24 @@ _UNKNOWN_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# Module-level lazy async clients, keyed by model name.
-_ASYNC_CLIENTS: dict[str, Any] = {}
+# Module-level lazy async clients and request model names, keyed by model name.
+_ASYNC_CLIENTS: dict[str, tuple[Any, str]] = {}
+
+
+def _get_client(model: str, purpose: str) -> tuple[Any, str]:
+    """Return a cached OpenAI client and the model name to request from it.
+
+    Args:
+        model: OpenAI model name, as used in cache keys.
+        purpose: What needs the client, used in the missing-key error message.
+    """
+    if model not in _ASYNC_CLIENTS:
+        credentials = require_openai_credentials(purpose)
+        _ASYNC_CLIENTS[model] = (
+            create_async_openai_client(credentials),
+            credentials.model_name(model),
+        )
+    return _ASYNC_CLIENTS[model]
 
 
 # ---------------------------------------------------------------------------
@@ -122,21 +142,9 @@ async def _cached_gpt_call(
     if cache_only:
         raise ValueError(f"Cache miss (cache_only=True) for key {key[:16]}…")
 
-    if model not in _ASYNC_CLIENTS:
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            raise ValueError(
-                "OPENAI_API_KEY is required for DenseCaptionJudgeScorer on a cache miss."
-            )
-        try:
-            from openai import AsyncOpenAI
-        except ImportError:
-            raise ImportError("openai package required: pip install openai") from None
-        _ASYNC_CLIENTS[model] = AsyncOpenAI(api_key=api_key)
-
-    client = _ASYNC_CLIENTS[model]
+    client, request_model = _get_client(model, "DenseCaptionJudgeScorer on a cache miss")
     response = await client.chat.completions.create(
-        model=model,
+        model=request_model,
         messages=[{"role": "user", "content": prompt}],
         temperature=0,
     )
@@ -388,7 +396,6 @@ CHARXIV_JUDGE_MODEL = "gpt-4o-2024-05-13"
 _RETRY_BASE_DELAY = 1.0
 _RETRY_MAX_DELAY = 30.0
 
-_ASYNC_CLIENTS: dict[str, Any] = {}
 _PROCESS_CACHE_DIR: list[str] = []
 
 
@@ -406,23 +413,13 @@ def _charxiv_cache_key(model: str, prompt: str) -> str:
     return hashlib.sha256(f"{model}\x00{prompt}".encode()).hexdigest()
 
 
-def _get_client(model: str):
-    if model not in _ASYNC_CLIENTS:
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            raise ValueError("OPENAI_API_KEY is required for CharXiv grading on a cache miss.")
-        try:
-            from openai import AsyncOpenAI
-        except ImportError:
-            raise ImportError("openai package required: pip install openai") from None
-        _ASYNC_CLIENTS[model] = AsyncOpenAI(api_key=api_key)
-    return _ASYNC_CLIENTS[model]
-
-
 def _is_auth_error(exc: Exception) -> bool:
-    """Whether the judge call failed because the credentials are unusable."""
+    """Whether the judge call failed because the credentials are unusable.
+
+    Includes 402, which OpenRouter returns when the key is out of credits.
+    """
     status = getattr(exc, "status_code", None) or getattr(exc, "http_status", None)
-    if status in (401, 403):
+    if status in (401, 402, 403):
         return True
     return type(exc).__name__ in ("AuthenticationError", "PermissionDeniedError")
 
@@ -457,7 +454,7 @@ async def _charxiv_chat_json(
     if cache_only:
         raise ValueError(f"Cache miss (cache_only=True) for key {key[:16]}…")
 
-    client = _get_client(CHARXIV_JUDGE_MODEL)
+    client, request_model = _get_client(CHARXIV_JUDGE_MODEL, "CharXiv grading on a cache miss")
     curr_retries = 0
     max_tokens = 256
     content: dict | None = None
@@ -468,7 +465,7 @@ async def _charxiv_chat_json(
                 (
                     await client.chat.completions.create(
                         messages=[{"role": "user", "content": prompt}],
-                        model=CHARXIV_JUDGE_MODEL,
+                        model=request_model,
                         response_format={"type": "json_object"},
                         n=1,
                         max_tokens=max_tokens,

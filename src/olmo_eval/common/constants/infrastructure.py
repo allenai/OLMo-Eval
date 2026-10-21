@@ -153,6 +153,14 @@ WEKA_MOUNTS: tuple[str, ...] = (
 """Available Weka storage mount points for Beaker jobs."""
 
 
+DEFAULT_WEKA_BUCKETS: tuple[str, ...] = (
+    "oe-training-default",
+    "oe-eval-default",
+    "oe-adapt-default",
+)
+"""Weka buckets mounted on every eval job; ``--weka-bucket`` adds to these."""
+
+
 def cluster_has_weka(cluster: str) -> bool:
     """Check whether a cluster has Weka storage available.
 

@@ -28,6 +28,7 @@ from olmo_eval.runners.common.types import (
     TaskResult,
 )
 from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
+from olmo_eval.runners.processing.generation_counts import format_generation_counts
 from olmo_eval.runners.processing.utils import compute_task_hash
 
 if TYPE_CHECKING:
@@ -423,6 +424,8 @@ def _report_task_completion(model_name: str, result: TaskResult) -> None:
     """Report when a task completes."""
     label = f"{model_name}:{result.spec}"
     accounting = _format_instance_accounting(result)
+    if result.generation_counts:
+        accounting += f"; {format_generation_counts(result.generation_counts)}"
     if result.error:
         logger.error(f"\u2717 {label} ({accounting}) (ERROR: {result.error})")
     else:
@@ -505,6 +508,8 @@ def aggregate_results(
         task_data["instances_failed"] = task_result.instances_failed
         if task_result.error_summary:
             task_data["error_summary"] = task_result.error_summary
+        if task_result.generation_counts is not None:
+            task_data["generation_counts"] = task_result.generation_counts
 
         for key in TASK_COST_KEYS:
             task_data[key] = getattr(task_result, key)
