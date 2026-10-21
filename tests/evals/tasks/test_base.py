@@ -531,6 +531,84 @@ class TestStripUnclosedThinking:
 
 
 @pytest.mark.anyio
+class TestThinkingPrefilled:
+    """Forced think: the prompt ends in ``<think>``, so outputs never contain the opener."""
+
+    ALL = {"strip_thinking": True, "strip_unclosed_thinking": True, "thinking_prefilled": True}
+
+    def _make_response(self, texts: list[str]) -> Response:
+        return Response(
+            instance=Instance(question="What is 2+2?", gold_answer="4"),
+            request=LMRequest(request_type=RequestType.COMPLETION, prompt="What is 2+2?<think>"),
+            outputs=[LMOutput(text=text) for text in texts],
+        )
+
+    def _task(self, **flags: bool) -> ConcreteTask:
+        return ConcreteTask(TaskConfig(name="test", data_source="test/dataset", **flags))
+
+    def test_output_without_close_is_unclosed(self):
+        task = self._task(**self.ALL)
+        response = self._make_response(["\nthe answer is 4, wait, let me check, the answer is 4"])
+
+        task.strip_thinking_traces([response])
+
+        output = response.outputs[0]
+        assert output.text == ""
+        assert output.metadata["unclosed_thinking"] is True
+        assert output.metadata["original_text"].startswith("\nthe answer is 4")
+
+    def test_closed_output_keeps_its_answer(self):
+        task = self._task(**self.ALL)
+        response = self._make_response(["\nreasoning\n</think>\n\nThe answer is 4."])
+
+        task.strip_thinking_traces([response])
+
+        output = response.outputs[0]
+        assert output.text == "\n\nThe answer is 4."
+        assert "unclosed_thinking" not in output.metadata
+
+    def test_second_pass_keeps_the_stripped_answer(self):
+        """The stripped answer has no tag left; it must not be read as an unclosed trace."""
+        task = self._task(**self.ALL)
+        response = self._make_response(["\nreasoning\n</think>\n\n4", "\nlooping, looping"])
+
+        task.strip_thinking_traces([response])
+        first = [(o.text, dict(o.metadata)) for o in response.outputs]
+        task.strip_thinking_traces([response])
+
+        assert [o.text for o in response.outputs] == ["\n\n4", ""]
+        assert [(o.text, dict(o.metadata)) for o in response.outputs] == first
+
+    def test_unclosed_kept_without_strip_unclosed(self):
+        """thinking_prefilled alone changes nothing; strip_unclosed_thinking decides."""
+        task = self._task(strip_thinking=True, thinking_prefilled=True)
+        response = self._make_response(["\nlooping, the answer is 4"])
+
+        task.strip_thinking_traces([response])
+
+        assert response.outputs[0].text == "\nlooping, the answer is 4"
+        assert "unclosed_thinking" not in response.outputs[0].metadata
+
+    def test_without_prefilled_an_untagged_output_is_untouched(self):
+        """#389's behaviour: no tag in the output means no trace, unless the prompt opened it."""
+        task = self._task(strip_thinking=True, strip_unclosed_thinking=True)
+        response = self._make_response(["\nlooping, the answer is 4"])
+
+        task.strip_thinking_traces([response])
+
+        assert response.outputs[0].text == "\nlooping, the answer is 4"
+
+    def test_to_dict(self):
+        assert (
+            TaskConfig(name="t", data_source="d", thinking_prefilled=True).to_dict()[
+                "thinking_prefilled"
+            ]
+            is True
+        )
+        assert "thinking_prefilled" not in TaskConfig(name="t", data_source="d").to_dict()
+
+
+@pytest.mark.anyio
 class TestProcessScoring:
     """Tests for process-backed scorer execution."""
 

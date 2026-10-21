@@ -182,7 +182,7 @@ def parse_overrides(override_str: str) -> dict[str, Any]:
                 value = int(value_str)
             elif key in {"temperature", "top_p"}:
                 value = float(value_str)
-            elif key in {"strip_thinking", "strip_unclosed_thinking"}:
+            elif key in {"strip_thinking", "strip_unclosed_thinking", "thinking_prefilled"}:
                 value = _parse_bool(value_str, key)
             elif key == "dependencies":
                 # Dependencies should be parsed as JSON list

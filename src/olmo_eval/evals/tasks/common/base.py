@@ -171,6 +171,12 @@ class TaskConfig:
     #: harness, which scores the raw trace.
     strip_unclosed_thinking: bool = False
 
+    #: The generation prompt already opens the trace (forced think: the chat
+    #: template ends in ``<think>``), so outputs start inside it and never contain
+    #: ``<think>``. With ``strip_unclosed_thinking``, an output with no ``</think>``
+    #: is then an unterminated trace and is emptied. Off by default.
+    thinking_prefilled: bool = False
+
     #: Runtime dependencies to install for this task (package specs like "pkg==1.0" or git URLs)
     dependencies: list[str] | None = None
 
@@ -308,6 +314,8 @@ class TaskConfig:
             serialized["strip_thinking"] = True
         if self.strip_unclosed_thinking:
             serialized["strip_unclosed_thinking"] = True
+        if self.thinking_prefilled:
+            serialized["thinking_prefilled"] = True
         if any(
             value is not None
             for value in (
@@ -632,6 +640,10 @@ class Task(ABC):
         ``metadata["unclosed_thinking"]`` is set. This stops answer extractors
         from crediting stray matches inside a trace that ran to the token cap.
 
+        With ``thinking_prefilled`` (the prompt itself ends in ``<think>``), outputs
+        start inside the trace, so an output without ``</think>`` is treated as
+        unterminated. Repeated calls preserve already processed answers.
+
         Only ``outputs[*].text`` is touched; trajectories and request traces
         keep the trace. The raw text is kept in ``metadata["original_text"]``.
         """
@@ -639,18 +651,24 @@ class Task(ABC):
         strip_unclosed = self.config.strip_unclosed_thinking
         if not (strip_closed or strip_unclosed):
             return
+        prefilled = self.config.thinking_prefilled
         from olmo_eval.evals.extract import extract_think_answer
 
         for response in responses:
             for output in response.outputs:
                 text = output.text or ""
-                if "<think>" not in text and "</think>" not in text:
+                if prefilled:
+                    # A stripped answer has no tag either: mark outputs to stay idempotent.
+                    if output.metadata.get("thinking_processed"):
+                        continue
+                    output.metadata["thinking_processed"] = True
+                elif "<think>" not in text and "</think>" not in text:
                     continue
                 closed = "</think>" in text
                 if closed and not strip_closed:
                     continue
                 stripped = (extract_think_answer(text) or "") if closed else text
-                if strip_unclosed and "<think>" in stripped:
+                if strip_unclosed and ("<think>" in stripped or (prefilled and not closed)):
                     output.metadata.setdefault("original_text", text)
                     output.metadata["unclosed_thinking"] = True
                     output.text = ""

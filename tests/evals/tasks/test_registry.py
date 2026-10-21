@@ -467,6 +467,10 @@ class TestParseOverridesBoolFields:
         result = parse_overrides("strip_thinking=true")
         assert result["strip_thinking"] is True
 
+    def test_thinking_prefilled_is_bool(self):
+        assert parse_overrides("thinking_prefilled=true") == {"thinking_prefilled": True}
+        assert parse_overrides("thinking_prefilled=0") == {"thinking_prefilled": False}
+
     def test_bool_false_and_numeric_forms(self):
         assert parse_overrides("strip_thinking=False") == {"strip_thinking": False}
         assert parse_overrides("strip_unclosed_thinking=TRUE") == {"strip_unclosed_thinking": True}
