@@ -60,3 +60,14 @@ assert mmlu_pro(text) == ('', 0.0)
 assert time.perf_counter() - started < 2
 """
     subprocess.run([sys.executable, "-c", code], check=True, timeout=120)
+
+
+@pytest.mark.parametrize("use_last", [False, True])
+def test_empty_capable_answer_regex_keeps_reference_format_score(use_last):
+    result = extract_answer_with_format(
+        "x A!",
+        answer_regexes=(r"(?=x)|A",),
+        answer_regexes_templates=OLMO_3_ANSWER_REGEX_TEMPLATES,
+        use_last_prefix_match=use_last,
+    )
+    assert result == ("A", 0.5)

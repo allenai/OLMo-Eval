@@ -20,12 +20,7 @@ from typing import NamedTuple
 
 # Answer-regex templates used by the OLMO 3 post-training regime. ``$ANS$`` is
 # substituted with a task-specific answer regex by ``extract_answer_with_format``.
-# Mirrors the reference implementation's list, including its repeated entry,
-# except for its final `(?i).*\b($ANS$)\b` fallback. Wherever that greedy
-# template matches, the earlier `\b($ANS$)\b` template matches too and returns
-# first, provided the answer regex cannot match an empty string. The fallback
-# is then unreachable, and it scanned quadratically on a miss. Pass these
-# templates only answer regexes that cannot match an empty string.
+# Mirrors the reference implementation, including its repeated entry.
 OLMO_3_ANSWER_REGEX_TEMPLATES = (
     r"(?i)therefore,?\s*the\s*answer\s*is:?\s*\(?($ANS$)\b",  # "Therefore, the answer is ..." style
     r"(?i)so\s+the\s+answer\s+is:?\s*($ANS$)\.?",  # "So the answer is ..." style
@@ -38,6 +33,7 @@ OLMO_3_ANSWER_REGEX_TEMPLATES = (
     r"(?i)\(($ANS$)\)",  # Parenthesized answer
     r"(?i)\b($ANS$)\b",  # Answer appearing as a word in a sentence
     r"(?i)\b($ANS$)\b",  # Just the answer itself
+    r"(?i).*\b($ANS$)\b",  # Just the answer anywhere in the text
 )
 
 
@@ -93,6 +89,12 @@ def extract_answer_with_format(
     if answer_regexes_templates:
         for idx, template in enumerate(answer_regexes_templates):
             for answer_regex in answer_regexes:
+                # The greedy fallback cannot match unless the bare word pattern does.
+                # Preflight a miss without changing empty-capable regex semantics.
+                if template == r"(?i).*\b($ANS$)\b" and not re.search(
+                    r"(?i)\b(" + answer_regex + r")\b", continuation
+                ):
+                    continue
                 regex = template.replace("$ANS$", answer_regex) if "$ANS$" in template else template
                 matches_list = list(re.finditer(regex, continuation))
                 if not matches_list:
