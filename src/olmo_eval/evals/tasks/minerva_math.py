@@ -381,3 +381,19 @@ for _subset in MATH_SUBSETS:
         sampling_params=_OLMO3_ADAPT_SAMPLING,
         strip_thinking=True,
     )
+
+# H101 (olmo-post-training-ledger): the olmo3adapt protocol with the boxed-answer line dropped. Identical to
+# ``olmo3adapt`` except that the user message is the problem text alone.
+_OLMO3_ADAPT_NOBOXED_FORMATTER = ChatFormatter(user_template="{question}")
+
+for _subset in MATH_SUBSETS:
+    register_variant(
+        f"minerva_math_{_subset}",
+        "olmo3adapt_noboxed",
+        formatter=_OLMO3_ADAPT_NOBOXED_FORMATTER,
+        num_fewshot=0,
+        metrics=(AccuracyMetric(scorer=MinervaMathScorer),),
+        primary_metric=AccuracyMetric(scorer=MinervaMathScorer),
+        sampling_params=_OLMO3_ADAPT_SAMPLING,
+        strip_thinking=True,
+    )
