@@ -641,10 +641,8 @@ class Task(ABC):
         from crediting stray matches inside a trace that ran to the token cap.
 
         With ``thinking_prefilled`` (the prompt itself ends in ``<think>``), outputs
-        start inside the trace, so the unterminated case is "no ``</think>``" rather
-        than "``<think>`` with no ``</think>``". Processed outputs are marked with
-        ``metadata["thinking_processed"]``, because a stripped answer has no tag
-        left to tell it apart from an unclosed trace.
+        start inside the trace, so an output without ``</think>`` is treated as
+        unterminated. Repeated calls preserve already processed answers.
 
         Only ``outputs[*].text`` is touched; trajectories and request traces
         keep the trace. The raw text is kept in ``metadata["original_text"]``.
