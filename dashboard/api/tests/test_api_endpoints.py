@@ -229,6 +229,50 @@ async def test_tag_note_and_view_caps(
     assert (await client.post("/api/views", json=view)).status_code == 400
 
 
+@pytest.mark.parametrize("common_metric", [False, True])
+async def test_gap_run_baselines_use_the_runs_metric(
+    client: httpx.AsyncClient, session: Any, common_metric: bool
+) -> None:
+    await seed_run(
+        client,
+        run_id="strict001",
+        tasks={"in": [1.0], "out": [0.5]},
+        primary_metric="strict:default",
+        suites=[suite("pair", ["in", "out"], score=0.5, aggregation="gap")],
+    )
+    await seed_run(
+        client,
+        run_id="flexible001",
+        tasks={"in": [0.8], "out": [0.9]},
+        primary_metric="flex:default",
+        suites=[suite("pair", ["in", "out"], score=0.9, aggregation="gap")],
+    )
+    if common_metric:
+        await session.execute(
+            text(
+                "UPDATE task_results SET metrics = metrics || CAST(:extra AS jsonb) "
+                "WHERE run_id = :run"
+            ),
+            {"extra": json.dumps({"strict:default": 0.4}), "run": "flexible001"},
+        )
+        await session.commit()
+    body = await get(
+        client, "/api/runs/strict001/suites", "RunSuitesResponse", baseline="r:flexible001"
+    )
+    baseline = body["items"][0]["baseline"]
+    listed = await get(
+        client, "/api/runs", "RunsListResponse", cols="suite:pair", baseline="r:flexible001"
+    )
+    strict = next(row for row in listed["items"] if row["run_id"] == "strict001")
+    assert strict["scores"]["suite:pair"]["delta"] is None
+    if common_metric:
+        assert baseline["score"] == 0.4
+        assert baseline["delta"]["delta"] == pytest.approx(0.1)
+    else:
+        assert baseline["score"] is None
+        assert baseline["delta"]["delta"] is None
+
+
 async def test_generation_counts_are_readable_without_instance_rows(
     client: httpx.AsyncClient, session: Any
 ) -> None:
@@ -889,6 +933,170 @@ async def test_latest_result_prefers_runs_without_an_instance_limit(
     )
 
     assert await _latest_arc_score(client) == 1.0
+
+
+@pytest.mark.parametrize("old_aggregation", ["gap", "average"])
+@pytest.mark.parametrize("latest_aggregation", ["gap", "average"])
+@pytest.mark.parametrize("same_metric", [False, True])
+async def test_runs_gap_baselines_use_stored_suite_versions(
+    client: httpx.AsyncClient, old_aggregation: str, latest_aggregation: str, same_metric: bool
+) -> None:
+    for run_id, score, metric in (
+        ("historya1", 0.5, "strict:default"),
+        ("historyb1", 0.4, "strict:default" if same_metric else "flex:default"),
+    ):
+        await seed_run(
+            client,
+            run_id=run_id,
+            tasks={"old_in": [score], "old_out": [score]},
+            primary_metric=metric,
+            suites=[
+                suite("versioned", ["old_in", "old_out"], score=score, aggregation=old_aggregation)
+            ],
+        )
+    await seed_run(
+        client,
+        run_id="latestv1",
+        tasks={"new_in": [0.6], "new_out": [0.7]},
+        suites=[
+            suite("versioned", ["new_in", "new_out"], score=0.7, aggregation=latest_aggregation)
+        ],
+    )
+    result = await get(
+        client, "/api/runs", "RunsListResponse", cols="suite:versioned", baseline="r:historyb1"
+    )
+    row = next(row for row in result["items"] if row["run_id"] == "historya1")
+    delta = row["scores"]["suite:versioned"]["delta"]
+    if old_aggregation == "gap" and not same_metric:
+        assert delta is None
+    else:
+        assert delta["delta"] == pytest.approx(0.1)
+
+
+@pytest.mark.parametrize("aggregation", ["average", "gap"])
+@pytest.mark.parametrize("redefined_gap", [False, True])
+async def test_bare_task_baselines_retain_non_gap_suite_fallback(
+    client: httpx.AsyncClient, aggregation: str, redefined_gap: bool
+) -> None:
+    await seed_run(
+        client,
+        run_id="fallbacka01",
+        tasks={"a": [0.5], "b": [0.5]},
+        suites=[suite("fallback", ["a", "b"], score=0.5, aggregation=aggregation)],
+    )
+    await seed_run(client, run_id="fallbackb01", tasks={"a": [0.4], "b": [0.4]}, suites=[])
+    if redefined_gap:
+        await seed_run(
+            client,
+            run_id="fallbacknew01",
+            tasks={"a": [0.7], "b": [0.7]},
+            suites=[suite("fallback", ["a", "b"], score=0.7, aggregation="gap")],
+        )
+    result = await get(
+        client, "/api/runs", "RunsListResponse", cols="suite:fallback", baseline="r:fallbackb01"
+    )
+    row = next(row for row in result["items"] if row["run_id"] == "fallbacka01")
+    delta = row["scores"]["suite:fallback"]["delta"]
+    if aggregation == "gap" or redefined_gap:
+        assert delta is None
+    else:
+        assert delta["delta"] == pytest.approx(0.1)
+
+
+@pytest.mark.parametrize("shared_metric", [False, True])
+async def test_gap_leaderboard_uses_one_metric_across_runs(
+    client: httpx.AsyncClient, session: Any, shared_metric: bool
+) -> None:
+    for run_id, metric, score in (
+        ("rankstrict01", "strict:default", 0.5),
+        ("rankflex01", "flex:default", 0.9),
+    ):
+        await seed_run(
+            client,
+            run_id=run_id,
+            tasks={"in": [score], "out": [score]},
+            primary_metric=metric,
+            suites=[suite("rankpair", ["in", "out"], score=score, aggregation="gap")],
+        )
+    if shared_metric:
+        await session.execute(
+            text(
+                "UPDATE task_results SET metrics = metrics || CAST(:extra AS jsonb) "
+                "WHERE run_id = :run"
+            ),
+            {"extra": json.dumps({"flex:default": 0.4}), "run": "rankstrict01"},
+        )
+        await session.commit()
+    body = await get(
+        client, "/api/suites/leaderboard", "LeaderboardResponse", suite="rankpair", per_model="all"
+    )
+    scores = {row["run_id"]: row["score"] for row in body["items"]}
+    assert scores["rankflex01"] == pytest.approx(0.9)
+    if shared_metric:
+        assert scores["rankstrict01"] == pytest.approx(0.4)
+    else:
+        assert "rankstrict01" not in scores
+
+
+@pytest.mark.parametrize("n_instances", [8, 32])
+@pytest.mark.parametrize("companion_format", ["percent", "raw"])
+async def test_gap_comparisons_and_ranking_use_companion_metadata(
+    client: httpx.AsyncClient, session: Any, n_instances: int, companion_format: str
+) -> None:
+    subjects = ["r:metagap01", "r:metagap02"]
+    for run_id, score in (("metagap01", 0.0), ("metagap02", 1.0)):
+        await seed_run(
+            client,
+            run_id=run_id,
+            tasks={"in": [1.0] * n_instances, "out": [score] * n_instances},
+            suites=[suite("metapair", ["in", "out"], score=score, aggregation="gap")],
+        )
+    await session.execute(
+        text(
+            "UPDATE task_results SET metric_meta = '{}'::jsonb, "
+            "display_format = CASE WHEN task_name = 'out' THEN :companion_format ELSE 'raw' END, "
+            "higher_is_better = CASE WHEN task_name = 'out' THEN FALSE ELSE NULL END "
+            "WHERE run_id IN ('metagap01', 'metagap02')"
+        ),
+        {"companion_format": companion_format},
+    )
+    await session.commit()
+    request = {"subjects": subjects, "scope": "suite:metapair", "metric": "primary", "n_boot": 200}
+    matrix = await post(client, "/api/compare/matrix", request, "MatrixResponse")
+    aggregate = next(row for row in matrix["rows"] if row["key"] == "suite:metapair")
+    assert aggregate["meta"]["display_format"] == companion_format
+    assert aggregate["meta"]["higher_is_better"] is False
+    pairwise = await post(client, "/api/compare/pairwise", request, "PairwiseResponse")
+    assert pairwise["higher_is_better"] is False
+    assert pairwise["subjects"][0]["key"] == subjects[0]
+    assert pairwise["display_format"] == companion_format
+    leaderboard = await get(
+        client, "/api/suites/leaderboard", "LeaderboardResponse", suite="metapair", per_model="all"
+    )
+    assert [row["run_id"] for row in leaderboard["items"]] == ["metagap01", "metagap02"]
+
+    assert leaderboard["meta"]["display_format"] == companion_format
+    assert leaderboard["meta"]["higher_is_better"] is False
+
+
+async def test_average_run_baseline_uses_only_the_current_runs_present_tasks(client):
+    await seed_run(
+        client,
+        run_id="partial001",
+        tasks={"a": [0.6]},
+        suites=[suite("mean_pair", ["a", "b"], score=0.6)],
+    )
+    await seed_run(
+        client,
+        run_id="complete001",
+        tasks={"a": [0.2], "b": [0.8]},
+        suites=[suite("mean_pair", ["a", "b"], score=0.5)],
+    )
+    body = await get(
+        client, "/api/runs/partial001/suites", "RunSuitesResponse", baseline="r:complete001"
+    )
+    pair = next(row for row in body["items"] if row["name"] == "mean_pair")
+    assert pair["baseline"]["score"] == pytest.approx(0.2)
 
 
 async def test_baseline_generation_counts_cover_task_and_suite_cells_without_predictions(

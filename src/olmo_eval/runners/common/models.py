@@ -73,6 +73,7 @@ class MetricsOutput(Serializable):
     tasks: list[dict[str, Any]]  # List of TaskMetricsEntry.to_dict()
     summary: dict[str, Any]  # task_name -> ScoreSummary or model -> task -> ScoreSummary
     errors: list[dict[str, Any]] = field(default_factory=list)
+    suite_metrics: dict[str, Any] | None = None
     # Experiment identification fields for querying results
     experiment_id: str | None = None
     experiment_name: str | None = None

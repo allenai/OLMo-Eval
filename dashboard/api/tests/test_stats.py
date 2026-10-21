@@ -243,6 +243,62 @@ def test_stratified_weights_and_pair_stats() -> None:
     assert pair_stats(acc, 0.05, True)["method"] == "none"
 
 
+@pytest.mark.parametrize("small_vectors", [False, True])
+def test_gap_corpus_fallback_uses_companion_only(small_vectors: bool) -> None:
+    from olmo_eval_api.services.suites import build_tree, leaf_weights
+
+    node = build_tree(
+        "pair", {"pair": ("gap", [{"type": "task", "name": "in"}, {"type": "task", "name": "out"}])}
+    )
+    tasks = [
+        (
+            name,
+            {
+                subject: Side(
+                    name,
+                    "hash",
+                    score,
+                    None,
+                    small_vectors,
+                    keys=np.arange(5) if small_vectors else None,
+                    values=np.full(5, score) if small_vectors else None,
+                )
+                for subject, score in (("A", a), ("B", b))
+            },
+        )
+        for name, a, b in (("in", 0.9, 0.1), ("out", 0.6, 0.5))
+    ]
+
+    def weights(names: list[str]) -> dict[str, float]:
+        return leaf_weights(node, {}, set(names))
+
+    acc = stratified_pairs(
+        tasks,
+        [("A", "B")],
+        weights,
+        alpha=0.05,
+        n_boot=100,
+        seed=0,
+        higher_is_better=True,
+        corpus_weight_fn=weights,
+    )[("A", "B")]
+    result = pair_stats(acc, 0.05, True)
+    assert result["method"] == "none"
+    assert result["delta"] == pytest.approx(0.1)
+    tasks[0][1]["A"].score = None
+    acc = stratified_pairs(
+        tasks,
+        [("A", "B")],
+        weights,
+        alpha=0.05,
+        n_boot=100,
+        seed=0,
+        higher_is_better=True,
+        corpus_weight_fn=weights,
+    )[("A", "B")]
+    assert pair_stats(acc, 0.05, True)["delta"] is None
+
+
 def _subject_tasks(n_subjects: int) -> list[tuple[str, dict[str, Side]]]:
     """Two tasks; subjects cover overlapping but different instance sets."""
     rng = np.random.default_rng(11)
@@ -384,3 +440,46 @@ def test_vector_cache_is_capped_by_bytes(monkeypatch: pytest.MonkeyPatch) -> Non
     assert subjects._vector_cache_bytes == 4 * 16_000
     subjects._cache_put((99, "t", "m"), vec(2000))  # over a quarter of the cap: not cached
     assert subjects._cache_get((99, "t", "m")) is None
+
+
+@pytest.mark.parametrize("reference_score", [None, 0.6])
+def test_gap_bootstrap_requires_reference_score_but_not_reference_vectors(
+    reference_score: float | None,
+) -> None:
+    from olmo_eval_api.services.suites import build_tree, leaf_weights
+
+    node = build_tree(
+        "pair", {"pair": ("gap", [{"type": "task", "name": "in"}, {"type": "task", "name": "out"}])}
+    )
+    tasks = [
+        (
+            "in",
+            {
+                "A": Side("in", "h", reference_score, None, False),
+                "B": Side("in", "h", 0.5, None, False),
+            },
+        ),
+        ("out", {"A": side(np.tile([1.0, 0.0, 1.0], 20)), "B": side(np.tile([0.0, 0.0, 1.0], 20))}),
+    ]
+
+    def weight(names: list[str]) -> dict[str, float]:
+        return leaf_weights(node, {}, set(names))
+
+    acc = stratified_pairs(
+        tasks,
+        [("A", "B")],
+        weight,
+        alpha=0.05,
+        n_boot=100,
+        seed=0,
+        higher_is_better=True,
+        corpus_weight_fn=weight,
+        qualifying_weight_fn=lambda q, p: leaf_weights(node, {}, set(q), score_present=set(p)),
+    )[("A", "B")]
+    result = pair_stats(acc, 0.05, True)
+    if reference_score is None:
+        assert result["delta"] is None and result["method"] == "none"
+    else:
+        assert result["method"] == "paired_bootstrap"
+        assert result["delta"] == pytest.approx(1 / 3)
+        assert result["ci_low"] is not None and result["ci_high"] is not None

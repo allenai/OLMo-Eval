@@ -42,6 +42,7 @@ class TestAggregationStrategy:
         assert AggregationStrategy.WEIGHTED_AVERAGE.value == "weighted_average"
         assert AggregationStrategy.AVERAGE_OF_AVERAGES.value == "average_of_averages"
         assert AggregationStrategy.DISPLAY_ONLY.value == "display_only"
+        assert AggregationStrategy.GAP.value == "gap"
 
     def test_enum_is_string(self):
         """Test that enum values are strings."""
@@ -81,6 +82,25 @@ class TestSuite:
 
         with pytest.raises(AttributeError):
             suite.name = "changed"
+
+    def test_gap_suite_accepts_two_tasks(self):
+        suite = Suite(name="pair", tasks=("in", "out"), aggregation=AggregationStrategy.GAP)
+        assert suite.expand() == ("in", "out")
+
+    @pytest.mark.parametrize("tasks", [("only",), ("a", "b", "c"), ("a", "a"), ("a", "b", "a")])
+    def test_gap_suite_rejects_other_task_counts(self, tasks):
+        with pytest.raises(ValueError, match="exactly two tasks"):
+            Suite(name="pair", tasks=tasks, aggregation=AggregationStrategy.GAP)
+
+    def test_gap_suite_counts_expanded_tasks(self):
+        child = Suite(name="child", tasks=("a", "b"))
+        with pytest.raises(ValueError, match="exactly two tasks"):
+            Suite(name="pair", tasks=(child, "c"), aggregation=AggregationStrategy.GAP)
+
+    def test_gap_suite_cannot_be_nested(self):
+        gap = Suite(name="pair", tasks=("in", "out"), aggregation=AggregationStrategy.GAP)
+        with pytest.raises(ValueError, match="cannot be children"):
+            Suite(name="parent", tasks=(gap, "other"))
 
     def test_expanded_tasks_simple(self):
         """Test expanding a suite with only string tasks."""

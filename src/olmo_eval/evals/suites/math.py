@@ -36,3 +36,13 @@ make_suite(
         "Dev set for post-training math experiments: AIME 2022-2026 and HMMT Nov 2025 / Feb 2026."
     ),
 )
+
+make_suite(
+    "omega:dev",
+    ("omega_500:hillclimb", "omega_500_out"),
+    aggregation=AggregationStrategy.GAP,
+    description=(
+        "OMEGA dev tier: omega-500 (in-distribution templates) and its matched test_out "
+        "companion, reported as both strict scores and the gap (out minus in)."
+    ),
+)

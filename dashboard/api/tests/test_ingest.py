@@ -866,3 +866,149 @@ async def test_ingest_mode_rejects_dashboard_routes(engine: Any, settings: Any) 
             assert (await c.get("/api/me")).status_code == 404
             assert (await c.get("/health")).json()["mode"] == "ingest"
             assert (await c.get("/v1/whoami")).status_code == 401
+
+
+@pytest.mark.parametrize("reported_score", [0.4, 0.6, -0.2, None])
+async def test_gap_ingest_metadata_follows_companion(
+    client: httpx.AsyncClient, session: Any, reported_score: float | None
+) -> None:
+    run_id = "metastore01"
+    response = await client.put(
+        f"/v1/runs/{run_id}", json=run_payload(run_id=run_id, model_name="test-org/metadata-model")
+    )
+    assert response.status_code == 200, response.text
+    for name, score, fmt, direction in (("in", 0.6, "raw", None), ("out", 0.4, "percent", False)):
+        response = await client.post(
+            f"/v1/runs/{run_id}/task-results",
+            json=task_payload(
+                name,
+                task_hash=f"hash-{name}",
+                primary_metric="acc:default",
+                corpus_score=score,
+                n=1,
+                display_format=fmt,
+                higher_is_better=direction,
+            ),
+        )
+        assert response.status_code == 200, response.text
+    response = await client.post(
+        f"/v1/runs/{run_id}/complete",
+        json={
+            "status": "complete",
+            "finished_at": None,
+            "duration_seconds": 1.0,
+            "suites": [suite("metapair", ["in", "out"], score=reported_score, aggregation="gap")],
+            "expected_task_results": 2,
+            "expected_artifacts": 0,
+        },
+    )
+    assert response.status_code == 200, response.text
+    row = (
+        await session.execute(
+            text(
+                "SELECT display_format, higher_is_better, score, primary_metric, metrics "
+                "FROM suite_results WHERE run_id = :run"
+            ),
+            {"run": run_id},
+        )
+    ).one()
+    assert row.display_format == "percent"
+    assert row.higher_is_better is False
+    assert row.score == 0.4 and row.primary_metric == "primary_score:companion"
+    assert row.metrics == pytest.approx(
+        {"primary_score:reference": 0.6, "primary_score:companion": 0.4, "primary_score:gap": -0.2}
+    )
+
+
+@pytest.mark.parametrize("invalid_pair", ["different_metrics", "unscored", "missing_task"])
+async def test_ingest_withholds_invalid_gap_scores(
+    client: httpx.AsyncClient, session: Any, invalid_pair: str
+) -> None:
+    run_id = "invalidgap01"
+    response = await client.put(
+        f"/v1/runs/{run_id}", json=run_payload(run_id=run_id, model_name="test-org/gap-validation")
+    )
+    assert response.status_code == 200, response.text
+    tasks = [
+        ("in", "strict:default", 0.6),
+        (
+            "out",
+            "flex:default" if invalid_pair == "different_metrics" else "strict:default",
+            None if invalid_pair == "unscored" else 0.4,
+        ),
+    ]
+    if invalid_pair == "missing_task":
+        tasks.pop()
+    for name, metric, score in tasks:
+        response = await client.post(
+            f"/v1/runs/{run_id}/task-results",
+            json=task_payload(
+                name, task_hash=f"hash-{name}", primary_metric=metric, corpus_score=score, n=1
+            ),
+        )
+        assert response.status_code == 200, response.text
+    response = await client.post(
+        f"/v1/runs/{run_id}/complete",
+        json={
+            "status": "complete",
+            "finished_at": None,
+            "duration_seconds": 1.0,
+            "suites": [suite("pair", ["in", "out"], score=0.9, aggregation="gap")],
+            "expected_task_results": len(tasks),
+            "expected_artifacts": 0,
+        },
+    )
+    assert response.status_code == 200, response.text
+    row = (
+        await session.execute(
+            text(
+                "SELECT score, stderr, primary_metric, metrics FROM suite_results "
+                "WHERE run_id = :run"
+            ),
+            {"run": run_id},
+        )
+    ).one()
+    assert row.score is None and row.stderr is None
+    assert row.primary_metric is None and row.metrics == {}
+    assert (
+        await session.execute(
+            text("SELECT headline FROM runs WHERE run_id = :run"), {"run": run_id}
+        )
+    ).scalar_one() is None
+
+
+async def test_ingest_rejects_nested_gap_definitions(client):
+    run_id = "nestedgap01"
+    response = await client.put(
+        f"/v1/runs/{run_id}", json=run_payload(run_id=run_id, model_name="nested-gap")
+    )
+    assert response.status_code == 200, response.text
+    pair = suite("pair", ["in", "out"], aggregation="gap")
+    parent = suite("parent", [], aggregation="average")
+    parent["children"] = [{"type": "suite", "name": "pair"}]
+    response = await client.post(
+        f"/v1/runs/{run_id}/complete",
+        json={
+            "status": "complete",
+            "finished_at": None,
+            "duration_seconds": 1.0,
+            "suites": [pair, parent],
+            "expected_task_results": 0,
+            "expected_artifacts": 0,
+        },
+    )
+    assert response.status_code == 400
+    assert "GAP suites cannot be nested" in response.text
+
+
+async def test_incomplete_gap_run_does_not_override_column_metadata(client, session):
+    from olmo_eval_api.routers.api.runs import column_meta
+
+    pair = suite("columnpair", ["in", "out"], aggregation="gap")
+    await seed_run(
+        client, run_id="metavalid01", tasks={"in": [0.0, 1.0], "out": [1.0, 1.0]}, suites=[pair]
+    )
+    await seed_run(client, run_id="metapartial01", tasks={"in": [0.0, 1.0]}, suites=[pair])
+    columns = await column_meta(session, [("suite:columnpair", "suite", "columnpair")])
+    assert columns[0].display_format == "percent"
+    assert columns[0].higher_is_better is True

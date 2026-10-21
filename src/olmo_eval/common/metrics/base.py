@@ -28,7 +28,14 @@ def display_format_for_name(name: str) -> str:
     Proportions (accuracy, F1, recall, pass@k) are ``percentage``; everything else keeps its
     native units.
     """
-    if name in {"accuracy", "f1", "recall", "tool_accuracy"} or name.endswith("_accuracy"):
+    if name in {
+        "accuracy",
+        "exact_match",
+        "exact_match_flex",
+        "f1",
+        "recall",
+        "tool_accuracy",
+    } or name.endswith("_accuracy"):
         return "percentage"
     if name.startswith(("pass_at_", "pass_pow_")):
         return "percentage"

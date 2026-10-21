@@ -34,7 +34,7 @@ from olmo_eval_api.services.queries import (
     order_by,
     run_summary,
 )
-from olmo_eval_api.services.read_suites import load_defs, score_suite, tree
+from olmo_eval_api.services.read_suites import load_defs, primary_gap_metric_keys, score_suite, tree
 from olmo_eval_api.services.runtime import (
     GPU_COUNT_SQL,
     GPU_TYPE_SQL,
@@ -981,20 +981,21 @@ async def suite_leaderboard(
     runs = await fetch_runs(session, {r["run_id"] for r in rows})
     entries = []
     hib_values = set()
-    for gkey, trs_list in grouped.items():
-        trs = latest_by_task(trs_list)
-        result = score_suite(node, trs)
+    display_formats = set()
+    population = {key: latest_by_task(value) for key, value in grouped.items()}
+    metric_keys = primary_gap_metric_keys(node, (population[key] for key in sorted(population)))
+    for gkey, trs in population.items():
+        result = score_suite(node, trs, metric_keys=metric_keys)
         if result.score is None:
             continue
         hib_values.add(result.higher_is_better)
+        display_formats.add(result.display_format)
         newest = max(trs.values(), key=lambda x: x["run_created_at"])
         child_scores: dict[str, float | None] = {}
         for child in node.children:
-            if child.type == "task":
-                tr = trs.get(child.name)
-                child_scores[f"task:{child.name}"] = tr["score"] if tr is not None else None
-            else:
-                child_scores[f"suite:{child.name}"] = score_suite(child, trs).score
+            child_scores[f"{child.type}:{child.name}"] = score_suite(
+                child, trs, metric_keys=metric_keys
+            ).score
         run = runs[newest["run_id"]]
         entries.append(
             {
@@ -1023,7 +1024,14 @@ async def suite_leaderboard(
         name=suite,
         task_hash=None,
         metric="primary",
-        meta=None,
+        meta=a.MetricMeta(
+            display_format="percent" if display_formats == {"percent"} else "raw",
+            higher_is_better=hib,
+            kind="bounded" if display_formats == {"percent"} else "unbounded",
+            unit=None,
+        )
+        if entries
+        else None,
         children=[a.SuiteChild(type=c.type, name=c.name) for c in node.children],
         items=[a.LeaderboardRow(**e) for e in page],
         next_cursor=nxt,

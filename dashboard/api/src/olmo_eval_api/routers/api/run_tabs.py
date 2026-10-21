@@ -227,6 +227,10 @@ def suite_delta(
     corpus_delta: float | None,
     higher_is_better: bool | None,
 ) -> a.DeltaStats:
+    if node.aggregation == "gap" and corpus_delta is None:
+        return accumulator_delta(
+            PairAccumulator(n_boot=stats.n_boot), stats, None, higher_is_better
+        )
     tasks = []
     for name in leaves(node):
         tr, base = run_trs.get(name), base_trs.get(name)
@@ -241,6 +245,7 @@ def suite_delta(
         tasks,
         [("a", "b")],
         lambda names: leaf_weights(node, n_inst, set(names)),
+        qualifying_weight_fn=lambda q, p: leaf_weights(node, n_inst, set(q), score_present=set(p)),
         alpha=stats.alpha,
         n_boot=stats.n_boot,
         seed=stats.seed,
@@ -313,7 +318,7 @@ async def run_suites(
     }
     defs = {**(await load_defs(session)), **stored_defs}
     key = cache_key(
-        "run-suites-v2",
+        "run-suites-v7",
         {"run_id": run_id, "baseline": baseline, **stats.__dict__},
         trs_list + (list(subject.trs.values()) if subject else []),
         definition_hashes([tree(r["suite_name"], defs) for r in ordered], defs),
@@ -342,7 +347,22 @@ async def run_suites(
         def build_base_cells() -> None:
             for r in ordered:
                 node = tree(r["suite_name"], defs)
-                agg = score_suite(node, base_trs)
+                metric_keys = {
+                    name: run_trs[name]["primary_metric"] if name in run_trs else None
+                    for name in leaves(node)
+                }
+                baseline_sides = {
+                    name: loader.side(base_trs.get(name), key) for name, key in metric_keys.items()
+                }
+                scores = {
+                    name: side.score if side is not None else None
+                    for name, side in baseline_sides.items()
+                }
+                stderrs = {
+                    name: side.stderr if side is not None else None
+                    for name, side in baseline_sides.items()
+                }
+                agg = score_suite(node, base_trs, scores, stderrs, metric_keys=metric_keys)
                 corpus = (
                     r["score"] - agg.score
                     if r["score"] is not None and agg.score is not None

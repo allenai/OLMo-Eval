@@ -1519,7 +1519,8 @@
           ]
         },
         "metrics": {
-          "$ref": "#/definitions/NestedMetrics"
+          "$ref": "#/definitions/NestedMetrics",
+          "description": "A gap suite retains primary_score reference, companion, and gap diagnostics."
         },
         "name": {
           "type": "string"
@@ -1542,14 +1543,14 @@
           ]
         },
         "primary_metric": {
-          "description": "\"primary_score:average\" for olmo-eval suites.",
+          "description": "Suite primary metric, such as primary_score:average or primary_score:companion.",
           "type": [
             "string",
             "null"
           ]
         },
         "score": {
-          "description": "Suite primary score, null for display_only/none.",
+          "description": "Suite primary score; the held-out companion for gap, null for display_only/none or an incomplete gap.",
           "type": [
             "number",
             "null"

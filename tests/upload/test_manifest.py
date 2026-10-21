@@ -125,6 +125,29 @@ def test_suite_results_add_nested_suites_the_runner_does_not_report() -> None:
     assert unscored["score"] is None and unscored["children"]
 
 
+def test_gap_upload_uses_companion_score_and_keeps_diagnostic_metrics() -> None:
+    from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
+    from olmo_eval.runners.processing.metrics import build_single_model_metrics
+
+    tasks = {
+        name: {
+            "metrics": {"exact_match": {"exact_match": score}},
+            "primary_metric": "exact_match:exact_match",
+            "num_instances": 500,
+        }
+        for name, score in (("omega_500:hillclimb", 0.6), ("omega_500_out", 0.45))
+    }
+    aggregations = compute_suite_aggregations(["omega:dev"], tasks)
+    payload = suite_results(aggregations, tasks)[0]
+    assert payload["score"] == 0.45
+    assert payload["primary_metric"] == "primary_score:companion"
+    assert payload["metrics"]["primary_score"]["gap"] == pytest.approx(-0.15)
+
+    metrics = build_single_model_metrics({"tasks": tasks, "suites": aggregations}).to_dict()
+    assert metrics["summary"]["omega:dev"]["score"] == 0.45
+    assert metrics["summary"]["omega:dev"]["metric"] == "primary_score:companion"
+
+
 def test_degraded_manifest_for_external_runner_metrics() -> None:
     metrics = {
         "timestamp": "2026-10-01T10:00:00+00:00",
@@ -438,6 +461,8 @@ def test_inference_truncation_is_reported(tmp_path: Path, monkeypatch: pytest.Mo
 def test_name_based_display_format_matches_metric_objects() -> None:
     from olmo_eval.common.metrics.base import display_format_for_name
 
+    assert display_format_for_name("exact_match") == "percentage"
+    assert display_format_for_name("exact_match_flex") == "percentage"
     assert display_format_for_name("accuracy") == "percentage"
     assert display_format_for_name("tool_accuracy") == "percentage"
     assert display_format_for_name("pass_at_1") == "percentage"

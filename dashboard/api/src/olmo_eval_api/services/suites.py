@@ -79,14 +79,20 @@ def _flat_weights(
     if not names:
         return {}
     if node.aggregation == "weighted_average":
-        total = sum(max(n_instances.get(name, 0), 0) for name in names)
-        if total > 0:
-            return {name: max(n_instances.get(name, 0), 0) / total for name in names}
+        if any(n_instances.get(name, 0) <= 0 for name in names):
+            return {}
+        total = sum(n_instances[name] for name in names)
+        return {name: n_instances[name] / total for name in names}
     return {name: 1.0 / len(names) for name in names}
 
 
 def leaf_weights(
-    node: SuiteNode, n_instances: Mapping[str, int], present: set[str]
+    node: SuiteNode,
+    n_instances: Mapping[str, int],
+    present: set[str],
+    *,
+    metric_keys: Mapping[str, str | None] | None = None,
+    score_present: set[str] | None = None,
 ) -> dict[str, float]:
     """Weights over present leaves summing to 1 (empty when no leaf is present).
 
@@ -97,9 +103,20 @@ def leaf_weights(
     - average_of_averages: equal weight for each direct child with a present leaf. A child suite
       spreads its share over its own leaves, by instance count when it is weighted_average and
       equally otherwise.
+    - gap: the companion task alone, requiring both tasks to be scored.
     """
     if node.type == "task":
         return {node.name: 1.0} if node.name in present else {}
+    if node.aggregation == "gap":
+        names = leaves(node)
+        scored = present if score_present is None else score_present
+        if len(names) != 2 or names[1] not in present or not set(names).issubset(scored):
+            return {}
+        if metric_keys is not None:
+            metrics = {metric_keys.get(name) for name in names}
+            if len(metrics) != 1 or None in metrics:
+                return {}
+        return {names[1]: 1.0}
     if node.aggregation != "average_of_averages":
         return _flat_weights(node, n_instances, present)
     child_weights = []

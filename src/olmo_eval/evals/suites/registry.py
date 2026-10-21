@@ -36,6 +36,10 @@ class AggregationStrategy(StrEnum):
             omitted when any contributing task has no instance count.
         AVERAGE_OF_AVERAGES: Average over child suite averages.
         DISPLAY_ONLY: Display child results without computing suite average.
+        GAP: Exactly two tasks, a reference then a companion. Reports each
+            task's primary score and the companion minus the reference, with the
+            companion as the suite's primary score. Reports no
+            aggregate unless both tasks scored on the same primary metric.
     """
 
     NONE = "none"
@@ -43,6 +47,7 @@ class AggregationStrategy(StrEnum):
     WEIGHTED_AVERAGE = "weighted_average"
     AVERAGE_OF_AVERAGES = "average_of_averages"
     DISPLAY_ONLY = "display_only"
+    GAP = "gap"
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +68,25 @@ class Suite:
     tasks: tuple[str | Suite, ...]
     aggregation: AggregationStrategy = AggregationStrategy.AVERAGE
     description: str = ""
+
+    def __post_init__(self) -> None:
+        if self.aggregation == AggregationStrategy.GAP:
+            expanded = self.expanded_tasks
+            if not len(expanded) == len(set(expanded)) == 2:
+                raise ValueError(
+                    f"Gap suite {self.name!r} needs exactly two tasks (reference, companion), "
+                    f"distinct, got {expanded!r}"
+                )
+        nested_gaps = [
+            child.name
+            for child in self.tasks
+            if isinstance(child, Suite) and child.aggregation == AggregationStrategy.GAP
+        ]
+        if nested_gaps:
+            raise ValueError(
+                f"Suite {self.name!r} nests gap suite(s) {nested_gaps!r}; a gap is not a "
+                f"score to average, so gap suites cannot be children"
+            )
 
     @property
     def expanded_tasks(self) -> tuple[str, ...]:

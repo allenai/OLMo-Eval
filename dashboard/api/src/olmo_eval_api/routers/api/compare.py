@@ -128,6 +128,46 @@ def row_metric(
     return None
 
 
+def scope_metric_keys(
+    tasks: Sequence[str],
+    metric: str,
+    subjects: Sequence[Subject],
+    baseline: Subject | None,
+    node: SuiteNode | None,
+    *,
+    require_gap_anchor: bool = True,
+) -> dict[str, str | None]:
+    """Select metrics for task rows or aggregates using complete GAP pairs."""
+    keys = {task: row_metric(task, metric, subjects, baseline) for task in tasks}
+    if metric != "primary" or node is None:
+        return keys
+    order = ([baseline] if baseline is not None else []) + list(subjects)
+
+    def walk(suite: SuiteNode) -> None:
+        if suite.aggregation == "gap":
+            names = leaves(suite)
+            if require_gap_anchor:
+                keys.update(dict.fromkeys(names))
+            for subject in order:
+                if not all(name in subject.trs for name in names):
+                    continue
+                rows = [subject.trs[name] for name in names]
+                metrics = {row["primary_metric"] for row in rows}
+                if (
+                    len(metrics) == 1
+                    and None not in metrics
+                    and all(row["score"] is not None for row in rows)
+                ):
+                    keys.update({name: rows[0]["primary_metric"] for name in names})
+                    break
+        for child in suite.children:
+            if child.type == "suite":
+                walk(child)
+
+    walk(node)
+    return keys
+
+
 def row_meta(
     task: str, key: str | None, subjects: Sequence[Subject], baseline: Subject | None
 ) -> dict:
@@ -203,13 +243,16 @@ async def compare_matrix(
     if is_runtime_metric(body.metric):
         # No bootstraps, so nothing worth caching.
         return await _runtime_matrix(session, body, subjects, baseline, rows, stats.alpha)
-    ckey = cache_key("matrix", request, used, scope_hashes(node, defs))
+    ckey = cache_key("matrix-v5", request, used, scope_hashes(node, defs))
     cached = await get_cached(session, ckey, a.MatrixResponse)
     if cached is not None:
         return cached.model_copy(update={"subjects": live_subjects(cached.subjects, by_key)})
 
     task_names = list(dict.fromkeys(r.name for r in rows if r.kind == "task"))
-    metric_keys = {t: row_metric(t, body.metric, subjects, baseline) for t in task_names}
+    metric_keys = scope_metric_keys(
+        task_names, body.metric, subjects, baseline, node, require_gap_anchor=False
+    )
+    suite_metric_keys = scope_metric_keys(task_names, body.metric, subjects, baseline, node)
     loader = SideLoader(session)
     for t in task_names:
         for s in subjects:
@@ -242,7 +285,11 @@ async def compare_matrix(
                 )
             else:
                 assert spec.node is not None
-                out_rows.append(_matrix_suite_row(spec, subjects, baseline, sides, body, stats))
+                out_rows.append(
+                    _matrix_suite_row(
+                        spec, subjects, baseline, sides, body, stats, metric_keys=suite_metric_keys
+                    )
+                )
 
     # Bootstraps are CPU-bound; a worker thread keeps the event loop serving other requests.
     await asyncio.to_thread(build_rows)
@@ -373,6 +420,8 @@ def _matrix_suite_row(
     sides: Mapping[str, Mapping[str, Side | None]],
     body: a.MatrixRequest,
     stats: Any,
+    *,
+    metric_keys: Mapping[str, str | None] | None = None,
 ) -> a.MatrixRow:
     node = spec.node
     assert node is not None
@@ -386,18 +435,27 @@ def _matrix_suite_row(
                 sd = sides.get(n, {}).get(s.key)
                 scores[n] = sd.score if sd is not None else None
                 stderrs[n] = sd.stderr if sd is not None else None
-        results[s.key] = score_suite(node, s.trs, scores, stderrs)
-    hib_set = {r.higher_is_better for r in results.values() if r.present}
+        results[s.key] = score_suite(node, s.trs, scores, stderrs, metric_keys=metric_keys)
+    hib_set = {
+        r.higher_is_better
+        for r in results.values()
+        if node.aggregation != "gap" or r.score is not None
+    }
     hib = hib_set.pop() if len(hib_set) == 1 else None
     deltas: dict[str, a.DeltaStats] = {}
-    if baseline is not None:
+    if baseline is not None and (
+        node.aggregation != "gap" or results[baseline.key].score is not None
+    ):
         others = [s.key for s in subjects if s.key != baseline.key]
         tasks = [(n, {k: v for k, v in sides.get(n, {}).items() if v is not None}) for n in names]
         n_inst = {n: int(baseline.trs[n]["num_instances"] or 0) for n in names if n in baseline.trs}
         acc = stratified_pairs(
             tasks,
             [(k, baseline.key) for k in others],
-            lambda q: leaf_weights(node, n_inst, set(q)),
+            lambda q: leaf_weights(node, n_inst, set(q), metric_keys=metric_keys),
+            qualifying_weight_fn=lambda q, p: leaf_weights(
+                node, n_inst, set(q), metric_keys=metric_keys, score_present=set(p)
+            ),
             alpha=stats.alpha,
             n_boot=stats.n_boot,
             seed=stats.seed,
@@ -406,12 +464,20 @@ def _matrix_suite_row(
         base_score = results[baseline.key].score
         for k in others:
             sc = results[k].score
+            if node.aggregation == "gap" and sc is None:
+                continue
             corpus = sc - base_score if sc is not None and base_score is not None else None
             deltas[k] = accumulator_delta(acc[(k, baseline.key)], stats, corpus, hib)
     cells = []
     for s in subjects:
         r = results[s.key]
-        status: a.CellStatus = "missing" if r.present == 0 else ("partial" if r.missing else "ok")
+        status: a.CellStatus = (
+            "missing"
+            if r.present == 0
+            else (
+                "partial" if r.missing or (node.aggregation == "gap" and r.score is None) else "ok"
+            )
+        )
         cells.append(
             a.MatrixCell(
                 status=status,
@@ -425,7 +491,9 @@ def _matrix_suite_row(
                 children_missing=r.missing,
             )
         )
-    any_result = next((r for r in results.values() if r.present), None)
+    any_result = next(
+        (r for r in results.values() if node.aggregation != "gap" or r.score is not None), None
+    )
     meta = (
         a.MetricMeta(
             higher_is_better=hib,
@@ -651,6 +719,14 @@ def restrict(side: Side, keys: np.ndarray) -> Side:
     )
 
 
+def pairwise_order_key(
+    row: a.PairwiseRowSummary, higher_is_better: bool | None
+) -> tuple[float, float]:
+    """Rank a summary by win rate and improvement."""
+    direction = -1 if higher_is_better is False else 1
+    return -row.mean_win_rate, -direction * (row.mean_delta or 0.0)
+
+
 @router.post("/compare/pairwise", response_model=a.PairwiseResponse)
 async def compare_pairwise(
     body: a.PairwiseRequest, session: SessionDep, user: UserDep
@@ -666,21 +742,24 @@ async def compare_pairwise(
         raise bad_request("margin must be >= 0")
     used = [tr for s in subjects for tr in s.trs.values()]
     rows, node, defs = await resolve_scope(session, body.scope, subjects)
-    ckey = cache_key("pairwise", body.model_dump(mode="json"), used, scope_hashes(node, defs))
+    ckey = cache_key("pairwise-v6", body.model_dump(mode="json"), used, scope_hashes(node, defs))
     cached = await get_cached(session, ckey, a.PairwiseResponse)
     if cached is not None:
         by_key = {s.key: s for s in subjects}
         return cached.model_copy(update={"subjects": live_subjects(cached.subjects, by_key)})
 
     task_names = list(dict.fromkeys(r.name for r in rows if r.kind == "task"))
-    metric_keys = {t: row_metric(t, body.metric, subjects, None) for t in task_names}
+    metric_keys = scope_metric_keys(
+        task_names, body.metric, subjects, None, node, require_gap_anchor=False
+    )
+    suite_metric_keys = scope_metric_keys(task_names, body.metric, subjects, None, node)
     loader = SideLoader(session)
     for t in task_names:
         for s in subjects:
             loader.want(s.trs.get(t), metric_keys[t])
     await loader.load()
     tasks: list[tuple[str, dict[str, Side]]] = []
-    metas = []
+    metas: dict[str, dict] = {}
     skipped = 0
     for t in task_names:
         sides = {s.key: sd for s in subjects if (sd := loader.side(s.trs.get(t), metric_keys[t]))}
@@ -694,10 +773,16 @@ async def compare_pairwise(
         if not all(sd.pairable for sd in sides.values()):
             skipped += 1
         tasks.append((t, sides))
-        metas.append(row_meta(t, metric_keys[t], subjects, None))
-    directions = {m.get("higher_is_better") for m in metas if m}
+        metas[t] = row_meta(t, metric_keys[t], subjects, None)
+    metadata_names = (
+        leaf_weights(node, {}, set(metas), metric_keys=suite_metric_keys)
+        if node is not None and node.aggregation == "gap"
+        else metas
+    )
+    selected_metadata = [metas[name] for name in metadata_names if metas[name]]
+    directions = {m.get("higher_is_better") for m in selected_metadata}
     hib = directions.pop() if len(directions) == 1 else None
-    formats = {m.get("display_format") for m in metas if m}
+    formats = {m.get("display_format") for m in selected_metadata}
     display: a.DisplayFormat = "percent" if formats == {"percent"} else "raw"
     n_inst = {
         t: max(int(s.trs[t]["num_instances"] or 0) for s in subjects if t in s.trs)
@@ -706,7 +791,7 @@ async def compare_pairwise(
     if node is not None:
 
         def weight_fn(names: Sequence[str]) -> dict[str, float]:
-            return leaf_weights(node, n_inst, set(names))
+            return leaf_weights(node, n_inst, set(names), metric_keys=suite_metric_keys)
     else:
 
         def weight_fn(names: Sequence[str]) -> dict[str, float]:
@@ -726,6 +811,14 @@ async def compare_pairwise(
             margin=margin,
             max_work=MAX_PAIRWISE_WORK,
             max_pair_resamples=MAX_PAIR_RESAMPLES,
+            corpus_weight_fn=weight_fn,
+            qualifying_weight_fn=lambda q, p: (
+                leaf_weights(
+                    node, n_inst, set(q), metric_keys=suite_metric_keys, score_present=set(p)
+                )
+                if node is not None
+                else weight_fn(q)
+            ),
         )
     )
     pair_out: list[a.PairStats] = []
@@ -775,7 +868,7 @@ async def compare_pairwise(
                 mean_delta=float(np.mean(ds)) if ds else None,
             )
         )
-    summaries.sort(key=lambda x: (-x.mean_win_rate, -(x.mean_delta or 0.0)))
+    summaries.sort(key=lambda row: pairwise_order_key(row, hib))
     order = {x.subject: i for i, x in enumerate(summaries)}
     warnings = []
     if skipped:

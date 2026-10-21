@@ -1291,6 +1291,189 @@ class TestSuiteAggregations:
             del _REGISTRY["_test_aoa_no_collapse"]
 
 
+class TestGapSuiteAggregation:
+    """Tests for GAP suite aggregation."""
+
+    SUITE = "_test_gap"
+
+    @pytest.fixture(autouse=True)
+    def gap_suite(self) -> Iterator[None]:
+        from olmo_eval.evals.suites.registry import _REGISTRY, AggregationStrategy, Suite
+
+        _REGISTRY[self.SUITE] = Suite(
+            name=self.SUITE,
+            tasks=("task_in", "task_out"),
+            aggregation=AggregationStrategy.GAP,
+        )
+        yield
+        del _REGISTRY[self.SUITE]
+
+    @staticmethod
+    def _task(
+        score: float, metric: str = "exact_match:exact_match", display_format: str = "percent"
+    ) -> dict:
+        name, scorer = metric.split(":")
+        return {
+            "metrics": {name: {scorer: score}, "exact_match_flex": {"exact_match_flex": 0.99}},
+            "primary_metric": metric,
+            "num_instances": 500,
+            "metric_meta": {name: {"display_format": display_format}},
+        }
+
+    def test_reports_both_scores_and_out_minus_in(self):
+        from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
+
+        task_results = {"task_in": self._task(0.6), "task_out": self._task(0.45)}
+
+        result = compute_suite_aggregations([self.SUITE], task_results)[self.SUITE]
+
+        scores = result["metrics"]["primary_score"]
+        assert scores["reference"] == pytest.approx(0.6)
+        assert scores["companion"] == pytest.approx(0.45)
+        assert scores["gap"] == pytest.approx(-0.15)
+        assert result["primary_metric"] == "primary_score:companion"
+        assert result["aggregation"] == "gap"
+        assert result["reference_task"] == "task_in"
+        assert result["companion_task"] == "task_out"
+        assert result["scored_metric"] == "exact_match:exact_match"
+        assert result["tasks"] == ["task_in", "task_out"]
+
+    def test_priority_suffix_propagates(self):
+        from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
+
+        task_results = {"task_in@high": self._task(0.5), "task_out@high": self._task(0.5)}
+
+        result = compute_suite_aggregations([f"{self.SUITE}@high"], task_results)
+
+        assert result[f"{self.SUITE}@high"]["reference_task"] == "task_in@high"
+        assert result[f"{self.SUITE}@high"]["metrics"]["primary_score"]["gap"] == 0.0
+
+    @pytest.mark.parametrize(
+        "out",
+        [None, {"metrics": {}, "error": "boom"}, {"metrics": {"acc": {"em": 0.4}}}],
+        ids=["missing", "failed", "no-primary"],
+    )
+    def test_half_a_pair_reports_no_gap(self, out):
+        from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
+
+        task_results = {"task_in": self._task(0.6)}
+        if out is not None:
+            task_results["task_out"] = out
+
+        result = compute_suite_aggregations([self.SUITE], task_results)[self.SUITE]
+        assert result["metrics"] == {} and result["primary_metric"] is None
+        from olmo_eval.upload.metadata import suite_results
+
+        payload = suite_results({self.SUITE: result}, task_results)[0]
+        assert payload["score"] is None and payload["primary_metric"] is None
+        assert payload["aggregation"] == "gap" and len(payload["children"]) == 2
+
+    def test_different_primary_metrics_report_no_gap(self):
+        from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
+
+        task_results = {
+            "task_in": self._task(0.6),
+            "task_out": self._task(0.45, metric="exact_match_flex:exact_match_flex"),
+        }
+
+        result = compute_suite_aggregations([self.SUITE], task_results)[self.SUITE]
+        assert result["metrics"] == {} and result["primary_metric"] is None
+        from olmo_eval.upload.metadata import suite_results
+
+        payload = suite_results({self.SUITE: result}, task_results)[0]
+        assert payload["score"] is None and payload["primary_metric"] is None
+        assert payload["aggregation"] == "gap" and len(payload["children"]) == 2
+
+    def test_incomplete_gap_summary_is_not_success(self, capsys):
+        from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
+        from olmo_eval.runners.processing.metrics import log_summary
+
+        tasks = {"task_in": self._task(0.6)}
+        suites = compute_suite_aggregations([self.SUITE], tasks)
+        log_summary({"tasks": {}, "suites": suites})
+        printed = capsys.readouterr().out
+        assert "Incomplete" in printed
+        assert "Success" not in printed
+
+    def test_log_summary_shows_the_gap_row(self, capsys):
+        from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
+        from olmo_eval.runners.processing.metrics import log_summary
+
+        task_results = {"task_in": self._task(0.6), "task_out": self._task(0.45)}
+        suites = compute_suite_aggregations([self.SUITE], task_results)
+
+        log_summary({"tasks": task_results, "suites": suites})
+        captured = capsys.readouterr().out
+
+        assert "task_in" in captured
+        assert "task_out" in captured
+        assert "companion" in captured
+        assert "-15.00" in captured
+        assert "pp)" in captured
+
+    @pytest.mark.parametrize("metadata", [True, False])
+    def test_raw_gap_is_not_scaled_as_percentage_points(self, metadata, capsys):
+        from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
+        from olmo_eval.runners.processing.metrics import log_summary
+
+        tasks = {
+            "task_in": self._task(3.0, "measurement:value", "raw"),
+            "task_out": self._task(5.0, "measurement:value", "raw"),
+        }
+        if not metadata:
+            for task in tasks.values():
+                del task["metric_meta"]
+        suites = compute_suite_aggregations([self.SUITE], tasks)
+        log_summary({"tasks": tasks, "suites": suites})
+        output = capsys.readouterr().out
+        assert "+2.0000" in output
+        assert "+200.00" not in output
+        assert " pp" not in output
+
+    @pytest.mark.parametrize("companion_metadata", [True, False])
+    def test_gap_logs_use_companion_units(self, companion_metadata, capsys):
+        from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
+        from olmo_eval.runners.processing.metrics import log_summary
+
+        tasks = {"task_in": self._task(0.6, display_format="raw"), "task_out": self._task(0.45)}
+        if not companion_metadata:
+            tasks["task_out"]["metric_meta"] = {"exact_match": {"higher_is_better": True}}
+        suites = compute_suite_aggregations([self.SUITE], tasks)
+        log_summary({"tasks": tasks, "suites": suites})
+        assert "-15.00 pp)" in capsys.readouterr().out
+
+    def test_json_keeps_reference_companion_and_gap(self):
+        from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
+        from olmo_eval.runners.processing.metrics import (
+            build_multi_model_metrics,
+            build_single_model_metrics,
+        )
+
+        tasks = {"task_in": self._task(0.6), "task_out": self._task(0.45)}
+        results = {"tasks": tasks, "suites": compute_suite_aggregations([self.SUITE], tasks)}
+        single = build_single_model_metrics(results).to_dict()
+        multi = build_multi_model_metrics({"models": {"m": results}}).to_dict()
+        for metrics in (
+            single["suite_metrics"][self.SUITE],
+            multi["suite_metrics"]["m"][self.SUITE],
+        ):
+            assert metrics["primary_score"] == pytest.approx(
+                {"reference": 0.6, "companion": 0.45, "gap": -0.15}
+            )
+        assert single["summary"][self.SUITE]["metric"] == "primary_score:companion"
+
+    def test_registered_omega_gap_logs_percentage_points_without_synthetic_metadata(self, capsys):
+        from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
+        from olmo_eval.runners.processing.metrics import log_summary
+
+        tasks = {"omega_500:hillclimb": self._task(0.6), "omega_500_out": self._task(0.45)}
+        for data in tasks.values():
+            data.pop("metric_meta")
+        suites = compute_suite_aggregations(["omega:dev"], tasks)
+        log_summary({"tasks": tasks, "suites": suites})
+        assert "-15.00 pp)" in capsys.readouterr().out
+
+
 class TestGetPrimaryMetric:
     """Tests for get_primary_metric function.
 

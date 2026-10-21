@@ -6,6 +6,7 @@ from unittest import mock
 import pytest
 
 from olmo_eval.common.types import Instance
+from olmo_eval.evals.suites import AggregationStrategy, get_suite
 from olmo_eval.evals.tasks.common import get_task
 from olmo_eval.evals.tasks.constants import omega_500_out as manifest
 from olmo_eval.evals.tasks.constants.omega_500_out import (
@@ -35,6 +36,12 @@ def test_same_scoring_and_inference_budget():
     assert companion.config.get_primary_metric().name == "exact_match"
     assert companion.config.data_source.revision == OMEGA_EXPLORATIVE_REVISION
     assert all("test_out-" in f for f in companion.config.data_source.data_files)
+
+
+def test_dev_suite_reports_out_minus_in():
+    suite = get_suite("omega:dev")
+    assert suite.aggregation == AggregationStrategy.GAP
+    assert suite.expand() == ("omega_500:hillclimb", "omega_500_out")
 
 
 def test_manifest_records_the_pinned_revisions():

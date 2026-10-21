@@ -559,7 +559,7 @@ export interface SuiteChildIn {
 /** One suite aggregation from metrics/results "suites", plus its definition. */
 export interface SuiteResultIn {
     name: string;
-    /** none, average, weighted_average, average_of_averages, display_only. */
+    /** none, average, weighted_average, average_of_averages, display_only, gap. */
     /** @maxLength 32 */
     aggregation: string;
     /** Parent suite name for nested suites, else null. */
@@ -567,10 +567,11 @@ export interface SuiteResultIn {
     description: string | null;
     /** Direct children from the registered Suite definition (or the contributing tasks when unregistered). */
     children: SuiteChildIn[];
+    /** A gap suite retains primary_score reference, companion, and gap diagnostics. */
     metrics: NestedMetrics;
-    /** "primary_score:average" for olmo-eval suites. */
+    /** Suite primary metric, such as primary_score:average or primary_score:companion. */
     primary_metric: string | null;
-    /** Suite primary score, null for display_only/none. */
+    /** Suite primary score; the held-out companion for gap, null for display_only/none or an incomplete gap. */
     score: number | null;
     num_tasks: NonNegativeInt32 | null;
 }
