@@ -20,8 +20,11 @@ and the configuration, code, data, and environment behind a result must be recov
    job is not a verified result.
 
 Committing and pushing to a feature branch is fine. Never push to `main`, force-push, or
-rewrite history on a branch someone else is using. Beaker runs use a pushed commit, so
-finish the local code, tests, and launch command before pushing for a remote trial.
+rewrite history on a branch someone else is using, and merge a PR only when your human
+asks. Before merging, retarget PRs stacked on its branch (`gh pr edit <n> --base main`):
+the branch is deleted on merge, which can close them for good. Beaker runs use a pushed
+commit, so finish the local code, tests, and launch command before pushing for a remote
+trial.
 
 ## Commands
 
