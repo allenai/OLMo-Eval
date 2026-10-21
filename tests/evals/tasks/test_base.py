@@ -170,6 +170,45 @@ class TestTask:
         assert fewshot1 is fewshot2  # Same object (cached)
 
 
+class _PackagedTask(ConcreteTask):
+    """Keeps every document except those marked ``skip``, recording each one's line."""
+
+    def process_doc(self, doc: dict, index: int = 0) -> Instance | None:
+        if doc.get("skip"):
+            return None
+        return Instance(question=doc["q"], gold_answer=None, metadata={"line": index})
+
+
+class TestPackagedInstances:
+    def test_reads_the_packaged_jsonl_through_process_doc(self, monkeypatch, tmp_path):
+        (tmp_path / "data.jsonl").write_text(
+            '{"q": "first"}\n\n{"q": "dropped", "skip": true}\n{"q": "second"}\n',
+            encoding="utf-8",
+        )
+        packages: list[str] = []
+
+        def files(package: str):
+            packages.append(package)
+            return tmp_path
+
+        monkeypatch.setattr("olmo_eval.evals.tasks.common.base.files", files)
+        task = _PackagedTask(TaskConfig(name="test", data_source="data.jsonl"))
+
+        instances = list(task._load_packaged_instances("some.package", "data.jsonl"))
+
+        assert packages == ["some.package"]
+        assert [(i.question, i.metadata["line"]) for i in instances] == [
+            ("first", 0),
+            ("second", 3),
+        ]
+
+    def test_requires_a_package(self):
+        task = _PackagedTask(TaskConfig(name="test", data_source="data.jsonl"))
+
+        with pytest.raises(ValueError, match="no package"):
+            list(task._load_packaged_instances(None, "data.jsonl"))
+
+
 @pytest.mark.anyio
 class TestTaskScoring:
     """Tests for Task scoring functionality."""

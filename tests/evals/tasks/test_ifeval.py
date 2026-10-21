@@ -127,3 +127,20 @@ def test_no_instructions_scores_zero() -> None:
     instance = get_task("ifeval").process_doc({"key": 7, "prompt": "Hello."}, index=0)
     assert instance is not None
     assert IFEvalScorer().score(instance, LMOutput(text="hi")) == 0.0
+
+
+def test_verify_instructions_records_instructions_it_cannot_build() -> None:
+    from ifbench import instructions_registry
+
+    from olmo_eval.common.scorers.ifeval import verify_instructions
+
+    result = verify_instructions(
+        "Rain on the roof",
+        ["punctuation:no_comma", "not:an_instruction"],
+        [{}, {}],
+        "prompt",
+        instructions_registry.INSTRUCTION_DICT,
+    )
+    assert result["strict"] == [True, False]
+    assert result["loose"] == [True, False]
+    assert set(result["errors"]) == {"not:an_instruction"}

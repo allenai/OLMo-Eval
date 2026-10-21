@@ -1102,23 +1102,22 @@ class VLLMServerProvider(InferenceProvider):
         Returns:
             List of output lists, one per request.
         """
-        from olmo_eval.inference.dispatch import dispatch_concurrent
+        from olmo_eval.inference.utils import dispatch_requests
 
-        # Checked for the whole batch before dispatch, which would otherwise catch
-        # the refusal per request and hand back empty outputs that score as zero.
+        # Validate tool support for the whole batch before dispatching requests.
         self._refuse_tools_without_parsing(requests)
         params = self._default_sampling_params(sampling_params)
 
         async def process(req: LMRequest) -> list[LMOutput]:
             return await self._generate_or_mark_overflow(req, params)
 
-        results = await dispatch_concurrent(
+        results = await dispatch_requests(
             requests,
             process,
             max_in_flight=self.max_concurrency,
             max_retries=self.max_retries,
         )
-        return [r if r is not None else [] for r in results]
+        return results
 
     async def _generate_or_mark_overflow(
         self, request: LMRequest, params: SamplingParams
@@ -1339,7 +1338,7 @@ class VLLMServerProvider(InferenceProvider):
         Returns:
             List of output lists with logprobs populated.
         """
-        from olmo_eval.inference.dispatch import dispatch_concurrent
+        from olmo_eval.inference.utils import dispatch_requests
 
         params = self._default_sampling_params(sampling_params)
         if params.truncate_prompt_tokens is not None or params.truncation_side is not None:
@@ -1347,26 +1346,14 @@ class VLLMServerProvider(InferenceProvider):
                 "truncate_prompt_tokens or truncation_side has been set in the params, "
                 "but is not supported for loglikelihood requests and will not be used."
             )
-        results = await dispatch_concurrent(
+        results = await dispatch_requests(
             requests,
             lambda request: self._logprobs_single_async(request, params),
             max_in_flight=self.max_concurrency,
             max_retries=self.max_retries,
         )
 
-        # Log if any requests failed (result is None)
-        failed_count = sum(1 for r in results if r is None)
-        if failed_count > 0:
-            # Try to get the actual error by running one request directly
-            try:
-                await self._logprobs_single_async(requests[0], params)
-            except Exception as e:
-                logger.error(
-                    f"alogprobs: {failed_count}/{len(requests)} requests failed. First error: {e!r}"
-                )
-
-        # Replace None with empty list for failed requests
-        return [r if r is not None else [] for r in results]
+        return results
 
     def logprobs(
         self,
