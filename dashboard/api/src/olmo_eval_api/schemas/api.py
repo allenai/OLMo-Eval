@@ -180,6 +180,7 @@ class DeltaStats(_Response):
 class BaselineCell(_Response):
     contingency: Contingency | None
     delta: DeltaStats
+    generation_counts: dict[str, int] | None = Field(default=None)
     metrics: dict[str, float | None]
     n: int
     run_id: RunId
@@ -1014,6 +1015,7 @@ class RunRow(_Response):
 
 class SuiteBaselineCell(_Response):
     delta: DeltaStats
+    generation_counts: dict[str, int] | None = Field(default=None)
     score: float | None
     stderr: float | None
 
@@ -1025,6 +1027,7 @@ class SuiteResultRow(_Response):
     depth: int
     description: str | None
     display_format: DisplayFormat
+    generation_counts: dict[str, int] | None = Field(default=None)
     higher_is_better: bool | None
     n_instances: int
     name: str
@@ -1051,6 +1054,7 @@ class TaskResultRow(_Response):
     error: str | None
     error_summary: dict[str, Any] | None
     finish_reason_counts: dict[str, int]
+    generation_counts: dict[str, int] | None = Field(default=None)
     instance_scale: float
     instances_failed: int | None
     instances_processed: int | None

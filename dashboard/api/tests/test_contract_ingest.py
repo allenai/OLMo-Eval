@@ -57,6 +57,18 @@ def test_every_ingest_definition_is_exercised() -> None:
     assert set(MODELS) <= covered | {"WhoAmIResponse"}
 
 
+def test_generation_counts_are_optional_and_nonnegative() -> None:
+    payload = load_example("ingest/task-result.request.json")
+    assert s.TaskResultIn.model_validate(payload).generation_counts is None
+    payload["generation_counts"] = {"generations": 4, "cap_hit": 2, "unclosed_think": 1}
+    assert schema_errors("TaskResultIn", payload) == []
+    assert s.TaskResultIn.model_validate(payload).generation_counts == payload["generation_counts"]
+    payload["generation_counts"]["cap_hit"] = -1
+    assert schema_errors("TaskResultIn", payload)
+    with pytest.raises(ValidationError):
+        s.TaskResultIn.model_validate(payload)
+
+
 MALFORMED = [
     ("ingest/run-upsert-start.request.json", s.RunUpsertRequest, ["run", "run_id"], "BAD ID"),
     ("ingest/run-upsert-start.request.json", s.RunUpsertRequest, ["protocol_version"], 2),

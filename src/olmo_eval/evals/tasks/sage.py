@@ -323,6 +323,7 @@ class SageShortForm(_SageRetrieval):
                 )
                 scores.append(em)
                 output.metadata = output.metadata or {}
+                output.metadata["scoring_text_empty"] = not strip_think(output.text).strip()
                 output.metadata["sage_matched"] = bool(em)
                 output.metadata["exact_match"] = em
                 _store_output_score(output, scorer_name="exact_match", score=em)
@@ -413,6 +414,7 @@ class SageOpenEnded(_SageRetrieval):
                 )
                 scores.append(wr)
                 output.metadata = output.metadata or {}
+                output.metadata["scoring_text_empty"] = not strip_think(output.text).strip()
                 output.metadata["weighted_recall"] = wr
                 _store_output_score(output, scorer_name="weighted_recall", score=wr)
 

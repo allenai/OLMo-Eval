@@ -7,11 +7,12 @@ from typing import Any
 import pytest
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from sqlalchemy import text
 from sqlalchemy.exc import ProgrammingError
 
 from olmo_eval_api.db.grants import grant_dashboard_access
-from olmo_eval_api.db.migrate import run_migrations
+from olmo_eval_api.db.migrate import alembic_config, run_migrations
 from olmo_eval_api.db.models import metadata
 from olmo_eval_api.storage.gcs import GcsStorage
 
@@ -20,7 +21,7 @@ async def test_migrations_are_idempotent(engine: Any) -> None:
     await run_migrations(engine)
     async with engine.connect() as conn:
         version = (await conn.execute(text("SELECT version_num FROM alembic_version"))).scalar()
-        assert version == "0005"
+        assert version == ScriptDirectory.from_config(alembic_config()).get_current_head()
         ext = (
             await conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm'"))
         ).scalar()

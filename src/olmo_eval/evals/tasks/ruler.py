@@ -74,13 +74,21 @@ class RulerTask(Task):
 
     Each RULER task variant (e.g., niah_s_1__4096) is registered as a separate task
     with specific configuration from RULER_TASKS.
+
+    Subclasses point at a different task registry and name prefix by overriding
+    ``_tasks_registry`` and ``_name_prefix``, and can customize data loading by
+    overriding ``_load_data`` (e.g. RulerPlusTask, where each task needs only
+    one shard of a much larger dataset repo).
     """
+
+    _tasks_registry: dict[str, dict[str, Any]] = RULER_TASKS
+    _name_prefix: str = "ruler_"
 
     def __init__(self, config: TaskConfig) -> None:
         super().__init__(config)
-        task_name = config.name.removeprefix("ruler_")
+        task_name = config.name.removeprefix(self._name_prefix)
         self.task_name = task_name
-        self.ruler_config = RULER_TASKS[task_name]
+        self.ruler_config = self._tasks_registry[task_name]
 
         # Extract context size from task name
         task_type, context_size_str = task_name.rsplit("__", 1)
@@ -248,11 +256,26 @@ class RulerTask(Task):
         return output.text
 
 
-def _make_ruler_task_class(task_name: str, task_cfg: dict) -> type[RulerTask]:
+def make_ruler_task_class(
+    task_name: str,
+    task_cfg: dict,
+    *,
+    base_cls: type[RulerTask] = RulerTask,
+    class_prefix: str = "Ruler",
+    limit: int = 100,
+) -> type[RulerTask]:
     """Create a task subclass for a RULER task variant.
 
     Subclasses carry only class-level attributes (metrics, sampling_params, limit);
     all runtime state is derived from config.name inside RulerTask.__init__.
+
+    Args:
+        task_name: Task variant key (e.g., "niah_s_1__4096"), matching a key in
+            base_cls's ``_tasks_registry``.
+        task_cfg: Task configuration dict (see RULER_TASKS/RULER_PLUS_TASKS).
+        base_cls: RulerTask subclass to build on (allows other data sources/prefixes).
+        class_prefix: Prefix for the generated class name.
+        limit: Number of samples to draw per task/context-size condition.
     """
     # QA tasks use RulerQAScorer which applies HELMET-style normalization
     # (removes articles/punctuation, normalizes whitespace) matching the old framework.
@@ -261,10 +284,10 @@ def _make_ruler_task_class(task_name: str, task_cfg: dict) -> type[RulerTask]:
         ("\n", "Ċ", "ĊĊ", "<0x0A>") if task_cfg.get("stop_new_line", False) else None
     )
     return type(
-        f"Ruler_{task_name}",
-        (RulerTask,),
+        f"{class_prefix}_{task_name}",
+        (base_cls,),
         {
-            "__module__": __name__,
+            "__module__": base_cls.__module__,
             "metrics": (RecallMetric(scorer=RulerQAScorer),)
             if task_cfg["tag"] == "qa"
             else (RecallMetric(),),
@@ -275,14 +298,14 @@ def _make_ruler_task_class(task_name: str, task_cfg: dict) -> type[RulerTask]:
                 max_tokens=task_cfg.get("max_gen_toks", 50),
                 stop_sequences=stop_sequences,
             ),
-            "limit": 100,
+            "limit": limit,
         },
     )
 
 
 # Dynamically register all RULER tasks
 for _task_name, _task_config in RULER_TASKS.items():
-    _cls = _make_ruler_task_class(_task_name, _task_config)
+    _cls = make_ruler_task_class(_task_name, _task_config)
     # Inject into module globals so pickle can find the class by name
     globals()[_cls.__name__] = _cls
     register(f"ruler_{_task_name}")(_cls)

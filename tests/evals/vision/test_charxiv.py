@@ -11,6 +11,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import sys
+import types
 
 import pytest
 
@@ -242,7 +244,7 @@ class _FakeClient:
 
 
 def _patch_client(monkeypatch, client: _FakeClient) -> None:
-    monkeypatch.setattr(charxiv_judge, "_get_client", lambda model: client)
+    monkeypatch.setattr(charxiv_judge, "_get_client", lambda model, purpose: (client, model))
     monkeypatch.setattr(charxiv_judge, "_retry_delay", lambda attempt: 0.0)
 
 
@@ -299,3 +301,47 @@ class TestJudgeCall:
             charxiv_judge.grade_descriptive_batch("p3", 1, cache_dir=str(tmp_path))
         )
         assert result["score_T1"] == 0 and len(client.calls) == 2
+
+
+class TestJudgeClient:
+    def test_openrouter_key_routes_to_openrouter_slug(self, monkeypatch) -> None:
+        created: list[dict] = []
+
+        class FakeAsyncOpenAI:
+            def __init__(self, **kwargs):
+                created.append(kwargs)
+
+        module = types.ModuleType("openai")
+        module.AsyncOpenAI = FakeAsyncOpenAI  # type: ignore[ty:unresolved-attribute]
+        monkeypatch.setitem(sys.modules, "openai", module)
+        monkeypatch.setattr(charxiv_judge, "_ASYNC_CLIENTS", {})
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+
+        client, request_model = charxiv_judge._get_client("gpt-4-0613", "a test")
+
+        assert isinstance(client, FakeAsyncOpenAI)
+        assert request_model == "openai/gpt-4"
+        assert created == [{"api_key": "or-key", "base_url": "https://openrouter.ai/api/v1"}]
+        assert charxiv_judge._get_client("gpt-4-0613", "a test")[0] is client
+
+    def test_missing_keys_raise(self, monkeypatch) -> None:
+        monkeypatch.setattr(charxiv_judge, "_ASYNC_CLIENTS", {})
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        with pytest.raises(ValueError, match="OPENROUTER_API_KEY is required for a test"):
+            charxiv_judge._get_client("gpt-4o-2024-05-13", "a test")
+
+
+class TestIsAuthError:
+    @pytest.mark.parametrize("status", [401, 402, 403])
+    def test_unusable_key_statuses(self, status: int) -> None:
+        exc = RuntimeError("judge failed")
+        exc.status_code = status  # type: ignore[ty:unresolved-attribute]
+        assert charxiv_judge._is_auth_error(exc)
+
+    @pytest.mark.parametrize("status", [429, 500])
+    def test_transient_statuses(self, status: int) -> None:
+        exc = RuntimeError("judge failed")
+        exc.status_code = status  # type: ignore[ty:unresolved-attribute]
+        assert not charxiv_judge._is_auth_error(exc)

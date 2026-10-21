@@ -218,6 +218,16 @@ class Instance:
     expected_final_state: dict[str, Any] | None = None
 
 
+#: ``LMRequest.metadata`` key holding the scripted user messages a multi-turn
+#: conversation sends after each of the model's replies.
+FOLLOW_UP_TURNS_KEY = "follow_up_turns"
+
+#: ``LMOutput.metadata`` key holding one record per user turn the model answered, in
+#: order: the reply as ``text``, plus the ``finish_reason``, ``prompt_tokens`` and
+#: ``completion_tokens`` the provider reported for that turn.
+TURNS_KEY = "turns"
+
+
 @dataclass(frozen=True, slots=True)
 class LMRequest:
     """Request to send to a language model."""
