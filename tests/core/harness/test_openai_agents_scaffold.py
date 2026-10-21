@@ -217,6 +217,7 @@ def _self_hosted_provider(chat_template_kwargs=None, client=None):
     openai_client = client if client is not None else _stub_openai_client()
     return SimpleNamespace(
         model_name="test-model",
+        openai_client_model_name="test-model",
         chat_template_kwargs=chat_template_kwargs,
         get_openai_client=lambda: openai_client,
     )
@@ -227,6 +228,7 @@ def _managed_api_provider():
     openai_client = SimpleNamespace(base_url="https://api.openai.com/v1")
     return SimpleNamespace(
         model_name="gpt-4o",
+        openai_client_model_name="gpt-4o",
         get_openai_client=lambda: openai_client,
     )
 
@@ -303,6 +305,15 @@ class TestChatTemplateKwargs:
         agent = _build_agent(_managed_api_provider())
 
         assert agent.model_settings.extra_body is None
+
+    def test_agent_sends_the_client_model_name(self):
+        provider = SimpleNamespace(
+            model_name="gpt-4-0613",
+            openai_client_model_name="openai/gpt-4",
+            get_openai_client=lambda: SimpleNamespace(base_url="https://openrouter.ai/api/v1"),
+        )
+
+        assert _build_agent(provider).model.model == "openai/gpt-4"
 
     def test_metrics_wrapped_provider_still_gets_the_default(self):
         from olmo_eval.inference.metrics.core.collector import InstrumentedProvider
@@ -663,6 +674,7 @@ class TestStopAtTools:
         provider = SimpleNamespace(
             get_openai_client=lambda: SimpleNamespace(base_url="http://x"),
             model_name="m",
+            openai_client_model_name="m",
         )
         config = HarnessConfig(name="test", max_turns=3, tools=(get_tool("submit"),))
         agent = OpenAIAgentsScaffold()._create_agent(provider, config, stop_at_tools=("submit",))
@@ -714,7 +726,11 @@ class TestStopAtTools:
             base_url="http://test.invalid/v1",
             http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
         )
-        provider = SimpleNamespace(get_openai_client=lambda: client, model_name="test-model")
+        provider = SimpleNamespace(
+            get_openai_client=lambda: client,
+            model_name="test-model",
+            openai_client_model_name="test-model",
+        )
         config = HarnessConfig(name="test", max_turns=3, tools=(get_tool("submit"),))
 
         result = await OpenAIAgentsScaffold().run(
@@ -731,3 +747,48 @@ class TestStopAtTools:
         else:
             assert len(requests) >= 3
             assert result.max_turns_reached
+
+
+class TestCompaction:
+    async def _run_kwargs(self, monkeypatch) -> dict[str, Any]:
+        from agents import Agent, Runner
+
+        agent = Agent(name="test-agent", instructions="Answer.")
+        run_calls: list[dict[str, Any]] = []
+
+        async def fake_run(**kwargs):
+            run_calls.append(kwargs)
+            return _FakeRunData(new_items=[], final_output="done")
+
+        _patch_scaffold_agent(monkeypatch, agent)
+        monkeypatch.setattr(Runner, "run", staticmethod(fake_run))
+        await OpenAIAgentsScaffold().run(
+            provider=SimpleNamespace(),
+            config=HarnessConfig(name="test", max_turns=3),
+            request=_agent_request(),
+        )
+        return run_calls[0]
+
+    @pytest.mark.anyio
+    async def test_openai_key_enables_compaction(self, monkeypatch):
+        from agents.memory import OpenAIResponsesCompactionSession
+
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
+
+        kwargs = await self._run_kwargs(monkeypatch)
+
+        assert isinstance(kwargs["session"], OpenAIResponsesCompactionSession)
+
+    @pytest.mark.anyio
+    async def test_openrouter_key_alone_skips_compaction(self, monkeypatch, caplog):
+        from olmo_eval.harness.scaffolds import openai_agents
+
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+        openai_agents._warn_compaction_unavailable.cache_clear()
+
+        with caplog.at_level(logging.WARNING, logger=_SCAFFOLD_LOGGER):
+            kwargs = await self._run_kwargs(monkeypatch)
+
+        assert "session" not in kwargs
+        assert "responses.compact" in caplog.text

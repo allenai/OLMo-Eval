@@ -410,3 +410,43 @@ def test_wandb_key_is_injected_only_when_the_secret_exists(exists: bool) -> None
     assert secrets == ([("WANDB_API_KEY", "alice_WANDB_API_KEY")] if exists else [])
     client.secret.write.assert_not_called()
     local_key.assert_not_called()
+
+
+class TestEnsureTaskSecrets:
+    def _ensure(self, existing: set[str], required: set[str]) -> list[tuple[str, str]]:
+        from olmo_eval.launch.beaker.secrets import ensure_task_secrets
+
+        with (
+            patch("beaker.Beaker.from_env", return_value=_beaker_client(existing)),
+            patch(f"{SECRETS}._get_beaker_username", return_value="alice"),
+        ):
+            return ensure_task_secrets(workspace="ai2/ws", required_secrets=required)
+
+    def test_openai_secret_is_preferred(self) -> None:
+        secrets = self._ensure(
+            {"alice_OPENAI_API_KEY", "alice_OPENROUTER_API_KEY"}, {"OPENAI_API_KEY"}
+        )
+        assert secrets == [("OPENAI_API_KEY", "alice_OPENAI_API_KEY")]
+
+    def test_openrouter_secret_stands_in_for_openai(self) -> None:
+        secrets = self._ensure(
+            {"alice_OPENROUTER_API_KEY", "alice_S2_API_KEY"}, {"OPENAI_API_KEY", "S2_API_KEY"}
+        )
+        assert secrets == [
+            ("OPENROUTER_API_KEY", "alice_OPENROUTER_API_KEY"),
+            ("S2_API_KEY", "alice_S2_API_KEY"),
+        ]
+
+    def test_missing_openai_and_openrouter_secrets_names_both(self) -> None:
+        with pytest.raises(ValueError) as excinfo:
+            self._ensure(set(), {"OPENAI_API_KEY"})
+        message = str(excinfo.value)
+        assert "alice_OPENAI_API_KEY" in message
+        assert "alice_OPENROUTER_API_KEY" in message
+        assert "  beaker secret write alice_OPENAI_API_KEY <value>" in message
+        assert "  or: beaker secret write alice_OPENROUTER_API_KEY <value>" in message
+        assert "beaker secret write alice_OPEN_ROUTER_KEY" not in message
+
+    def test_other_secrets_have_no_alternative(self) -> None:
+        with pytest.raises(ValueError, match="alice_S2_API_KEY"):
+            self._ensure({"alice_OPENROUTER_API_KEY"}, {"S2_API_KEY"})

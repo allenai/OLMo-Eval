@@ -44,7 +44,7 @@ export const BASIS_LABEL: Record<RuntimeBasis, string> = {
 
 export const BASIS_HELP: Record<RuntimeBasis, string> = {
   measured: "The run contained only this task, so the run's processing time is the task's time.",
-  attributed: "Split from per-batch inference metrics by this task's share of each batch.",
+  attributed: "This task's share of the inference workers' time, divided by the number of workers.",
   estimated: "The run's processing time times this task's share of the run's tokens. Rough when tasks differ a lot in prompt versus output length.",
   not_recorded: "This run predates runtime recording or lacks token counts.",
 };

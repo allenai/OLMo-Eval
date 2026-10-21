@@ -13,8 +13,10 @@ from olmo_eval.evals.tasks.multichallenge import (
     parse_verdict,
 )
 from olmo_eval.runners.asynq.preparation import compute_task_metrics
-from olmo_eval.runners.asynq.results import _format_scoring_error, _record_scoring_failure
 from olmo_eval.runners.io.builders import build_predictions
+from tests.evals.tasks.judge_stubs import score_like_the_runner, scripted_judge, use_judge
+
+pytestmark = pytest.mark.usefixtures("judge_test_env")
 
 TARGET_QUESTION = "Does the response only suggest venues within a 5-minute walk?"
 CONVERSATION = [
@@ -48,41 +50,13 @@ def _response(task, *texts: str, **doc_fields) -> Response:
     return Response(instance=instance, request=task.format_request(instance), outputs=outputs)
 
 
-def _scripted_judge(*replies: str):
-    remaining = iter(replies)
-    calls: list[str] = []
-
-    async def judge(prompt: str, **_kwargs) -> str:
-        calls.append(prompt)
-        return next(remaining)
-
-    return judge, calls
-
-
 def _reply(verdict: str) -> str:
     return f"Reasoning: The venue is across the street.\n\nVerdict: {verdict}"
-
-
-@pytest.fixture(autouse=True)
-def _no_judge_env(monkeypatch):
-    monkeypatch.delenv("OLMO_EVAL_JUDGE", raising=False)
-
-
-@pytest.fixture(autouse=True)
-def _no_backoff_sleep(monkeypatch):
-    async def sleep(_delay):
-        return None
-
-    monkeypatch.setattr(judge_module.asyncio, "sleep", sleep)
 
 
 @pytest.fixture
 def task():
     return get_task("multichallenge")
-
-
-def _use_judge(monkeypatch, judge) -> None:
-    monkeypatch.setattr(judge_module, "build_openai_judge_fn", lambda **_: judge)
 
 
 class TestRegistration:
@@ -191,8 +165,8 @@ class TestScoring:
     @pytest.mark.anyio
     async def test_judges_the_visible_response_against_the_rubric(self, task, monkeypatch):
         response = _response(task, "<think>hidden</think>\nTry the Delegates Dining Room.")
-        judge, calls = _scripted_judge(_reply("YES"))
-        _use_judge(monkeypatch, judge)
+        judge, calls = scripted_judge(_reply("YES"))
+        use_judge(monkeypatch, judge)
 
         await task.score_responses([response])
 
@@ -216,8 +190,8 @@ class TestScoring:
     @pytest.mark.anyio
     async def test_an_unparseable_reply_is_retried_not_scored(self, task, monkeypatch):
         response = _response(task)
-        judge, calls = _scripted_judge("I cannot give a verdict; no information.", _reply("YES"))
-        _use_judge(monkeypatch, judge)
+        judge, calls = scripted_judge("I cannot give a verdict; no information.", _reply("YES"))
+        use_judge(monkeypatch, judge)
 
         await task.score_responses([response])
 
@@ -227,8 +201,8 @@ class TestScoring:
     @pytest.mark.anyio
     async def test_a_verdict_that_misses_the_criteria_fails(self, task, monkeypatch):
         response = _response(task)
-        judge, _ = _scripted_judge(_reply("NO"))
-        _use_judge(monkeypatch, judge)
+        judge, _ = scripted_judge(_reply("NO"))
+        use_judge(monkeypatch, judge)
 
         await task.score_responses([response])
 
@@ -238,8 +212,8 @@ class TestScoring:
     @pytest.mark.anyio
     async def test_passing_compares_against_the_expected_verdict(self, task, monkeypatch):
         response = _response(task, pass_criteria="NO")
-        judge, _ = _scripted_judge(_reply("NO"))
-        _use_judge(monkeypatch, judge)
+        judge, _ = scripted_judge(_reply("NO"))
+        use_judge(monkeypatch, judge)
 
         await task.score_responses([response])
 
@@ -248,8 +222,8 @@ class TestScoring:
     @pytest.mark.anyio
     async def test_unfinished_reasoning_fails_without_the_judge(self, task, monkeypatch):
         response = _response(task, "<think>the user wants somewhere close")
-        judge, calls = _scripted_judge()
-        _use_judge(monkeypatch, judge)
+        judge, calls = scripted_judge()
+        use_judge(monkeypatch, judge)
 
         await task.score_responses([response])
 
@@ -265,8 +239,8 @@ class TestScoring:
     ):
         truncated = _response(task, "Try the Delegates")
         truncated.outputs[0].metadata["finish_reason"] = "length"
-        judge, calls = _scripted_judge()
-        _use_judge(monkeypatch, judge)
+        judge, calls = scripted_judge()
+        use_judge(monkeypatch, judge)
 
         await task.score_responses([truncated])
 
@@ -282,8 +256,8 @@ class TestScoring:
             _response(task, axis="INFERENCE_MEMORY", question_id="m3"),
             _response(task, axis="SELF_COHERENCE", question_id="s1"),
         ]
-        judge, _ = _scripted_judge(_reply("YES"), _reply("YES"), _reply("YES"), _reply("NO"))
-        _use_judge(monkeypatch, judge)
+        judge, _ = scripted_judge(_reply("YES"), _reply("YES"), _reply("YES"), _reply("NO"))
+        use_judge(monkeypatch, judge)
 
         await task.score_responses(responses)
 
@@ -295,27 +269,15 @@ class TestScoring:
         assert metrics["truncation_rate"] == 0.0
 
 
-async def _score_like_the_runner(task, response: Response) -> Response:
-    """Score one instance the way the async runner does, including its failure path."""
-    try:
-        return (await task.score_responses([response]))[0]
-    except Exception as exc:
-        return _record_scoring_failure(
-            response,
-            scorer_names=list(task._get_scorers()),
-            error=_format_scoring_error(exc, phase="response"),
-        )
-
-
 @pytest.mark.anyio
 async def test_an_unjudged_conversation_is_incomplete_not_failed(task, monkeypatch):
     judged = _response(task, question_id="judged")
     unjudged = _response(task, question_id="unjudged")
-    judge, _ = _scripted_judge(_reply("YES"), *["no verdict here"] * judge_module.JUDGE_ATTEMPTS)
-    _use_judge(monkeypatch, judge)
+    judge, _ = scripted_judge(_reply("YES"), *["no verdict here"] * judge_module.JUDGE_ATTEMPTS)
+    use_judge(monkeypatch, judge)
 
-    scored = [await _score_like_the_runner(task, judged)]
-    scored.append(await _score_like_the_runner(task, unjudged))
+    scored = [await score_like_the_runner(task, judged)]
+    scored.append(await score_like_the_runner(task, unjudged))
     result = compute_task_metrics("multichallenge", task, scored, {}, len(scored), 0.0)
 
     assert result.error is not None and result.error.startswith("Incomplete: 1 output score(s)")
