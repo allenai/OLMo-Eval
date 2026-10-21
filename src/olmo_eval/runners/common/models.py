@@ -41,6 +41,8 @@ class TaskMetricsEntry(Serializable):
     instances_processed: int | None = None
     instances_failed: int | None = None
     error_summary: str | None = None
+    # How the saved generations ended; see TaskResult.generation_counts.
+    generation_counts: dict[str, int] | None = None
     # Per-task cost; see TASK_COST_KEYS in runners/common/types.py
     first_request_at: str | None = None
     last_completed_at: str | None = None
@@ -59,6 +61,7 @@ class ScoreSummary(Serializable):
 
     metric: str  # Format: "metric_name:scorer_name"
     score: float
+    generation_counts: dict[str, int] | None = None  # suites only
 
 
 @dataclass

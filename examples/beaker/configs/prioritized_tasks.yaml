@@ -1,44 +1,37 @@
 # Config with per-task priorities
 #
 # Tasks can have @priority suffixes to run at different Beaker priority levels.
-# Tasks sharing the same priority will be batched together in one experiment per model.
+# Tasks sharing the same priority are batched together in one experiment per model.
 #
-# IMPORTANT: Priorities are set on TASKS, not on models. Each model runs all its
-# tasks, but tasks are grouped by priority into separate experiments.
+# Priorities are set on tasks, not on models. Each model runs all its tasks, but
+# tasks are grouped by priority into separate experiments.
 #
-# Usage: olmo-eval beaker launch -f examples/configs/prioritized_tasks.yaml --dry-run
+# Usage: olmo-eval beaker launch -f examples/beaker/configs/prioritized_tasks.yaml \
+#            -w <workspace> [-B <budget>] --dry-run
 #
-# This config will create 8 experiments (2 models x 4 priority levels):
-#   - eval-prioritized-llama3.1-8b-high     (gsm8k, arc_challenge)
-#   - eval-prioritized-llama3.1-8b-normal   (hellaswag, winogrande)
-#   - eval-prioritized-llama3.1-8b-low      (arc_easy, boolq)
-#   - eval-prioritized-olmo-2-7b-high       (gsm8k, arc_challenge)
-#   - eval-prioritized-olmo-2-7b-normal     (hellaswag, winogrande)
-#   - eval-prioritized-olmo-2-7b-low        (arc_easy, boolq)
-#   - eval-prioritized-llama3.1-8b-urgent   (arc:mc)
-#   - eval-prioritized-olmo-2-7b-urgent     (arc:mc)
+# This config creates 8 experiments (2 models x 4 priority levels):
+#   - eval-prioritized-llama3.1-8b-urgent  (arc_challenge:mc)
+#   - eval-prioritized-llama3.1-8b-high    (gsm8k, arc_challenge)
+#   - eval-prioritized-llama3.1-8b-normal  (hellaswag, winogrande)
+#   - eval-prioritized-llama3.1-8b-low     (arc_easy)
+#   - eval-prioritized-olmo-2-7b-urgent    (arc_challenge:mc)
+#   - eval-prioritized-olmo-2-7b-high      (gsm8k, arc_challenge)
+#   - eval-prioritized-olmo-2-7b-normal    (hellaswag, winogrande)
+#   - eval-prioritized-olmo-2-7b-low       (arc_easy)
 
 name: eval-prioritized
-
 models:
-  # Models define compute resources (GPUs)
-  - name_or_path: llama3.1-8b
-    gpus: 1
-  - name_or_path: olmo-2-7b
-    gpus: 1
-
+  - llama3.1-8b
+  - olmo-2-7b
 tasks:
-  - arc:mc@urgent
-
+  - arc_challenge:mc@urgent
   - gsm8k@high
   - arc_challenge@high
-
   - hellaswag@normal
   - winogrande@normal
-
   - arc_easy@low
-  - boolq@low
 
-cluster: ai2/ceres
-preemptible: true
+cluster: h100
+gpus: 1
+min_runtime: 2h
 timeout: 24h

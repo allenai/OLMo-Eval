@@ -7,7 +7,10 @@ import logging
 import shlex
 import shutil
 import subprocess
+import time
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from olmo_eval.common.config import get_infra_config
 
@@ -22,6 +25,26 @@ UV_IMAGE = "ghcr.io/astral-sh/uv:0.11.7"
 
 # Version bump this when changing the Dockerfile to invalidate cached images
 SWEREX_IMAGE_VERSION = "20261008.1"
+
+
+class _Deadline:
+    """Runs subprocesses against a shared time budget, killing any that run past it."""
+
+    def __init__(self, timeout: float | None, description: str) -> None:
+        self._end = None if timeout is None else time.monotonic() + timeout
+        self._timeout = timeout
+        self._description = description
+
+    def run(self, cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess:
+        remaining = None if self._end is None else self._end - time.monotonic()
+        if remaining is not None and remaining <= 0:
+            raise TimeoutError(f"{self._description} exceeded {self._timeout:g}s")
+        try:
+            return subprocess.run(cmd, timeout=remaining, **kwargs)
+        except subprocess.TimeoutExpired as e:
+            raise TimeoutError(
+                f"{self._description} exceeded {self._timeout:g}s during: {' '.join(cmd[:3])}"
+            ) from e
 
 
 def _remote_image_exists(container_runtime: str, image: str) -> bool:
@@ -52,19 +75,27 @@ def _remote_image_exists(container_runtime: str, image: str) -> bool:
             return True
 
     # Last resort: container runtime manifest inspect
-    result = subprocess.run(
-        [container_runtime, "manifest", "inspect", image],
-        capture_output=True,
-    )
+    try:
+        result = subprocess.run(
+            [container_runtime, "manifest", "inspect", image],
+            capture_output=True,
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        return False
     return result.returncode == 0
 
 
-def _image_platform(container_runtime: str, image: str) -> str | None:
+def _image_platform(
+    container_runtime: str, image: str, run: Callable[..., Any] | None = None
+) -> str | None:
     """Return the ``os/arch`` an image was built for, pulling it if needed.
 
     A derived image has to be built for its base image's platform, which on a
     host of another architecture is not the platform a build defaults to.
+    ``run`` replaces ``subprocess.run``, for example to apply a time budget.
     """
+    run = run or subprocess.run
     inspect = [
         container_runtime,
         "image",
@@ -73,23 +104,26 @@ def _image_platform(container_runtime: str, image: str) -> str | None:
         "--format",
         "{{.Os}}/{{.Architecture}}",
     ]
-    result = subprocess.run(inspect, capture_output=True)
+    result = run(inspect, capture_output=True)
     if result.returncode != 0:
-        pull = subprocess.run([container_runtime, "pull", image], capture_output=True)
+        pull = run([container_runtime, "pull", image], capture_output=True)
         if pull.returncode != 0:
             stderr = pull.stderr.decode() if pull.stderr else ""
             logger.warning(f"Could not pull {image} to read its platform: {stderr.strip()}")
             return None
-        result = subprocess.run(inspect, capture_output=True)
+        result = run(inspect, capture_output=True)
         if result.returncode != 0:
             return None
     platform = result.stdout.decode().strip()
     return platform if "/" in platform else None
 
 
-def _image_user(container_runtime: str, image: str) -> str | None:
+def _image_user(
+    container_runtime: str, image: str, run: Callable[..., Any] | None = None
+) -> str | None:
     """Return the user an image is configured to run as, if any."""
-    result = subprocess.run(
+    run = run or subprocess.run
+    result = run(
         [container_runtime, "image", "inspect", image, "--format", "{{.Config.User}}"],
         capture_output=True,
     )
@@ -164,12 +198,54 @@ def build_task_image(
     return image
 
 
+def _swerex_tag_hash(
+    base_image: str, dockerfile_extra: tuple[str, ...] = (), pristine: bool = False
+) -> str:
+    """Deterministic tag for the derived image, from its content inputs."""
+    extra_hash = ":".join(dockerfile_extra) if dockerfile_extra else ""
+    hash_input = f"{base_image}:{UV_IMAGE}:{SWEREX_IMAGE_VERSION}:{extra_hash}"
+    if pristine:
+        hash_input += ":pristine"
+    return hashlib.sha256(hash_input.encode()).hexdigest()[:12]
+
+
+def remove_swerex_image(
+    base_image: str,
+    container_runtime: str = "docker",
+    dockerfile_extra: tuple[str, ...] = (),
+    pristine: bool = False,
+) -> None:
+    """Remove a derived swe-rex image and its base image from local storage.
+
+    Use this to free disk when many single-use images pass through one host.
+    Registry copies are left alone, and failures are logged rather than raised.
+    """
+    tag_hash = _swerex_tag_hash(base_image, dockerfile_extra, pristine)
+    resolved = _resolved_images.pop(tag_hash, None)
+    names = {f"swerex-{tag_hash}:latest", base_image}
+    if resolved:
+        names.add(resolved)
+    # One name per call, so a name that is already gone does not block the others.
+    for name in sorted(names):
+        try:
+            result = subprocess.run(
+                [container_runtime, "rmi", "--force", name], capture_output=True
+            )
+        except OSError as e:
+            logger.debug(f"Could not remove image {name}: {e}")
+            continue
+        if result.returncode != 0:
+            stderr = result.stderr.decode() if result.stderr else ""
+            logger.debug(f"Could not remove image {name}: {stderr.strip()}")
+
+
 def get_swerex_image(
     base_image: str,
     container_runtime: str = "docker",
     dockerfile_extra: tuple[str, ...] = (),
     require_registry: bool = False,
     pristine: bool = False,
+    timeout: float | None = None,
 ) -> str:
     """Build a derived image with Python and swe-rex pre-installed.
 
@@ -187,6 +263,8 @@ def get_swerex_image(
             server is installed into a private virtualenv and exposed through a
             single launcher symlink. Use for benchmarks whose tasks depend on the
             exact contents of their image.
+        timeout: Seconds allowed for resolving the image, covering every pull,
+            build and push it runs. None means no limit.
 
     Returns:
         The derived image name with swe-rex installed. If require_registry=True,
@@ -195,20 +273,22 @@ def get_swerex_image(
     Raises:
         ValueError: If require_registry=True but SWEREX_REGISTRY is not set.
         RuntimeError: If image build or push fails.
+        TimeoutError: If resolving the image takes longer than ``timeout``.
     """
-    # Deterministic tag from content inputs
-    extra_hash = ":".join(dockerfile_extra) if dockerfile_extra else ""
-    hash_input = f"{base_image}:{UV_IMAGE}:{SWEREX_IMAGE_VERSION}:{extra_hash}"
-    if pristine:
-        hash_input += ":pristine"
-    tag_hash = hashlib.sha256(hash_input.encode()).hexdigest()[:12]
+    tag_hash = _swerex_tag_hash(base_image, dockerfile_extra, pristine)
 
     if tag_hash in _resolved_images:
         logger.debug(f"Using cached resolution for swerex-{tag_hash}")
         return _resolved_images[tag_hash]
 
     result = _resolve_swerex_image(
-        base_image, container_runtime, dockerfile_extra, require_registry, tag_hash, pristine
+        base_image,
+        container_runtime,
+        dockerfile_extra,
+        require_registry,
+        tag_hash,
+        pristine,
+        deadline=_Deadline(timeout, f"Resolving swerex image for {base_image}"),
     )
     _resolved_images[tag_hash] = result
     return result
@@ -291,8 +371,12 @@ def _resolve_swerex_image(
     require_registry: bool,
     tag_hash: str,
     pristine: bool = False,
+    *,
+    deadline: _Deadline | None = None,
 ) -> str:
     """Core image resolution logic — called once per unique image hash."""
+    if deadline is None:
+        deadline = _Deadline(None, f"Resolving swerex image for {base_image}")
     config = get_infra_config()
     registry = config.swerex_registry
 
@@ -309,7 +393,7 @@ def _resolve_swerex_image(
     registry_image = f"{registry}/swerex-{tag_hash}:latest" if registry else None
 
     # Check if image exists locally
-    result = subprocess.run(
+    result = deadline.run(
         [container_runtime, "image", "inspect", local_image],
         capture_output=True,
     )
@@ -322,11 +406,11 @@ def _resolve_swerex_image(
                 logger.debug(f"Registry image already exists: {registry_image}")
                 return registry_image
             # Not in registry yet — tag and push
-            subprocess.run(
+            deadline.run(
                 [container_runtime, "tag", local_image, registry_image],
                 capture_output=True,
             )
-            push_result = subprocess.run(
+            push_result = deadline.run(
                 [container_runtime, "push", registry_image], capture_output=True
             )
             if push_result.returncode != 0:
@@ -349,12 +433,12 @@ def _resolve_swerex_image(
             logger.info(f"Registry image {registry_image} not found, will build and push")
         else:
             # For Docker/Podman: pull so we have a local copy
-            result = subprocess.run(
+            result = deadline.run(
                 [container_runtime, "pull", registry_image],
                 capture_output=True,
             )
             if result.returncode == 0:
-                subprocess.run(
+                deadline.run(
                     [container_runtime, "tag", registry_image, local_image],
                     capture_output=True,
                 )
@@ -365,15 +449,15 @@ def _resolve_swerex_image(
 
     logger.info(f"Building swerex image from {base_image}...")
 
-    platform = _image_platform(container_runtime, base_image)
-    user = _image_user(container_runtime, base_image) if pristine else None
+    platform = _image_platform(container_runtime, base_image, run=deadline.run)
+    user = _image_user(container_runtime, base_image, run=deadline.run) if pristine else None
     dockerfile = build_swerex_dockerfile(base_image, dockerfile_extra, pristine, user=user)
 
     build_cmd = [container_runtime, "build", "-t", local_image]
     if platform:
         build_cmd.append(f"--platform={platform}")
     build_cmd.append("-")
-    result = subprocess.run(build_cmd, input=dockerfile.encode(), capture_output=True)
+    result = deadline.run(build_cmd, input=dockerfile.encode(), capture_output=True)
     if result.returncode != 0:
         stderr = result.stderr.decode() if result.stderr else ""
         raise RuntimeError(f"Failed to build swerex image: {stderr}")
@@ -382,10 +466,8 @@ def _resolve_swerex_image(
 
     if registry and registry_image:
         logger.debug(f"Pushing swerex image to registry: {registry_image}")
-        subprocess.run([container_runtime, "tag", local_image, registry_image], capture_output=True)
-        push_result = subprocess.run(
-            [container_runtime, "push", registry_image], capture_output=True
-        )
+        deadline.run([container_runtime, "tag", local_image, registry_image], capture_output=True)
+        push_result = deadline.run([container_runtime, "push", registry_image], capture_output=True)
         if push_result.returncode == 0:
             logger.debug(f"Pushed swerex image to registry: {registry_image}")
             if require_registry:

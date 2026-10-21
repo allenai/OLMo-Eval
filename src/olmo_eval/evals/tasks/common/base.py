@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import math
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
+from importlib.resources import files
 from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
 
 from olmo_eval.common.formatters import Formatter
@@ -369,6 +371,10 @@ class Task(ABC):
         ...         yield from self._load_instances()
     """
 
+    #: Scaffold the task's requests need, such as ``"multi_turn_chat"``. The runner
+    #: refuses to start the task under a harness with a different scaffold.
+    required_scaffold: str | None = None
+
     def __init__(self, config: TaskConfig) -> None:
         self.config = config
         self._fewshot_cache: list[Instance] | None = None
@@ -479,6 +485,23 @@ class Task(ABC):
         if self._instances_cache is None:
             self._instances_cache = list(self._load_instances(split=split))
         yield from self._instances_cache
+
+    def _load_packaged_instances(self, package: str | None, filename: str) -> Iterator[Instance]:
+        """Load and process instances from a JSONL file shipped inside ``package``.
+
+        For data that is checked in with the task rather than downloaded. ``package``
+        is the task module's ``__package__``; blank lines are skipped.
+        """
+        if package is None:
+            raise ValueError(f"{type(self).__name__} has no package to load {filename} from")
+        resource = files(package).joinpath(filename)
+        with resource.open(encoding="utf-8") as handle:
+            for index, line in enumerate(handle):
+                if not line.strip():
+                    continue
+                instance = self.process_doc(json.loads(line), index)
+                if instance is not None:
+                    yield instance
 
     def get_fewshot(self) -> list[Instance]:
         """Get few-shot examples (cached after first call).
