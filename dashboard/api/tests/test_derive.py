@@ -699,3 +699,67 @@ def test_suite_counts_include_derived_scores_even_without_corpus_metrics_or_with
         "c": {"score": None, "metrics": {"acc:x": 0.5}, "generation_counts": {"generations": 99}},
     }
     assert suite_generation_counts(node, tasks) == {"generations": 10}
+
+
+@pytest.mark.parametrize("aggregation", ["none", "display_only"])
+def test_no_score_matrix_suites_keep_paired_deltas_and_metadata(aggregation):
+    from types import SimpleNamespace
+
+    import numpy as np
+
+    from olmo_eval_api.routers.api.compare import RowSpec, _matrix_suite_row
+    from olmo_eval_api.schemas.api import MatrixRequest
+    from olmo_eval_api.services.subjects import Subject
+    from olmo_eval_api.stats.paired import Side
+
+    node = build_tree("display", {"display": (aggregation, [{"type": "task", "name": "a"}])})
+    subjects = [
+        Subject(
+            key=f"r:{key}",
+            kind="run",
+            model={},
+            run={"run_id": key},
+            trs={
+                "a": {
+                    "score": score,
+                    "stderr": 0.03,
+                    "num_instances": 100,
+                    "display_format": "percent",
+                    "higher_is_better": True,
+                    "primary_metric": "acc",
+                }
+            },
+        )
+        for key, score in (("base001", 0.5), ("other001", 0.7))
+    ]
+    sides = {
+        "a": {
+            subject.key: Side(
+                "a",
+                "hash",
+                score,
+                0.03,
+                True,
+                keys=np.arange(100, dtype=np.int64),
+                values=np.array([1.0] * count + [0.0] * (100 - count)),
+            )
+            for subject, score, count in zip(subjects, (0.5, 0.7), (50, 70), strict=True)
+        }
+    }
+    body = MatrixRequest(
+        subjects=[s.key for s in subjects], scope="suite:display", metric="primary"
+    )
+    row = _matrix_suite_row(
+        RowSpec("suite:display", "suite", "display", 0, None, aggregation, node),
+        subjects,
+        subjects[0],
+        sides,
+        body,
+        SimpleNamespace(alpha=0.05, n_boot=200, seed=0),
+    )
+    assert row.cells[1].score is None
+    assert row.cells[1].delta is not None
+    assert row.cells[1].delta.method == "paired_bootstrap"
+    assert row.cells[1].delta.delta == pytest.approx(0.2)
+    assert row.meta is not None and row.meta.display_format == "percent"
+    assert row.meta.higher_is_better is True

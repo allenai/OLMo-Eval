@@ -120,7 +120,8 @@ async def column_meta(session: Any, cols: list[tuple[str, str, str]]) -> list[a.
             text(
                 "SELECT DISTINCT ON (s.suite_name) s.suite_name, s.display_format, "
                 "s.higher_is_better FROM suite_results s JOIN runs r ON r.run_id = s.run_id "
-                "WHERE s.suite_name = ANY(:n) ORDER BY s.suite_name, r.created_at DESC"
+                "WHERE s.suite_name = ANY(:n) AND (s.aggregation != 'gap' OR s.score IS NOT NULL) "
+                "ORDER BY s.suite_name, r.created_at DESC"
             ),
             {"n": suites},
         )

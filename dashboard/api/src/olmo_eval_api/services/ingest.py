@@ -53,6 +53,7 @@ from olmo_eval_api.services.suites import (
     leaves,
     propagate_stderr,
     suite_definition_hash,
+    walk_suites,
 )
 from olmo_eval_api.settings import Settings
 from olmo_eval_api.storage.base import Storage
@@ -1112,6 +1113,8 @@ async def complete_run(
             tree = build_tree(x.name, defs)
         except ValueError as exc:
             raise bad_request(str(exc)) from exc
+        if any(node.aggregation == "gap" for node, _, parent in walk_suites(tree) if parent):
+            raise bad_request("GAP suites cannot be nested under another suite")
         leaf_names = leaves(tree)
         present = {name: by_task[name] for name in leaf_names if name in by_task}
         scored = {name for name, tr in present.items() if tr.score is not None}

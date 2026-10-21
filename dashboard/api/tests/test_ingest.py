@@ -981,3 +981,40 @@ async def test_ingest_withholds_invalid_gap_scores(
             text("SELECT headline FROM runs WHERE run_id = :run"), {"run": run_id}
         )
     ).scalar_one() is None
+
+
+async def test_ingest_rejects_nested_gap_definitions(client):
+    run_id = "nestedgap01"
+    response = await client.put(
+        f"/v1/runs/{run_id}", json=run_payload(run_id=run_id, model_name="nested-gap")
+    )
+    assert response.status_code == 200, response.text
+    pair = suite("pair", ["in", "out"], aggregation="gap")
+    parent = suite("parent", [], aggregation="average")
+    parent["children"] = [{"type": "suite", "name": "pair"}]
+    response = await client.post(
+        f"/v1/runs/{run_id}/complete",
+        json={
+            "status": "complete",
+            "finished_at": None,
+            "duration_seconds": 1.0,
+            "suites": [pair, parent],
+            "expected_task_results": 0,
+            "expected_artifacts": 0,
+        },
+    )
+    assert response.status_code == 400
+    assert "GAP suites cannot be nested" in response.text
+
+
+async def test_incomplete_gap_run_does_not_override_column_metadata(client, session):
+    from olmo_eval_api.routers.api.runs import column_meta
+
+    pair = suite("columnpair", ["in", "out"], aggregation="gap")
+    await seed_run(
+        client, run_id="metavalid01", tasks={"in": [0.0, 1.0], "out": [1.0, 1.0]}, suites=[pair]
+    )
+    await seed_run(client, run_id="metapartial01", tasks={"in": [0.0, 1.0]}, suites=[pair])
+    columns = await column_meta(session, [("suite:columnpair", "suite", "columnpair")])
+    assert columns[0].display_format == "percent"
+    assert columns[0].higher_is_better is True
