@@ -19,19 +19,28 @@ import asyncio
 import logging
 import queue
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from olmo_eval.cli.run.config import _apply_dotlist_overrides
 from olmo_eval.cli.utils import process_ordered_args, reconstruct_ordered_args
 from olmo_eval.common.metrics import AccuracyMetric
-from olmo_eval.common.types import Instance, LMOutput, LMRequest, RequestType, Response
+from olmo_eval.common.types import (
+    Instance,
+    LMOutput,
+    LMRequest,
+    RequestType,
+    Response,
+    SamplingParams,
+)
 from olmo_eval.evals.suites import get_suite
 from olmo_eval.evals.tasks.common import TaskConfig
 from olmo_eval.harness.config import HarnessConfig
 from olmo_eval.inference.errors import classify_terminal_provider_error
+from olmo_eval.inference.providers.vllm_server import VLLMServerProvider
 from olmo_eval.runners.asynq.preparation import compute_task_metrics, finalize_task
-from olmo_eval.runners.asynq.processing import process_chat_request
+from olmo_eval.runners.asynq.processing import process_batch, process_chat_request
 from olmo_eval.runners.asynq.results import (
     _report_task_completion,
     aggregate_results,
@@ -330,6 +339,134 @@ def test_total_failure_marks_task_failed_and_fails_the_run() -> None:
 
     with pytest.raises(HardFailureRateExceeded):
         check_hard_failure_gate({SPEC: result})
+
+
+_MAX_TOKENS_400 = (
+    "max_tokens=131072 cannot be greater than max_model_len=max_total_tokens=40960. "
+    "Please request fewer output tokens."
+)
+
+
+def _vllm_server_rejecting(rejected_prompts: set[str]) -> VLLMServerProvider:
+    """A real external-server provider whose client 400s the given chat prompts."""
+    with patch("olmo_eval.inference.providers.vllm_server.BeakerStatusReporter"):
+        provider = VLLMServerProvider(
+            "Qwen/Qwen3-8B", base_url="http://localhost:8000/v1", max_model_len=40960
+        )
+    provider.max_retries = 0
+
+    async def create(**kwargs):
+        if kwargs["messages"][0]["content"] in rejected_prompts:
+            error_type = type("BadRequestError", (Exception,), {"__module__": "openai"})
+            raise error_type(f"Error code: 400 - {_MAX_TOKENS_400}")
+        message = SimpleNamespace(content="a", tool_calls=None)
+        choice = SimpleNamespace(message=message, logprobs=None, finish_reason="stop")
+        return SimpleNamespace(choices=[choice], usage=None)
+
+    client = MagicMock()
+    client.chat.completions.create = AsyncMock(side_effect=create)
+    provider._get_or_create_client = MagicMock(return_value=client)
+    return provider
+
+
+def _run_batched_inference(total: int, hard_failing: set[int]) -> list[ResultItem]:
+    """Drive the real batched worker path through a real vllm_server provider."""
+    provider = _vllm_server_rejecting({f"q{idx}" for idx in hard_failing})
+    harness = SimpleNamespace(provider=provider, _apply_config=lambda request: request)
+    items = [
+        QueueItem(
+            model_name="qwen3-8b-27b",
+            task_id=SPEC,
+            instance_idx=idx,
+            instance=Instance(question=f"q{idx}", gold_answer="a"),
+            request=LMRequest(
+                request_type=RequestType.CHAT,
+                messages=({"role": "user", "content": f"q{idx}"},),
+            ),
+            sampling_params=SamplingParams(max_tokens=131072),
+        )
+        for idx in range(total)
+    ]
+    result_queue: queue.Queue[ResultItem] = queue.Queue()
+    asyncio.run(process_batch(items, harness, result_queue))  # type: ignore[arg-type]
+
+    results: list[ResultItem] = []
+    while not result_queue.empty():
+        results.append(result_queue.get())
+    return results
+
+
+def test_batched_total_failure_fails_the_run() -> None:
+    """Issue #310's run: every vllm_server request 400s, which must not score 0.0."""
+    items = _run_batched_inference(TOTAL_INSTANCES, hard_failing=set(range(TOTAL_INSTANCES)))
+    result = _task_result_from(items)
+
+    assert all(is_hard_failure(item) for item in items)
+    assert all(_MAX_TOKENS_400 in (item.error or "") for item in items)
+    assert result.num_instances == 0
+    assert result.instances_failed == TOTAL_INSTANCES
+    assert result.error is not None
+    assert "No instances were saved" in result.error
+    with pytest.raises(HardFailureRateExceeded):
+        check_hard_failure_gate({SPEC: result})
+
+
+def test_batched_partial_failure_fails_the_run() -> None:
+    items = _run_batched_inference(
+        TOTAL_INSTANCES, hard_failing=set(range(SAVED_INSTANCES, TOTAL_INSTANCES))
+    )
+    result = _task_result_from(items)
+
+    assert result.num_instances == SAVED_INSTANCES
+    assert result.instances_failed == HARD_FAILURES
+    assert result.hard_failure_rate_exceeded is True
+    with pytest.raises(HardFailureRateExceeded):
+        check_hard_failure_gate({SPEC: result})
+
+
+def test_batched_clean_run_stays_green() -> None:
+    items = _run_batched_inference(TOTAL_INSTANCES, hard_failing=set())
+    result = _task_result_from(items)
+
+    assert not any(is_hard_failure(item) for item in items)
+    assert result.num_instances == TOTAL_INSTANCES
+    assert result.error is None
+    check_hard_failure_gate({SPEC: result})
+
+
+def _run_empty_loglikelihood(continuations: tuple[str, ...]) -> ResultItem:
+    """One loglikelihood request through a provider that returns no outputs for it."""
+
+    async def alogprobs(requests, sampling_params):
+        return [[] for _ in requests]
+
+    harness = SimpleNamespace(
+        provider=SimpleNamespace(describe_request=lambda *a, **k: None, alogprobs=alogprobs),
+        _apply_config=lambda request: request,
+        flush_metrics=lambda batch_hash: None,
+    )
+    item = QueueItem(
+        model_name="qwen3-8b-27b",
+        task_id=SPEC,
+        instance_idx=0,
+        instance=Instance(question="q0", gold_answer="a"),
+        request=LMRequest(
+            request_type=RequestType.LOGLIKELIHOOD, prompt="q0", continuations=continuations
+        ),
+    )
+    result_queue: queue.Queue[ResultItem] = queue.Queue()
+    asyncio.run(process_batch([item], harness, result_queue))  # type: ignore[arg-type]
+    return result_queue.get_nowait()
+
+
+def test_batched_loglikelihood_without_continuations_is_not_a_failure() -> None:
+    """A request with nothing to score legitimately yields no outputs."""
+    assert _run_empty_loglikelihood(continuations=()).error is None
+
+
+def test_batched_loglikelihood_with_continuations_and_no_outputs_is_a_failure() -> None:
+    """A provider returning no outputs for requested continuations has failed."""
+    assert is_hard_failure(_run_empty_loglikelihood(continuations=(" a", " b")))
 
 
 # ---------------------------------------------------------------------------

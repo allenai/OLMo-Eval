@@ -49,13 +49,17 @@ class ContinuousBatchDispatcher[T, R]:
     _stats: DispatchStats = field(default_factory=DispatchStats, init=False)
 
     async def run(self, items: list[T]) -> list[R | None]:
+        """Dispatch all items, returning None for failed requests."""
+        return [result.result for result in await self.run_results(items)]
+
+    async def run_results(self, items: list[T]) -> list[DispatchResult[R]]:
         """Dispatch all items and return results in original order.
 
         Args:
             items: List of items to process.
 
         Returns:
-            List of results in same order as input. Failed items have None.
+            Results and errors in the same order as input.
         """
         if not items:
             return []
@@ -64,7 +68,7 @@ class ContinuousBatchDispatcher[T, R]:
         self._stats = DispatchStats(total=total)
 
         # Results array preserves ordering
-        results: list[R | None] = [None for _ in range(total)]
+        results: list[DispatchResult[R]] = [DispatchResult(index=i) for i in range(total)]
 
         # Queue of (index, item, attempt) tuples
         pending: list[tuple[int, T, int]] = [(i, item, 0) for i, item in enumerate(items)]
@@ -72,6 +76,7 @@ class ContinuousBatchDispatcher[T, R]:
 
         # Track in-flight tasks: task -> (index, item, attempt)
         in_flight: dict[asyncio.Task, tuple[int, T, int]] = {}
+        first_error: Exception | None = None
 
         while pending_idx < len(pending) or in_flight:
             # Top up in-flight set to target
@@ -104,10 +109,12 @@ class ContinuousBatchDispatcher[T, R]:
                     self._stats.retried += 1
                 else:
                     # Record result
-                    results[idx] = result
+                    results[idx] = DispatchResult(index=idx, result=result, error=error)
                     self._stats.completed += 1
                     if error is not None:
                         self._stats.failed += 1
+                        if first_error is None:
+                            first_error = error
 
                     # Callbacks
                     if self.on_result is not None:
@@ -115,6 +122,14 @@ class ContinuousBatchDispatcher[T, R]:
                     if self.on_progress is not None:
                         self.on_progress(self._stats.completed, total)
 
+        if first_error is not None and total > 1:
+            logger.error(
+                "dispatch: %d/%d requests failed; first error: %s: %s",
+                self._stats.failed,
+                total,
+                type(first_error).__name__,
+                first_error,
+            )
         return results
 
     async def _safe_process(self, item: T) -> tuple[R | None, Exception | None]:
@@ -151,9 +166,27 @@ async def dispatch_concurrent[T, R](
     return await dispatcher.run(items)
 
 
+async def dispatch_concurrent_results[T, R](
+    items: list[T],
+    process_fn: Callable[[T], Awaitable[R]],
+    max_in_flight: int = 256,
+    max_retries: int = 0,
+    on_progress: Callable[[int, int], None] | None = None,
+) -> list[DispatchResult[R]]:
+    """Dispatch requests while preserving each result and exception."""
+    dispatcher: ContinuousBatchDispatcher[T, R] = ContinuousBatchDispatcher(
+        process_fn=process_fn,
+        max_in_flight=max_in_flight,
+        max_retries=max_retries,
+        on_progress=on_progress,
+    )
+    return await dispatcher.run_results(items)
+
+
 __all__ = [
     "ContinuousBatchDispatcher",
     "DispatchResult",
     "DispatchStats",
     "dispatch_concurrent",
+    "dispatch_concurrent_results",
 ]

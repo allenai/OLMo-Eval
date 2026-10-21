@@ -17,6 +17,18 @@ def _no_results_upload(monkeypatch):
     monkeypatch.setattr("olmo_eval.upload.auth.has_local_google_credentials", lambda: False)
 
 
+@pytest.fixture(autouse=True)
+def _no_openrouter_key(monkeypatch):
+    """Keep a developer's OpenRouter key from routing unit tests to the live API."""
+    from olmo_eval.common.openai_credentials import (
+        OPENROUTER_API_KEY_ALIASES,
+        OPENROUTER_API_KEY_ENV,
+    )
+
+    for name in (OPENROUTER_API_KEY_ENV, *OPENROUTER_API_KEY_ALIASES):
+        monkeypatch.delenv(name, raising=False)
+
+
 @pytest.fixture
 def anyio_backend():
     """Use only asyncio backend for async tests (trio not installed)."""
