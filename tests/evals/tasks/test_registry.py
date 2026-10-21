@@ -455,6 +455,33 @@ class TestParseOverridesDependencies:
         assert result == {"dependencies": ["git+https://github.com/user/repo@v1.0"]}
 
 
+class TestParseOverridesBoolFields:
+    """Tests for parse_overrides coercion of boolean TaskConfig fields."""
+
+    def test_strip_unclosed_thinking_true_is_bool(self):
+        result = parse_overrides("strip_unclosed_thinking=true")
+        assert result == {"strip_unclosed_thinking": True}
+        assert result["strip_unclosed_thinking"] is True
+
+    def test_strip_thinking_true_is_bool(self):
+        result = parse_overrides("strip_thinking=true")
+        assert result["strip_thinking"] is True
+
+    def test_bool_false_and_numeric_forms(self):
+        assert parse_overrides("strip_thinking=False") == {"strip_thinking": False}
+        assert parse_overrides("strip_unclosed_thinking=TRUE") == {"strip_unclosed_thinking": True}
+        assert parse_overrides("strip_unclosed_thinking=1") == {"strip_unclosed_thinking": True}
+        assert parse_overrides("strip_unclosed_thinking=0") == {"strip_unclosed_thinking": False}
+
+    def test_bool_with_other_overrides(self):
+        result = parse_overrides("num_fewshot=5,strip_unclosed_thinking=true")
+        assert result == {"num_fewshot": 5, "strip_unclosed_thinking": True}
+
+    def test_invalid_bool_raises(self):
+        with pytest.raises(ValueError, match="strip_unclosed_thinking"):
+            parse_overrides("strip_unclosed_thinking=yes")
+
+
 class TestParseOverridesSamplingParams:
     """Tests for parse_overrides coercion of SamplingParams fields."""
 
