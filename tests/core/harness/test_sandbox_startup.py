@@ -77,3 +77,63 @@ async def test_manager_stops_started_siblings_when_minimum_is_not_met(
 
     assert [executor.stop_calls for executor in executors] == [1, 1]
     assert manager._executors == []
+
+
+@pytest.mark.anyio
+async def test_executor_stops_the_modal_app_it_created(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stopped: list[str] = []
+
+    async def stop_modal_app(app_name: str) -> None:
+        stopped.append(app_name)
+
+    class _Deployment:
+        runtime = object()
+
+        async def start(self) -> None:
+            pass
+
+        async def stop(self) -> None:
+            pass
+
+    monkeypatch.setattr("olmo_eval.harness.sandbox.modal_deployment.stop_modal_app", stop_modal_app)
+    executor = SandboxExecutor(SandboxConfig(image="test", mode=SandboxMode.MODAL))
+    monkeypatch.setattr(executor, "get_deployment", lambda: _Deployment())
+
+    await executor.start()
+    app_name = executor._owned_modal_app
+    assert app_name is not None and app_name.startswith("swerex-")
+    await executor.stop()
+    await executor.stop()
+
+    assert stopped == [app_name]
+
+
+@pytest.mark.anyio
+async def test_manager_stops_its_modal_app_and_executors_leave_it_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stopped: list[str] = []
+
+    async def stop_modal_app(app_name: str) -> None:
+        stopped.append(app_name)
+
+    class _Deployment:
+        runtime = object()
+
+        async def start(self) -> None:
+            pass
+
+        async def stop(self) -> None:
+            pass
+
+    monkeypatch.setattr("olmo_eval.harness.sandbox.modal_deployment.stop_modal_app", stop_modal_app)
+    monkeypatch.setattr(SandboxExecutor, "get_deployment", lambda _self: _Deployment())
+    manager = SandboxManager([SandboxConfig(image="test", mode=SandboxMode.MODAL, instances=2)])
+
+    await manager.start()
+    assert all(executor._owned_modal_app is None for executor in manager._executors)
+    await manager.stop()
+
+    assert stopped == [manager._modal_app_name]

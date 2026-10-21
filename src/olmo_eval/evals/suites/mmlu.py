@@ -42,3 +42,10 @@ MMLU_BPB = make_suite(
     "mmlu:bpb",
     tuple(f"mmlu_{s}:rc:bpb" for s in MMLU_SUBJECTS),
 )
+
+MMLU_COT = make_suite(
+    "mmlu:cot",
+    _task_names_variant(MMLU_SUBJECTS, "cot"),
+    aggregation=AggregationStrategy.AVERAGE,
+    description="0-shot chain-of-thought MMLU across all 57 subjects",
+)

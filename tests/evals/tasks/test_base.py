@@ -111,6 +111,20 @@ class TestTaskConfig:
         )
         assert len(config.metrics) == 1
 
+    def test_serializes_judge_configuration_only_for_judge_tasks(self):
+        plain = TaskConfig(name="plain").to_dict()
+        judged = TaskConfig(
+            name="judged",
+            judge_model="judge-snapshot",
+            judge_reasoning_effort="high",
+            judge_max_tokens=8192,
+        ).to_dict()
+
+        assert "judge_model" not in plain
+        assert judged["judge_model"] == "judge-snapshot"
+        assert judged["judge_reasoning_effort"] == "high"
+        assert judged["judge_max_tokens"] == 8192
+
 
 class TestTask:
     """Tests for Task base class."""
@@ -154,6 +168,45 @@ class TestTask:
         fewshot2 = task.get_fewshot()
 
         assert fewshot1 is fewshot2  # Same object (cached)
+
+
+class _PackagedTask(ConcreteTask):
+    """Keeps every document except those marked ``skip``, recording each one's line."""
+
+    def process_doc(self, doc: dict, index: int = 0) -> Instance | None:
+        if doc.get("skip"):
+            return None
+        return Instance(question=doc["q"], gold_answer=None, metadata={"line": index})
+
+
+class TestPackagedInstances:
+    def test_reads_the_packaged_jsonl_through_process_doc(self, monkeypatch, tmp_path):
+        (tmp_path / "data.jsonl").write_text(
+            '{"q": "first"}\n\n{"q": "dropped", "skip": true}\n{"q": "second"}\n',
+            encoding="utf-8",
+        )
+        packages: list[str] = []
+
+        def files(package: str):
+            packages.append(package)
+            return tmp_path
+
+        monkeypatch.setattr("olmo_eval.evals.tasks.common.base.files", files)
+        task = _PackagedTask(TaskConfig(name="test", data_source="data.jsonl"))
+
+        instances = list(task._load_packaged_instances("some.package", "data.jsonl"))
+
+        assert packages == ["some.package"]
+        assert [(i.question, i.metadata["line"]) for i in instances] == [
+            ("first", 0),
+            ("second", 3),
+        ]
+
+    def test_requires_a_package(self):
+        task = _PackagedTask(TaskConfig(name="test", data_source="data.jsonl"))
+
+        with pytest.raises(ValueError, match="no package"):
+            list(task._load_packaged_instances(None, "data.jsonl"))
 
 
 @pytest.mark.anyio
@@ -281,6 +334,115 @@ class TestTaskScoring:
         assert scored[0].scores["exact_match"] == 0.0
         assert scored[0].outputs[0].metadata["score:exact_match"] == 0.0
         assert scored[0].outputs[1].metadata["score:exact_match"] == 1.0
+
+
+@pytest.mark.anyio
+class TestStripThinking:
+    """Tests for TaskConfig.strip_thinking (applied by the runner via strip_thinking_traces)."""
+
+    def _make_response(self, texts: list[str]) -> Response:
+        return Response(
+            instance=Instance(question="What is 2+2?", gold_answer="4"),
+            request=LMRequest(request_type=RequestType.COMPLETION, prompt="What is 2+2?"),
+            outputs=[LMOutput(text=text) for text in texts],
+        )
+
+    async def test_strips_trace_before_extraction_and_scoring(self):
+        metric = AccuracyMetric(scorer=ExactMatchScorer)
+        config = TaskConfig(
+            name="test", data_source="test/dataset", metrics=(metric,), strip_thinking=True
+        )
+        task = ConcreteTask(config)
+        response = self._make_response(["<think>Maybe 5? No, 4.</think>\n\n4"])
+
+        task.strip_thinking_traces([response])
+        scored = await task.score_responses([response])
+
+        output = scored[0].outputs[0]
+        assert output.text == "\n\n4"
+        assert output.extracted_answer == "4"
+        assert output.metadata["original_text"] == "<think>Maybe 5? No, 4.</think>\n\n4"
+        assert scored[0].scores["exact_match"] == 1.0
+
+    def test_strips_up_to_last_closing_tag(self):
+        config = TaskConfig(name="test", data_source="test/dataset", strip_thinking=True)
+        task = ConcreteTask(config)
+        response = self._make_response(["<think>a</think> draft <think>b</think> 4"])
+
+        task.strip_thinking_traces([response])
+
+        assert response.outputs[0].text == " 4"
+
+    def test_text_after_trace_is_kept_verbatim(self):
+        """Leading whitespace survives; whitespace-sensitive verifiers depend on it."""
+        config = TaskConfig(name="test", data_source="test/dataset", strip_thinking=True)
+        task = ConcreteTask(config)
+        response = self._make_response(["<think>plan</think>\n\nFirst line.\n\nSecond line."])
+
+        task.strip_thinking_traces([response])
+
+        assert response.outputs[0].text == "\n\nFirst line.\n\nSecond line."
+
+    def test_answer_tags_are_removed(self):
+        config = TaskConfig(name="test", data_source="test/dataset", strip_thinking=True)
+        task = ConcreteTask(config)
+        response = self._make_response(["<think>plan</think>\n<answer>4</answer>"])
+
+        task.strip_thinking_traces([response])
+
+        assert response.outputs[0].text == "4"
+
+    def test_unterminated_trace_is_scored_as_is(self):
+        config = TaskConfig(name="test", data_source="test/dataset", strip_thinking=True)
+        task = ConcreteTask(config)
+        response = self._make_response(["<think>still thinking about 4"])
+
+        task.strip_thinking_traces([response])
+
+        output = response.outputs[0]
+        assert output.text == "<think>still thinking about 4"
+        assert "original_text" not in output.metadata
+
+    def test_output_without_trace_is_unchanged(self):
+        config = TaskConfig(name="test", data_source="test/dataset", strip_thinking=True)
+        task = ConcreteTask(config)
+        response = self._make_response(["4"])
+
+        task.strip_thinking_traces([response])
+
+        assert response.outputs[0].text == "4"
+        assert "original_text" not in response.outputs[0].metadata
+
+    def test_second_pass_is_a_no_op(self):
+        config = TaskConfig(name="test", data_source="test/dataset", strip_thinking=True)
+        task = ConcreteTask(config)
+        response = self._make_response(["<think>reasoning</think>4"])
+
+        task.strip_thinking_traces([response])
+        task.strip_thinking_traces([response])
+
+        assert response.outputs[0].text == "4"
+        assert response.outputs[0].metadata["original_text"] == "<think>reasoning</think>4"
+
+    async def test_disabled_by_default(self):
+        config = TaskConfig(name="test", data_source="test/dataset")
+        task = ConcreteTask(config)
+        response = self._make_response(["<think>reasoning</think>4"])
+
+        task.strip_thinking_traces([response])
+        await task.score_responses([response])
+
+        assert response.outputs[0].text == "<think>reasoning</think>4"
+        assert response.outputs[0].extracted_answer == "<think>reasoning</think>4"
+
+    def test_to_dict_includes_strip_thinking(self):
+        config = TaskConfig(name="test", data_source="test/dataset", strip_thinking=True)
+        assert config.to_dict()["strip_thinking"] is True
+
+    def test_to_dict_omits_strip_thinking_when_off(self):
+        """Task hashes of runs that never used the option must not change."""
+        config = TaskConfig(name="test", data_source="test/dataset")
+        assert "strip_thinking" not in config.to_dict()
 
 
 @pytest.mark.anyio
@@ -846,3 +1008,53 @@ class TestMixedWorkloadScoring:
         assert scored[0].outputs[0].metadata["score:timed_process"] == 1.0
         assert scored[0].outputs[0].metadata["score:tracked_context"] == 1.0
         assert scored[0].outputs[0].metadata["score:tracked_exec"] == 1.0
+
+
+class TestSamplingParamsInTaskHash:
+    """Sampling fields added later must not move the hash of tasks that don't use them."""
+
+    #: The sampling fields stored task hashes were computed with.
+    HASHED_SAMPLING_FIELDS = frozenset(
+        {
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "top_k",
+            "stop_sequences",
+            "num_samples",
+            "logprobs",
+            "do_sample",
+            "truncate_prompt_tokens",
+            "truncation_side",
+        }
+    )
+
+    def test_every_newer_field_is_emitted_only_when_set(self):
+        from dataclasses import fields
+
+        from olmo_eval.common.types import SamplingParams
+
+        newer = {f.name for f in fields(SamplingParams)} - self.HASHED_SAMPLING_FIELDS
+
+        # A field missing here would change every task's hash.
+        assert newer <= set(TaskConfig._SAMPLING_FIELDS_EMITTED_WHEN_SET)
+
+    def test_an_unset_newer_field_is_left_out_of_the_config(self):
+        from olmo_eval.common.types import SamplingParams
+
+        config = TaskConfig(
+            name="test", data_source="test/dataset", sampling_params=SamplingParams()
+        )
+
+        assert set(config.to_dict()["sampling_params"]) == self.HASHED_SAMPLING_FIELDS
+
+    def test_a_set_newer_field_is_hashed(self):
+        from olmo_eval.common.types import SamplingParams
+
+        config = TaskConfig(
+            name="test",
+            data_source="test/dataset",
+            sampling_params=SamplingParams(fit_max_tokens_to_context=True),
+        )
+
+        assert config.to_dict()["sampling_params"]["fit_max_tokens_to_context"] is True

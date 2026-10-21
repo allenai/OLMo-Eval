@@ -7,11 +7,11 @@ set -euo pipefail
 # management by archiving the previous image before replacing it.
 #
 # Usage:
-#   ./scripts/push_beaker_image.sh                              # Use defaults
-#   ./scripts/push_beaker_image.sh --source olmo-eval:cu1281-trc2100-amd64
-#   ./scripts/push_beaker_image.sh --workspace ai2/oe-data      # Custom workspace
-#   ./scripts/push_beaker_image.sh --dry-run                    # Preview only
-#   ./scripts/push_beaker_image.sh --force                      # Force re-upload (delete existing tmp)
+#   ./scripts/beaker/push_beaker_image.sh                              # Use defaults
+#   ./scripts/beaker/push_beaker_image.sh --source olmo-eval:cu1281-trc2100-amd64
+#   ./scripts/beaker/push_beaker_image.sh --workspace ai2/oe-data      # Custom workspace
+#   ./scripts/beaker/push_beaker_image.sh --dry-run                    # Preview only
+#   ./scripts/beaker/push_beaker_image.sh --force                      # Force re-upload (delete existing tmp)
 #
 # The script will:
 #   1. Upload the source image as a temporary image (-tmp)
@@ -200,4 +200,4 @@ echo ""
 echo "Success! Image available at: ${IMAGE_REF}"
 echo ""
 echo "To use in Beaker jobs:"
-echo "  olmo-eval beaker launch --beaker-image ${IMAGE_REF} ..."
+echo "  olmo-eval beaker launch --image ${IMAGE_REF} ..."

@@ -1,0 +1,132 @@
+{
+  "protocol_version": 1,
+  "client": {
+    "name": "olmo-eval",
+    "version": "0.9.3"
+  },
+  "run": {
+    "run_id": "db385601e335",
+    "launch_id": "5e0c7a9d13f2",
+    "experiment_name": "llama-3.1-8b-instruct-omniscience_judge",
+    "experiment_group": "llama-3.1-8b-instruct-omniscience_judge-20260930-180131",
+    "status": "complete",
+    "started_at": "2026-10-01T01:00:12.410000+00:00",
+    "finished_at": "2026-10-01T01:26:01.757323+00:00",
+    "duration_seconds": 1341.517121553421,
+    "author": "maliam",
+    "tags": [
+      "omniscience"
+    ],
+    "olmo_eval_version": "0.9.3",
+    "git": {
+      "repo": "allenai/olmo-eval-internal",
+      "commit": "e81a69bf44a4d7a86033d7ccc7fb7d0e41db48a7",
+      "branch": "maliam/omniscience",
+      "dirty": false
+    },
+    "beaker": {
+      "experiment_id": "01M3TFPE2PQ9DDAZD3YT52V0JZ",
+      "workload_id": "01M3TFPE2PQ9DDAZD3YT52V0JZ",
+      "job_id": "01M3TFPE69KR939WRYMF981EP3",
+      "task_id": "01M3TFPE2TRWCBD3EHFRFWQM11",
+      "workspace": "ai2/olmo-eval-debug",
+      "workspace_id": "01KG8QW7T4RYEW59EFXSJ7029N",
+      "result_dataset_id": "01M3TFPE2X873CCF4KMSKRME4D",
+      "node_hostname": "jupiter-cs-aus-111.reviz.ai2.in",
+      "cluster": "ai2/jupiter",
+      "priority": "high",
+      "image": "beaker://petew/olmo-eval-vllm",
+      "budget": "ai2/oe-other",
+      "gpu_count": 4,
+      "cpu_count": 90
+    },
+    "environment": {
+      "hostname": "jupiter-cs-aus-111",
+      "platform": "Linux-5.15.0-x86_64-with-glibc2.35",
+      "python_version": "3.12.11",
+      "packages": {
+        "olmo-eval": "0.9.3",
+        "vllm": "0.11.0",
+        "torch": "2.8.0",
+        "transformers": "4.57.1",
+        "datasets": "4.1.1"
+      },
+      "cuda_version": "12.8",
+      "gpu_type": "NVIDIA H100 80GB HBM3",
+      "gpu_count": 4
+    },
+    "argv": [
+      "olmo-eval",
+      "run",
+      "-O",
+      "/results",
+      "-m",
+      "meta-llama/Llama-3.1-8B-Instruct",
+      "-t",
+      "omniscience:judge",
+      "--experiment-group",
+      "llama-3.1-8b-instruct-omniscience_judge-20260930-180131",
+      "--experiment-name",
+      "llama-3.1-8b-instruct-omniscience_judge",
+      "--upload"
+    ],
+    "task_specs": [
+      "omniscience:judge"
+    ],
+    "output_dir": "/results",
+    "harness_config": {
+      "name": "default",
+      "provider": {
+        "kind": "vllm_server",
+        "model": "meta-llama/Llama-3.1-8B-Instruct",
+        "num_instances": 4
+      },
+      "tool_names": [],
+      "system_prompt": null,
+      "tool_choice": "auto",
+      "scaffold": null,
+      "required_secrets": [],
+      "metrics": {
+        "enabled": true,
+        "reporters": [
+          "file"
+        ],
+        "collect_gpu": true,
+        "collect_vllm_server": true,
+        "vllm_poll_interval_s": 10.0,
+        "experiment_id": "db385601e335",
+        "experiment_name": "llama-3.1-8b-instruct-omniscience_judge",
+        "experiment_group": "llama-3.1-8b-instruct-omniscience_judge-20260930-180131",
+        "model_name": "meta-llama/Llama-3.1-8B-Instruct",
+        "model_hash": "16614dd9d1ac227a"
+      },
+      "batching": {
+        "strategy": "batched",
+        "chunk_size": 64,
+        "chunk_timeout": 5.0
+      }
+    },
+    "provider_init_seconds": {
+      "Llama-3.1-8B-Inst...-w1": 70.67538738250732,
+      "Llama-3.1-8B-Inst...-w2": 70.68333959579468,
+      "Llama-3.1-8B-Inst...-w0": 70.6639575958252,
+      "Llama-3.1-8B-Inst...-w3": 70.69633603096008
+    },
+    "startup_seconds": 78.4,
+    "processing_started_at": "2026-10-01T01:01:30.810000+00:00",
+    "processing_seconds": 1266.1,
+    "errors": []
+  },
+  "model": {
+    "name": "meta-llama/Llama-3.1-8B-Instruct",
+    "path": "meta-llama/Llama-3.1-8B-Instruct",
+    "model_hash": "16614dd9d1ac227a",
+    "revision": null,
+    "provider_kind": "vllm_server",
+    "provider_config": {
+      "kind": "vllm_server",
+      "model": "meta-llama/Llama-3.1-8B-Instruct",
+      "num_instances": 4
+    }
+  }
+}

@@ -153,7 +153,14 @@ class TestVLLMServerStartupTimeout:
         mock_process.poll.return_value = None
 
         with (
-            patch.dict("os.environ", {"VLLM_PYTHON": "/opt/vllm-venv/bin/python"}),
+            patch.dict(
+                "os.environ",
+                {
+                    "VLLM_PYTHON": "/opt/vllm-venv/bin/python",
+                    "PATH": "/usr/local/bin:/usr/bin",
+                },
+                clear=True,
+            ),
             patch(
                 "olmo_eval.inference.providers.vllm_server_utils._find_free_internal_port",
                 return_value=23456,
@@ -176,6 +183,7 @@ class TestVLLMServerStartupTimeout:
         env = mock_popen.call_args.kwargs["env"]
         assert cmd[0] == "/opt/vllm-venv/bin/python"
         assert "VLLM_PYTHON" not in env
+        assert env["PATH"] == "/opt/vllm-venv/bin:/usr/local/bin:/usr/bin"
         assert env["VLLM_PORT"] == "23456"
 
     @pytest.mark.anyio

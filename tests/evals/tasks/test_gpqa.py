@@ -269,6 +269,26 @@ class TestExtractAnswer:
         output = LMOutput(text="ANSWER:A")
         assert task.extract_answer(output) == "A"
 
+    def test_answer_pattern_bold_label(self, task):
+        output = LMOutput(text="**Answer:** B")
+        assert task.extract_answer(output) == "B"
+
+    def test_answer_pattern_followed_by_word_falls_back(self, task):
+        output = LMOutput(text="ANSWER: the correct choice is C")
+        assert task.extract_answer(output) == "C"
+
+    def test_answer_pattern_letter_on_next_line(self, task):
+        output = LMOutput(text="ANSWER:\nC\n\nOption A was close.")
+        assert task.extract_answer(output) == "C"
+
+    def test_answer_pattern_without_colon(self, task):
+        output = LMOutput(text="Reasoning about the options.\n\n**Answer** C")
+        assert task.extract_answer(output) == "C"
+
+    def test_answer_pattern_without_colon_ignores_prose(self, task):
+        output = LMOutput(text="Let me answer a) first. So it is (B)")
+        assert task.extract_answer(output) == "B"
+
     def test_last_answer_pattern_wins(self, task):
         output = LMOutput(text="ANSWER: A\nWait, actually ANSWER: C")
         assert task.extract_answer(output) == "C"
@@ -392,6 +412,21 @@ class TestCoTVariant:
         assert scorer.score(instance, LMOutput(text="So the answer is B.")) == 1.0
         assert scorer.score(instance, LMOutput(text="Therefore, the answer is (C)")) == 0.0
         assert scorer.score(instance, LMOutput(text="")) == 0.0
+
+    def test_format_correct_recorded_in_metadata(self, task):
+        """Format score is a diagnostic, not discarded — mirrors omega_500."""
+        from olmo_eval.evals.tasks.gpqa import GPQACoTExactMatchScorer
+
+        scorer = GPQACoTExactMatchScorer()
+        instance = Instance(question="q", gold_answer="B", metadata={})
+
+        requested = LMOutput(text="Therefore, the answer is (B)")
+        assert scorer.score(instance, requested) == 1.0
+        assert requested.metadata["answer_format_correct"] == 1.0
+
+        fallback = LMOutput(text="I think B is right")
+        scorer.score(instance, fallback)
+        assert fallback.metadata["answer_format_correct"] < 1.0
 
     def test_extract_answer_strips_parens(self, task):
         output = LMOutput(text="Reasoning. Therefore, the answer is (D)")

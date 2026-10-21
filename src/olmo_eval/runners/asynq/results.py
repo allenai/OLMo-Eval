@@ -5,9 +5,10 @@ from __future__ import annotations
 import asyncio
 import queue
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from olmo_eval.common.beaker_status import BeakerStatusReporter
 from olmo_eval.common.logging import get_logger
 from olmo_eval.common.progress import ProgressLogger
 from olmo_eval.common.types import Response
@@ -19,8 +20,14 @@ from olmo_eval.runners.asynq.types import (
     ResultItem,
     TaskTracker,
 )
-from olmo_eval.runners.common.types import TaskResult
+from olmo_eval.runners.common.constants import HardFailureRateExceeded
+from olmo_eval.runners.common.types import (
+    DEFAULT_MAX_HARD_FAILURE_RATE,
+    TASK_COST_KEYS,
+    TaskResult,
+)
 from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
+from olmo_eval.runners.processing.generation_counts import format_generation_counts
 from olmo_eval.runners.processing.utils import compute_task_hash
 
 if TYPE_CHECKING:
@@ -31,7 +38,36 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+
+def is_hard_failure(result_item: ResultItem) -> bool:
+    """Whether an instance result contributes nothing to the metrics.
+
+    A hard failure carries an error and no outputs at all. A soft failure (an
+    error alongside a usable output, e.g. MaxTurnsExceeded with a fallback
+    answer) still gets scored, so it is not a hard failure.
+    """
+    return bool(result_item.error) and not result_item.outputs
+
+
 InstanceKey = tuple[str, str, int]
+
+
+def utc_iso(timestamp: float | None) -> str | None:
+    """POSIX seconds as an ISO 8601 UTC timestamp."""
+    if timestamp is None:
+        return None
+    return datetime.fromtimestamp(timestamp, UTC).isoformat()
+
+
+def apply_task_cost(result: TaskResult, tracker: TaskTracker, completed_at: float) -> None:
+    """Copy the tracker's request timing and token totals onto a finished TaskResult."""
+    result.last_completed_at = utc_iso(completed_at)
+    if tracker.results_recorded == 0:
+        return
+    result.first_request_at = utc_iso(tracker.first_request_at)
+    result.prompt_tokens_total = tracker.prompt_tokens_total
+    result.completion_tokens_total = tracker.completion_tokens_total
+    result.attributed_inference_seconds = tracker.attributed_inference_seconds
 
 
 def _build_pending_instance_keys(trackers: dict[str, TaskTracker]) -> set[InstanceKey]:
@@ -119,6 +155,7 @@ async def process_results(
     write_predictions_fn: Any,
     save_requests: bool,
     write_requests_fn: Any,
+    max_hard_failure_rate: float = DEFAULT_MAX_HARD_FAILURE_RATE,
 ) -> dict[str, TaskResult]:
     """Process results from workers with inline async scoring.
 
@@ -136,6 +173,8 @@ async def process_results(
         model_name: Model name for reporting.
         save_predictions: Whether to save predictions.
         write_predictions_fn: Function to write predictions.
+        max_hard_failure_rate: Fraction of a task's instances allowed to hard-fail
+            before the task is marked failed.
 
     Returns:
         Dict mapping task spec to TaskResult.
@@ -176,14 +215,17 @@ async def process_results(
                 scored_responses[spec][i] for i in sorted(scored_responses[spec].keys())
             ]
             assert tracker.task is not None
+            completed_at = time.time()
             task_result = compute_task_metrics(
                 spec=spec,
                 task=tracker.task,
                 scored_responses=responses_list,
                 failed_instances=tracker.failed_instances,
                 total_instances=tracker.total_instances,
-                duration_seconds=time.time() - tracker.start_time,
+                duration_seconds=completed_at - tracker.start_time,
+                max_hard_failure_rate=max_hard_failure_rate,
             )
+            apply_task_cost(task_result, tracker, completed_at)
             results[spec] = task_result
             tasks_complete += 1
             _report_task_completion(model_name, task_result)
@@ -205,6 +247,7 @@ async def process_results(
         """Score a single response and store the result."""
         async with scoring_semaphore:
             try:
+                task.strip_thinking_traces([response])
                 scored_list = await task.score_responses([response], context=scoring_context)
                 scored = scored_list[0] if scored_list else response
             except Exception as e:
@@ -250,6 +293,8 @@ async def process_results(
             f"runner expected {total_instances} instance(s), "
             f"task trackers describe {len(pending_instances)}"
         )
+    reporter = BeakerStatusReporter()
+    report_progress = reporter.progress_callback("Processed")
     last_health_check = time.time()
     health_check_interval = 5.0
     workers_exited = False
@@ -290,19 +335,23 @@ async def process_results(
                 raise RuntimeError(fatal_message)
 
             _consume_pending_instance(pending_instances, result_item)
+            report_progress(total_instances - len(pending_instances), total_instances)
             tracker = trackers[result_item.task_id]
 
             if tracker.error:
                 continue
 
-            # Check for hard failures (no outputs at all)
-            # Soft failures (error with outputs, like MaxTurnsExceeded) should still be scored
-            if result_item.error and not result_item.outputs:
+            tracker.record_usage(result_item)
+
+            if is_hard_failure(result_item):
+                # is_hard_failure() guarantees an error is set; the `or ""` is for
+                # the type checker, which cannot see that through the predicate.
+                instance_error = result_item.error or ""
                 logger.warning(
-                    f"Instance {result_item.instance_idx} failed for {result_item.task_id}: "
-                    f"{result_item.error}"
+                    f"Instance {result_item.instance_idx} failed for "
+                    f"{result_item.task_id}: {instance_error}"
                 )
-                tracker.add_failure(result_item.instance_idx, result_item.error)
+                tracker.add_failure(result_item.instance_idx, instance_error)
                 scoring_progress.update(1)
                 check_task_completion(result_item.task_id)
                 continue
@@ -356,19 +405,36 @@ async def process_results(
                     check_task_completion(spec)
     finally:
         scoring_progress.close()
+        report_progress(total_instances - len(pending_instances), total_instances, force=True)
+        reporter.flush()
 
     return results
+
+
+def _format_instance_accounting(result: TaskResult) -> str:
+    """Render saved-vs-processed instance counts for the task summary line.
+
+    Matches the summary table: a task that never processed an instance (a
+    task-level failure) reports "-" rather than an invented count.
+    """
+    if not result.instances_processed:
+        return "instances: -"
+    accounting = f"{result.num_instances}/{result.instances_processed} instances saved"
+    if result.instances_failed:
+        accounting += f", {result.instances_failed} hard-failed"
+    return accounting
 
 
 def _report_task_completion(model_name: str, result: TaskResult) -> None:
     """Report when a task completes."""
     label = f"{model_name}:{result.spec}"
+    accounting = _format_instance_accounting(result)
+    if result.generation_counts:
+        accounting += f"; {format_generation_counts(result.generation_counts)}"
     if result.error:
-        logger.error(f"\u2717 {label} (ERROR: {result.error})")
+        logger.error(f"\u2717 {label} ({accounting}) (ERROR: {result.error})")
     else:
-        logger.info(
-            f"\u2713 {label} ({result.num_instances} instances, {result.duration_seconds:.1f}s)"
-        )
+        logger.info(f"\u2713 {label} ({accounting}, {result.duration_seconds:.1f}s)")
 
 
 def aggregate_results(
@@ -414,12 +480,16 @@ def aggregate_results(
     for spec, task_result in results.items():
         task_data: dict[str, Any] = {}
 
+        # Instance counts describe what happened, not whether it was published, so
+        # they are recorded for failed tasks too. Metrics are not: a score computed
+        # on a subset must not read as the task's score.
+        task_data["num_instances"] = task_result.num_instances
+
         if task_result.error:
             task_data["error"] = task_result.error
             results_dict["errors"].append({"task": spec, "error": task_result.error})
         else:
             task_data["metrics"] = task_result.metrics
-            task_data["num_instances"] = task_result.num_instances
             task_data["duration_seconds"] = task_result.duration_seconds
             task_data["primary_metric"] = task_result.primary_metric
             if task_result.predictions:
@@ -436,6 +506,19 @@ def aggregate_results(
                         "score": primary[1],
                     }
 
+        # Saved-vs-processed accounting is recorded for every task, including the
+        # ones that errored, so a partial run cannot look complete downstream.
+        task_data["instances_saved"] = task_result.num_instances
+        task_data["instances_processed"] = task_result.instances_processed
+        task_data["instances_failed"] = task_result.instances_failed
+        if task_result.error_summary:
+            task_data["error_summary"] = task_result.error_summary
+        if task_result.generation_counts is not None:
+            task_data["generation_counts"] = task_result.generation_counts
+
+        for key in TASK_COST_KEYS:
+            task_data[key] = getattr(task_result, key)
+
         task_data["config"] = task_result.config
         task_data["task_hash"] = (
             compute_task_hash(task_result.config) if task_result.config else None
@@ -448,3 +531,27 @@ def aggregate_results(
         results_dict["suites"] = suite_aggs
 
     return results_dict
+
+
+def check_hard_failure_gate(results: dict[str, TaskResult]) -> None:
+    """Fail the run when any task exceeded its hard-failure-rate budget.
+
+    Call this only after results have been written, so the failing run still leaves
+    metrics.json and predictions behind for diagnosis.
+
+    Args:
+        results: Dict mapping task spec to TaskResult.
+
+    Raises:
+        HardFailureRateExceeded: If at least one task tripped the gate.
+    """
+    tripped = sorted(
+        (result for result in results.values() if result.hard_failure_rate_exceeded),
+        key=lambda result: result.spec,
+    )
+    if not tripped:
+        return
+    details = "; ".join(f"{result.spec}: {result.error}" for result in tripped)
+    raise HardFailureRateExceeded(
+        f"{len(tripped)} task(s) exceeded the hard failure rate threshold: {details}"
+    )

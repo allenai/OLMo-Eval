@@ -12,6 +12,17 @@ from olmo_eval.runners.processing.utils import sanitize_spec_for_filename
 logger = get_logger("runners.writers")
 
 
+def _lazy_loader_placeholder(obj: object) -> str:
+    """Stand-in for a callable in a request record, such as a task's lazy image loader.
+
+    Request records spread ``instance.metadata`` into the document, and vision tasks
+    keep picklable image loaders there. Any other value JSON cannot encode still raises.
+    """
+    if callable(obj):
+        return f"<{type(obj).__name__}>"
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+
 def write_predictions_jsonl(
     output_dir: str,
     spec: str,
@@ -76,6 +87,6 @@ def write_requests_jsonl(
 
     with open(filepath, "w") as f:
         for req in requests:
-            f.write(json.dumps(req) + "\n")
+            f.write(json.dumps(req, default=_lazy_loader_placeholder) + "\n")
 
     logger.info(f"Saved {len(requests)} requests: {spec}")

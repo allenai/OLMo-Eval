@@ -1,0 +1,44 @@
+{
+  "query": "llama omni",
+  "groups": [
+    {
+      "type": "run",
+      "items": [
+        {
+          "type": "run",
+          "key": "db385601e335",
+          "label": "Llama-3.1-8B-Instruct · omniscience:judge",
+          "secondary": "llama-3.1-8b-instruct-omniscience_judge-20260930-180131 · maliam · Oct 1",
+          "href": "/runs/db385601e335",
+          "subject": "r:db385601e335"
+        }
+      ]
+    },
+    {
+      "type": "model",
+      "items": [
+        {
+          "type": "model",
+          "key": "meta-llama/Llama-3.1-8B-Instruct",
+          "label": "Llama-3.1-8B-Instruct",
+          "secondary": "1 run",
+          "href": "/models/meta-llama%2FLlama-3.1-8B-Instruct",
+          "subject": "m:d434beb00a27"
+        }
+      ]
+    },
+    {
+      "type": "task",
+      "items": [
+        {
+          "type": "task",
+          "key": "omniscience:judge",
+          "label": "omniscience:judge",
+          "secondary": "2 runs",
+          "href": "/tasks/omniscience%3Ajudge",
+          "subject": null
+        }
+      ]
+    }
+  ]
+}

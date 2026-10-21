@@ -20,6 +20,16 @@ class SandboxRequiredError(RuntimeError):
     pass
 
 
+class ScoringIncompleteError(RuntimeError):
+    """Raised when a scorer could not reach a verdict for an output.
+
+    Distinguishes a score that was never produced, such as a grader that did
+    not run or a payload that could not be read, from a solution that was
+    graded and failed. The runner records these as lost scores rather than
+    folding them into the metric as zeros.
+    """
+
+
 @dataclass(frozen=True)
 class ContextScorer(Scorer):
     """Base class for scorers that require access to ScoringContext.

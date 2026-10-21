@@ -9,6 +9,23 @@ from typing import Any, ClassVar
 
 from olmo_eval.common.types import Instance, LMOutput
 
+#: ``LMOutput.metadata`` key holding the per-instance results scorers keep (for example each
+#: unit test's outcome), keyed by scorer name. Unlike other metadata, it is always saved with the
+#: predictions, so a new scorer needs no change to the predictions builder.
+SCORER_RESULTS_KEY = "scorer_results"
+
+
+def set_scorer_result(output: LMOutput, scorer_name: str, result: dict[str, Any]) -> None:
+    """Record ``scorer_name``'s JSON-serializable per-instance ``result`` on ``output``."""
+    if output.metadata is None:
+        output.metadata = {}
+    output.metadata.setdefault(SCORER_RESULTS_KEY, {})[scorer_name] = result
+
+
+def get_scorer_result(output: LMOutput, scorer_name: str) -> dict[str, Any] | None:
+    """The per-instance result ``scorer_name`` recorded on ``output``, if any."""
+    return ((output.metadata or {}).get(SCORER_RESULTS_KEY) or {}).get(scorer_name)
+
 
 @dataclass(frozen=True)
 class Scorer(ABC):
@@ -224,7 +241,10 @@ class BitsPerByteScorer(Scorer):
 
         total_logprob = sum(tok.get("logprob", 0.0) for tok in output.logprobs)
 
-        num_bytes = len(output.text.encode("utf-8")) if output.text else 0
+        # The logprobs cover the whole generation; if strip_thinking removed a
+        # reasoning trace from output.text, normalize by the original text.
+        text = (output.metadata or {}).get("original_text") or output.text
+        num_bytes = len(text.encode("utf-8")) if text else 0
 
         if num_bytes == 0:
             return 0.0

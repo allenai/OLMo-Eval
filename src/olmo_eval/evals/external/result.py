@@ -29,6 +29,16 @@ class ExternalEvalResult:
     raw_output: str | None = None
     predictions: list[dict[str, Any]] | None = None
 
+    @property
+    def num_instances(self) -> int:
+        """Number of instances the evaluation scored, or 0 when unknown."""
+        if self.predictions:
+            return len(self.predictions)
+        num_tasks = self.metadata.get("num_tasks")
+        if isinstance(num_tasks, int) and not isinstance(num_tasks, bool):
+            return num_tasks
+        return 0
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         result: dict[str, Any] = {

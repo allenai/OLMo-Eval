@@ -453,3 +453,16 @@ class TestParseOverridesDependencies:
         """Test parsing dependencies with git URLs."""
         result = parse_overrides('dependencies=["git+https://github.com/user/repo@v1.0"]')
         assert result == {"dependencies": ["git+https://github.com/user/repo@v1.0"]}
+
+
+class TestParseOverridesSamplingParams:
+    """Tests for parse_overrides coercion of SamplingParams fields."""
+
+    def test_parse_truncate_prompt_tokens_is_int(self):
+        """truncate_prompt_tokens reaches the provider as an int, not a string."""
+        result = parse_overrides("truncate_prompt_tokens=32768")
+        assert result == {"truncate_prompt_tokens": 32768}
+
+    def test_parse_truncate_prompt_tokens_sentinel(self):
+        """The -1 sentinel meaning 'the model's max input length' survives parsing."""
+        assert parse_overrides("truncate_prompt_tokens=-1") == {"truncate_prompt_tokens": -1}

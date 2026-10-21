@@ -9,7 +9,8 @@ from .agent import (
     TrajectoryMetrics,
 )
 from .base import (
-    EvalResult,
+    FOLLOW_UP_TURNS_KEY,
+    TURNS_KEY,
     Instance,
     LMOutput,
     LMRequest,
@@ -19,7 +20,6 @@ from .base import (
     Response,
     SamplingParams,
     Split,
-    StoredTaskResult,
     TopLogProb,
     compute_model_hash,
     compute_task_hash,
@@ -60,6 +60,8 @@ from .trajectory import (
 )
 
 __all__ = [
+    "FOLLOW_UP_TURNS_KEY",
+    "TURNS_KEY",
     "AgentMetrics",
     "AgentTrajectory",
     "AgentTurn",
@@ -69,7 +71,6 @@ __all__ = [
     "compute_task_hash",
     "DatabaseToolType",
     "DtypeLiteral",
-    "EvalResult",
     "ExecutionMetrics",
     "FileSystemToolType",
     "Function",
@@ -98,7 +99,6 @@ __all__ = [
     "SERPER_FETCH_WEBPAGE",
     "SERPER_WEB_SEARCH",
     "Split",
-    "StoredTaskResult",
     "ToolCall",
     "ToolCategory",
     "ToolMetrics",

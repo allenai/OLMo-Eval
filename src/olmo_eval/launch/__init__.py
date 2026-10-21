@@ -10,7 +10,7 @@ Example:
         command=["olmo-eval", "run", "-m", "llama3.1-8b", "-t", "mmlu"],
         cluster="ai2/ceres",
         workspace="ai2/oe-data",
-        budget="ai2/oe-base",
+        budget="ai2/oe-other",
         num_gpus=1,
     )
 
@@ -28,6 +28,7 @@ from olmo_eval.launch.beaker import (
     print_experiment_config,
     resolve_clusters,
     validate_priority_configuration,
+    weka_buckets_with,
 )
 from olmo_eval.launch.beaker.secrets import ensure_common_secrets
 from olmo_eval.launch.config import (
@@ -52,4 +53,5 @@ __all__ = [
     "print_experiment_config",
     "resolve_clusters",
     "validate_priority_configuration",
+    "weka_buckets_with",
 ]

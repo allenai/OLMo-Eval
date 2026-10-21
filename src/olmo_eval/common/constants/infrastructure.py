@@ -13,7 +13,7 @@ from enum import StrEnum
 BEAKER_DEFAULT_WORKSPACE = "ai2/oe-data"
 """Default Beaker workspace for evaluation jobs."""
 
-BEAKER_DEFAULT_BUDGET = "ai2/oe-base"
+BEAKER_DEFAULT_BUDGET = "ai2/oe-other"
 """Default budget allocation for Beaker jobs."""
 
 BEAKER_DEFAULT_PRIORITY = "normal"
@@ -126,6 +126,7 @@ WEKA_CLUSTERS: set[str] = {
     "ai2/ceres",
     "ai2/neptune",
     "ai2/titan",
+    "ai2/holmes",
 }
 """Clusters with Weka storage available.
 
@@ -150,6 +151,14 @@ WEKA_MOUNTS: tuple[str, ...] = (
     "skylight-default",
 )
 """Available Weka storage mount points for Beaker jobs."""
+
+
+DEFAULT_WEKA_BUCKETS: tuple[str, ...] = (
+    "oe-training-default",
+    "oe-eval-default",
+    "oe-adapt-default",
+)
+"""Weka buckets mounted on every eval job; ``--weka-bucket`` adds to these."""
 
 
 def cluster_has_weka(cluster: str) -> bool:
@@ -193,6 +202,7 @@ BACKEND_OPTIONAL_GROUPS: dict[str, str | None] = {
     "vllm_server": "vllm",
     "hf": "hf",
     "olmo_core": "olmo_core",
+    "olmo_core_vlm": "olmo_core_vlm",
     "litellm": "litellm",
     "mock": None,
 }

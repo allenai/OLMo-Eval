@@ -30,7 +30,9 @@ class BatchConfig:
     """
 
     # Providers that only support sequential (LLM() is not thread-safe)
-    _SEQUENTIAL_ONLY: ClassVar[frozenset[str]] = frozenset({"vllm", "hf", "olmo_core"})
+    _SEQUENTIAL_ONLY: ClassVar[frozenset[str]] = frozenset(
+        {"vllm", "hf", "olmo_core", "olmo_core_vlm"}
+    )
 
     strategy: BatchStrategy = BatchStrategy.BATCHED
     chunk_size: int = DEFAULT_CHUNK_SIZE

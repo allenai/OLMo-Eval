@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
@@ -37,6 +38,23 @@ class ExecutionEnvironment(Protocol):
 
     async def execute_code(
         self, code: str, language: str = "python", timeout: float | None = None
+    ) -> ExecutionResult: ...
+
+
+@runtime_checkable
+class StagingExecutionEnvironment(ExecutionEnvironment, Protocol):
+    """Execution environment that can place files before running a command.
+
+    Command text reaches the container as a process argument, which the
+    operating system caps at a small size. Payloads too large for that limit
+    are staged as files instead, in the same environment the command runs in.
+    """
+
+    async def execute_with_files(
+        self,
+        command: str,
+        files: Mapping[str, str],
+        timeout: float | None = None,
     ) -> ExecutionResult: ...
 
 

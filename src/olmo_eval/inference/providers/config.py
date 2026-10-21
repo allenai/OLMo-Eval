@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from olmo_eval.common.openai_credentials import describe_secret, secret_available
 from olmo_eval.common.repr import hide_unset
 from olmo_eval.common.types import ProviderKind
 
@@ -61,7 +61,9 @@ class ProviderConfig:
     kwargs: Mapping[str, Any] = field(default_factory=dict)
 
     # Providers that require GPU resources for local inference
-    _GPU_PROVIDERS: ClassVar[frozenset[str]] = frozenset({"vllm", "vllm_server", "hf", "olmo_core"})
+    _GPU_PROVIDERS: ClassVar[frozenset[str]] = frozenset(
+        {"vllm", "vllm_server", "hf", "olmo_core", "olmo_core_vlm"}
+    )
 
     @property
     def requires_gpu(self) -> bool:
@@ -115,6 +117,14 @@ class ProviderConfig:
             "dtype",
             "max_model_len",
         ),
+        "olmo_core_vlm": (
+            "tokenizer",
+            "revision",
+            "force_download",
+            "trust_remote_code",
+            "dtype",
+            "max_model_len",
+        ),
         "mock": (),
     }
 
@@ -124,7 +134,9 @@ class ProviderConfig:
 
         missing = self.validate_secrets()
         if missing:
-            raise ValueError(f"Missing required secrets: {', '.join(missing)}")
+            raise ValueError(
+                f"Missing required secrets: {', '.join(describe_secret(m) for m in missing)}"
+            )
 
         kind_str = str(self.kind)
         provider_kwargs: dict[str, Any] = dict(self.kwargs)
@@ -157,11 +169,7 @@ class ProviderConfig:
         Returns:
             List of missing secret names (empty if all present).
         """
-        missing = []
-        for secret in self.required_secrets:
-            if not os.getenv(secret):
-                missing.append(secret)
-        return missing
+        return [secret for secret in self.required_secrets if not secret_available(secret)]
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization.
@@ -222,6 +230,14 @@ class ProviderConfig:
                 f"provider.dependencies must be a list, not a string: {deps!r}. "
                 "Use provider.dependencies=[url1,url2] syntax."
             )
+        # Unknown keys flow into kwargs (same semantics as with_overrides), so
+        # dotted CLI overrides like `-o provider.batch_size=8` reach the provider
+        # constructor instead of being silently dropped.
+        from dataclasses import fields as dc_fields
+
+        known = {f.name for f in dc_fields(cls)} | {"model_name"}
+        extra_kwargs = {k: v for k, v in data.items() if k not in known}
+        merged_kwargs = {**data.get("kwargs", {}), **extra_kwargs}
         return cls(
             kind=data.get("kind", ProviderKind.VLLM),
             model=data.get("model", data.get("model_name", "")),
@@ -238,7 +254,7 @@ class ProviderConfig:
             required_secrets=tuple(data.get("required_secrets", [])),
             package=data.get("package"),
             dependencies=tuple(deps),
-            kwargs=data.get("kwargs", {}),
+            kwargs=merged_kwargs,
         )
 
     def with_overrides(self, **overrides: Any) -> ProviderConfig:

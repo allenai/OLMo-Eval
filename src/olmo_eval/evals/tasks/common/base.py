@@ -4,18 +4,20 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import math
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, NamedTuple
+from importlib.resources import files
+from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
 
 from olmo_eval.common.formatters import Formatter
 from olmo_eval.common.metrics import Metric
 from olmo_eval.common.repr import hide_unset
-from olmo_eval.common.scorers import Scorer
+from olmo_eval.common.scorers import Scorer, ScoringIncompleteError
 from olmo_eval.common.types import (
     Instance,
     LMOutput,
@@ -43,13 +45,16 @@ def _format_scoring_error(exc: Exception, *, phase: str) -> dict[str, str]:
     message = str(exc).strip()
     if message:
         error["message"] = message
-    try:
-        from olmo_eval.harness.sandbox import SandboxInfrastructureError
+    if isinstance(exc, ScoringIncompleteError):
+        error["infrastructure"] = "true"
+    else:
+        try:
+            from olmo_eval.harness.sandbox import SandboxInfrastructureError
 
-        if isinstance(exc, SandboxInfrastructureError):
-            error["infrastructure"] = "true"
-    except ImportError:
-        pass
+            if isinstance(exc, SandboxInfrastructureError):
+                error["infrastructure"] = "true"
+        except ImportError:
+            pass
     return error
 
 
@@ -114,6 +119,7 @@ class OutputScoreAggregation(StrEnum):
 
     MAX = "max"
     FIRST = "first"
+    MEAN = "mean"
 
 
 @hide_unset()
@@ -159,6 +165,9 @@ class TaskConfig:
     max_length: int | None = None
     answer_extractor: Callable[[str], str] | None = None
 
+    #: Drop ``<think>...</think>`` traces before scoring; see :meth:`Task.strip_thinking_traces`.
+    strip_thinking: bool = False
+
     #: Runtime dependencies to install for this task (package specs like "pkg==1.0" or git URLs)
     dependencies: list[str] | None = None
 
@@ -171,6 +180,18 @@ class TaskConfig:
     #: Env-var names this task needs at runtime (e.g. an LLM-judge API key). The
     #: beaker launcher mounts each as the user-scoped secret ``{user}_{NAME}``.
     required_secrets: tuple[str, ...] = ()
+
+    # LLM-as-judge configuration. These stay optional so adding them does not
+    # perturb hashes for tasks that do not use a judge.
+    judge_model: str | None = None
+    judge_reasoning_effort: str | None = None
+    judge_max_tokens: int | None = None
+
+    #: How a task that builds its prompt from a bare label should render it. The
+    #: vision tasks read these; they follow the checkpoint, since instruction-tuned
+    #: and pretrain models were trained on different prompt forms.
+    prompt_templates: str | None = None
+    system_prompt_style: str | None = None
 
     def __post_init__(self) -> None:
         """Validate scheduler-only sandbox allocation hints."""
@@ -240,13 +261,30 @@ class TaskConfig:
         except ValueError:
             return None
 
+    #: Sampling fields added after task hashes were first stored. Each is emitted
+    #: only when it differs from its default, so that tasks which do not use it
+    #: keep the hash they had before the field existed.
+    _SAMPLING_FIELDS_EMITTED_WHEN_SET: ClassVar[dict[str, Any]] = {
+        "fit_max_tokens_to_context": False,
+    }
+
+    def _serialize_sampling_params(self) -> dict[str, Any] | None:
+        from dataclasses import asdict
+
+        if not self.sampling_params:
+            return None
+        serialized = asdict(self.sampling_params)
+        for name, default in self._SAMPLING_FIELDS_EMITTED_WHEN_SET.items():
+            if serialized.get(name) == default:
+                serialized.pop(name, None)
+        return serialized
+
     def to_dict(self) -> dict[str, Any]:
         """Serialize config to a dictionary for hashing and storage.
 
         Returns:
             Dictionary with all config values serialized.
         """
-        from dataclasses import asdict
 
         def serialize_data_source(ds: Any) -> Any:
             if ds is None:
@@ -266,7 +304,7 @@ class TaskConfig:
                 return pm.to_dict()
             return str(pm)
 
-        return {
+        serialized = {
             "name": self.name,
             "data_source": serialize_data_source(self.data_source),
             "fewshot_source": serialize_data_source(self.fewshot_source),
@@ -278,12 +316,35 @@ class TaskConfig:
             "seed": self.seed,
             "split": self.split.value,
             "primary_metric": serialize_primary_metric(self.get_primary_metric()),
-            "sampling_params": asdict(self.sampling_params) if self.sampling_params else None,
+            "sampling_params": self._serialize_sampling_params(),
             "output_score_aggregation": self.output_score_aggregation.value,
             "max_length": self.max_length,
             "answer_extractor": getattr(self.answer_extractor, "__name__", None),
             "dependencies": self.dependencies,
         }
+        # Emitted only when set so that task hashes of runs without it are
+        # unchanged from before the field existed.
+        if self.prompt_templates is not None or self.system_prompt_style is not None:
+            serialized["prompt_templates"] = self.prompt_templates
+            serialized["system_prompt_style"] = self.system_prompt_style
+        if self.strip_thinking:
+            serialized["strip_thinking"] = True
+        if any(
+            value is not None
+            for value in (
+                self.judge_model,
+                self.judge_reasoning_effort,
+                self.judge_max_tokens,
+            )
+        ):
+            serialized.update(
+                {
+                    "judge_model": self.judge_model,
+                    "judge_reasoning_effort": self.judge_reasoning_effort,
+                    "judge_max_tokens": self.judge_max_tokens,
+                }
+            )
+        return serialized
 
     def get_primary_metric(self) -> Metric | None:
         """Get the effective primary metric for this task.
@@ -330,6 +391,10 @@ class Task(ABC):
         ...     def instances(self) -> Iterator[Instance]:
         ...         yield from self._load_instances()
     """
+
+    #: Scaffold the task's requests need, such as ``"multi_turn_chat"``. The runner
+    #: refuses to start the task under a harness with a different scaffold.
+    required_scaffold: str | None = None
 
     def __init__(self, config: TaskConfig) -> None:
         self.config = config
@@ -442,10 +507,31 @@ class Task(ABC):
             self._instances_cache = list(self._load_instances(split=split))
         yield from self._instances_cache
 
+    def _load_packaged_instances(self, package: str | None, filename: str) -> Iterator[Instance]:
+        """Load and process instances from a JSONL file shipped inside ``package``.
+
+        For data that is checked in with the task rather than downloaded. ``package``
+        is the task module's ``__package__``; blank lines are skipped.
+        """
+        if package is None:
+            raise ValueError(f"{type(self).__name__} has no package to load {filename} from")
+        resource = files(package).joinpath(filename)
+        with resource.open(encoding="utf-8") as handle:
+            for index, line in enumerate(handle):
+                if not line.strip():
+                    continue
+                instance = self.process_doc(json.loads(line), index)
+                if instance is not None:
+                    yield instance
+
     def get_fewshot(self) -> list[Instance]:
-        """Get few-shot examples (cached after first call)."""
+        """Get few-shot examples (cached after first call).
+
+        Returns no examples when ``num_fewshot`` is 0, whatever pool the task
+        would otherwise draw from.
+        """
         if self._fewshot_cache is None:
-            self._fewshot_cache = self._build_fewshot()
+            self._fewshot_cache = self._build_fewshot() if self.config.num_fewshot else []
         return self._fewshot_cache
 
     # Class attributes for fewshot configuration (can be overridden by subclasses)
@@ -571,6 +657,33 @@ class Task(ABC):
                 for s in self._get_scorers().values()
             )
         return self._has_async_cache
+
+    def strip_thinking_traces(self, responses: Sequence[Response]) -> None:
+        """Drop ``<think>...</think>`` traces so scorers see only the final answer.
+
+        No-op unless ``config.strip_thinking`` is set. Runners call this before
+        ``score_responses`` (which tasks may override). Idempotent: a stripped
+        output has no ``</think>`` left, so a second pass leaves it alone.
+
+        Mirrors the reference harness's ``r1_style`` processing: everything
+        through the *last* ``</think>`` goes, the text after it is kept
+        byte-for-byte, and an unterminated trace is left as-is. Whitespace
+        matters — the IFEval loose variants drop the response's first line, and
+        paragraph checks index on blank-line splits — so nothing is trimmed.
+        Only ``outputs[*].text`` is touched; trajectories and request traces
+        keep the trace.
+        """
+        if not self.config.strip_thinking:
+            return
+        from olmo_eval.evals.extract import extract_think_answer
+
+        for response in responses:
+            for output in response.outputs:
+                text = output.text or ""
+                if "</think>" not in text:
+                    continue
+                output.metadata.setdefault("original_text", text)
+                output.text = extract_think_answer(text) or ""
 
     def _extract_answers(self, responses: Sequence[Response]) -> None:
         """Extract answers from outputs. Override for complex multi-output logic."""
@@ -848,6 +961,8 @@ class Task(ABC):
             return max(ordered_scores)
         if aggregation == OutputScoreAggregation.FIRST:
             return ordered_scores[0]
+        if aggregation == OutputScoreAggregation.MEAN:
+            return sum(ordered_scores) / len(ordered_scores)
         raise ValueError(f"Unsupported output_score_aggregation: {aggregation}")
 
     def _expand_multi_output_responses(self, responses: Sequence[Response]) -> list[Response]:

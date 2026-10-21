@@ -24,18 +24,28 @@ dependencies = [
     "antlr4-python3-runtime>=4.11,<4.12",
     "click~=8.3.2",
     "datasets>=3.2.0",
+    # Results upload to the dashboard ingest service (src/olmo_eval/upload).
+    "google-auth[requests]>=2.30",
+    "httpx>=0.27",
     "numpy>=1.20.0",
     "omegaconf>=2.4.0.dev10,<2.5.0",
     "prometheus_client>=0.21.0",
     "rich>=13.7,<15",
     "sympy>=1.12",
-    "textual-plot>=0.10.1",
     "tree-sitter>=0.24.0",
     "tree-sitter-python>=0.23.0,<0.25.0",
     "ifbench @ git+https://github.com/allenai/IFBench.git@finbarr/clean-install",
+    # The multilingual Multi-IF verifiers count emoji and detect the reply's language.
+    "emoji>=2.0",
+    "langdetect>=1.0.9",
+    # Arena-Hard measures response length with the tokenizer upstream uses.
+    "tiktoken>=0.7",
     # syllapy (transitive via ifbench) imports pkg_resources, which setuptools>=81 removes.
     "setuptools<81",
     "bm25s>=0.3.9",
+    # ruler_loader uses huggingface_hub.utils.silent_tqdm, added in 1.10.0. Without a
+    # floor, an unlocked resolve can drop to transformers 4.x and hub 0.x.
+    "huggingface-hub>=1.10.0",
 ]
 
 [project.urls]
@@ -48,10 +58,34 @@ crawl4ai = [
     "crawl4ai>=0.8",
 ]
 hf = [
-    "transformers>=5.4.0",
+    # transformers 5.6-5.7 load DeepSeek-R1-Distill-Qwen with the Llama tokenizer, which
+    # garbles prompts and leaves byte-level markers (Ġ, Ċ) in decoded output.
+    "transformers>=5.8.0,<5.13",
+    # Required by the released Molmo2 remote code (image_processing_molmo2.py imports both at
+    # module top); not pulled transitively, so declare them here for the HF multimodal path.
+    "einops",
+    "torchvision ; platform_system != 'Darwin'",  # GPU-coupled; skip on macOS like the vllm extra
+]
+# Scoring dependencies of the vision benchmarks, needed whichever provider runs the model:
+# pycocotools decodes the COCO-RLE instance masks and scipy matches points to them.
+vision = [
+    # Image loading for vision tasks (vllm and torchvision also pull it in, not on macOS).
+    "pillow",
+    "pycocotools",
+    "scipy~=1.17.1",
 ]
 olmo_core = [
     "ai2-olmo-core[torchao,transformers]==2.4.0",
+    # The conflicting olmo_core_vlm extra's git-pinned OLMo-core requires
+    # torchao==0.15.0; without this pin uv unifies both resolution forks on
+    # 0.15.0 and silently downgrades the text provider from main's 0.17.0.
+    "torchao==0.17.0",
+]
+# The multimodal classes (olmo_core.nn.vision, molmo2_loader) are not in any
+# ai2-olmo-core release yet; pin the vision branch by commit so the declared
+# install supports OlmoCoreVLMProvider. Collapse into `olmo_core` once released.
+olmo_core_vlm = [
+    "ai2-olmo-core[torchao,transformers] @ git+https://github.com/allenai/OLMo-core.git@42e65ea6a69cce8858bbf18226c8d092388ced0a",
 ]
 vllm = [
     # vllm + its companions are Linux/CUDA-only; skip on macOS so the lockfile
@@ -59,18 +93,17 @@ vllm = [
     "vllm[runai]==0.19.1 ; platform_system != 'Darwin'",  # runai extras enable S3 model loading
     "opencv-python-headless==4.13.0.92 ; platform_system != 'Darwin'",  # Required to avoid libxcb import error
     "torch-c-dlpack-ext ; platform_system != 'Darwin'",  # Required for TVM tensor allocation in vLLM
+    # transformers 5.13 nests rope_parameters per layer type; vLLM 0.19.1 reads it flat,
+    # so Olmo-3 (mixed sliding/full attention) fails to load with a rope_theta KeyError.
+    # The 5.8.0 floor matches the hf extra (DeepSeek-R1-Distill-Qwen tokenizer).
+    "transformers>=5.8.0,<5.13 ; platform_system != 'Darwin'",
 ]
 litellm = [
     "litellm~=1.80.11",
 ]
 agents = [
-    "openai-agents~=0.7.0",
+    "openai-agents~=0.20.0",
     "httpx~=0.28.1",
-]
-analysis = [
-    "matplotlib~=3.10.8",
-    "seaborn~=0.13.2",
-    "scipy~=1.17.1",
 ]
 openhands = [
     "openhands-ai~=1.4.0",
@@ -78,27 +111,26 @@ openhands = [
 sandbox = [
     "swe-rex[modal] @ git+https://github.com/jdahm/SWE-ReX.git@johannd/ai2",
 ]
+# Test log parsers and grading for SWE-bench external evals.
+swebench = [
+    # Grading logic changes between releases, so pin exactly for comparable scores.
+    "swebench==5.0.2",
+]
 beaker = [
-    "beaker-py>=2.5.4,<3",
-    "beaker-gantry>=3.2.0,<4",
+    "beaker-py>=2.6.0,<3",
+    "beaker-gantry>=3.7.0,<4",
 ]
 s3 = [
     "boto3>=1.34.0",
     "smart_open[s3]>=7.0.0",
 ]
-postgres = [
-    "psycopg[binary]>=3.1.0",
-    "sqlalchemy>=2.0.49",
-    "alembic>=1.18.1",
-]
 gpu = [
     "nvidia-ml-py>=12.560 ; platform_system != 'Darwin'",
 ]
 clients = [
-    "openai~=2.21.0",
-]
-storage = [
-    "olmo-eval[s3,postgres]",
+    # openai-agents pulls openai>=2.45 into the same resolution, so a patch pin here is
+    # unsatisfiable rather than protective. Track the same floor and the 3.x major boundary.
+    "openai>=2.45,<3",
 ]
 
 [project.scripts]
@@ -130,11 +162,18 @@ conflicts = [
         { extra = "clients" },
         { extra = "openhands" },
     ],
+    [
+        { extra = "olmo_core" },
+        { extra = "olmo_core_vlm" },
+    ],
+    [
+        { extra = "olmo_core_vlm" },
+        { extra = "openhands" },
+    ],
 ]
 
 [tool.setuptools.package-data]
-"olmo_eval.analysis.pairwise_viewer" = ["static/*.css", "static/*.js", "templates/*.html"]
-"olmo_eval.evals.tasks" = ["*.jsonl"]
+"olmo_eval.evals.tasks" = ["*.jsonl", "*.json"]
 
 [dependency-groups]
 dev = [
@@ -142,22 +181,37 @@ dev = [
     "pytest-cov>=6.0.0",
     "ruff>=0.14.0",
     "ty==0.0.39",
-    "pre-commit>=4.0.0",
     # Unit tests import optional helpers directly, so dev installs need these extras too.
-    "olmo-eval[storage,beaker,hf,analysis,sandbox]",
+    "olmo-eval[s3,beaker,hf,vision,sandbox,swebench]",
     "jinja2>=3.1.6",
+    # Upload tests validate payloads against dashboard/contract/ingest-v1.schema.json.
+    "jsonschema>=4.23",
     "google-api-core>=2.0.0",
     "parameterized>=0.9.0",
 ]
 # Mirror of the `vllm` extra as a uv dependency group so it can be enabled by
 # default for GPU/CI workflows while still being installable via pip extras.
+# Listed directly rather than as `olmo-eval[vllm]`: the extra participates in
+# the declared conflicts, and uv gates a conflicting extra's edges behind
+# opt-in markers — routed through the extra, the default group resolved to
+# nothing and `uv sync` silently installed no vllm.
 vllm = [
-    "olmo-eval[vllm]",
+    "vllm[runai]==0.19.1 ; platform_system != 'Darwin'",
+    "opencv-python-headless==4.13.0.92 ; platform_system != 'Darwin'",
+    "torch-c-dlpack-ext ; platform_system != 'Darwin'",
 ]
 
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+# Vendored code kept as it is upstream, so it is neither linted nor reformatted:
+# - BFCL: an instance's attributes after a turn are what a multi-turn prediction
+#   is graded against.
+# - ctc-suite: format/spec code is golden-fixture tested upstream.
+extend-exclude = [
+    "src/olmo_eval/common/scorers/bfcl/multi_turn/api",
+    "src/olmo_eval/evals/tasks/ctc_suite/_vendor",
+]
 
 [tool.ruff.lint]
 select = [
@@ -191,6 +245,18 @@ select = [
 "src/olmo_eval/evals/tasks/squad.py" = ["E501"]
 # Static fewshot data with long string literals
 "src/olmo_eval/evals/tasks/constants/*" = ["E501"]
+# Verbatim prompt template from the oe-eval/ZeroEval reference implementation
+"src/olmo_eval/evals/tasks/zebralogic.py" = ["E501", "W291"]
+# Verbatim prompt templates vendored from the mm_olmo reference implementation
+"src/olmo_eval/evals/vision/scoring/prompt_templates.py" = ["E501"]
+"src/olmo_eval/evals/vision/scoring/vqa_normalization.py" = ["E501"]
+"src/olmo_eval/evals/vision/scoring/multiple_choice.py" = ["E501"]
+"src/olmo_eval/evals/vision/scoring/math_vista_offline.py" = ["E501"]
+"src/olmo_eval/evals/vision/scoring/mmmu_pro.py" = ["E501"]
+# CharXiv grading prompts are vendored byte-for-byte from the official repo; their trailing
+# whitespace is part of the official prompt bytes and must not be stripped.
+"src/olmo_eval/evals/vision/scoring/charxiv.py" = ["E501", "W291", "W293"]
+"tests/evals/vision/test_image_qa_scorers.py" = ["E501"]
 [tool.ruff.format]
 docstring-code-format = true
 
@@ -225,6 +291,11 @@ skip_covered = false
 directory = "htmlcov"
 
 
+[tool.ty.src]
+# Vendored from the BFCL reference implementation and kept as it is upstream,
+# so it is neither linted nor type checked here.
+exclude = ["src/olmo_eval/common/scorers/bfcl/multi_turn/api"]
+
 [tool.ty.analysis]
 # Optional dependencies that may not be installed in every environment
 allowed-unresolved-imports = [
@@ -235,9 +306,10 @@ allowed-unresolved-imports = [
     "torch.**",
     "math_verify.**",
     "openai.**",
+    "agents.**",
+    "litellm.**",
     "smart_open.**",
     "google.cloud.**",
-    "matplotlib.**",
     "scipy.**",
     "olmo_core.**",
     "cached_path.**",
@@ -246,6 +318,8 @@ allowed-unresolved-imports = [
     "crawl4ai.**",
     "modal.**",
     "swerex.**",
+    "olmocr.**",
+    "pymupdf.**",
 ]
 
 [tool.gantry]

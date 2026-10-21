@@ -12,7 +12,7 @@ declare -a SELECTED_SUITES=()
 
 GROUP="${GROUP:-olmo-eval-olmo3-baselines-04272026}"
 WORKSPACE="${WORKSPACE:-ai2/olmo-eval-debug}"
-BUDGET="${BUDGET:-ai2/oe-base}"
+BUDGET="${BUDGET:-ai2/oe-other}"
 CLUSTER="${CLUSTER:-h100}"
 EXEC_HARNESS="${EXEC_HARNESS:-${HARNESS:-codex_universal}}"
 NON_EXEC_HARNESS="${NON_EXEC_HARNESS:-default}"
@@ -275,8 +275,8 @@ gemma_launch_args=(
 exec_only_args=(
     "-o" 'sandboxes={"mode":"modal","instances":64, "min_instances": 56, "registry_auth":{"provider":"gcp"}}'
     "-e" "MODAL_ENVIRONMENT=${MODAL_ENVIRONMENT}"
-    "--secret-env" "ai2-tylerm_MODAL_TOKEN_ID:MODAL_TOKEN_ID"
-    "--secret-env" "ai2-tylerm_MODAL_TOKEN_SECRET:MODAL_TOKEN_SECRET"
+    "--secret-env" "olmo-eval_MODAL_TOKEN_ID:MODAL_TOKEN_ID"
+    "--secret-env" "olmo-eval_MODAL_TOKEN_SECRET:MODAL_TOKEN_SECRET"
 )
 
 common_tail_args=(
@@ -284,7 +284,7 @@ common_tail_args=(
     "-B" "${BUDGET}"
     "--cluster" "${CLUSTER}"
     "--group" "${GROUP}"
-    "--store"
+    "--upload"
     "--inspect"
     "--gcp-credentials"
     "--no-follow"

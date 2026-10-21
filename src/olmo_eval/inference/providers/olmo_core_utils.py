@@ -147,6 +147,7 @@ class LogprobInput:
     num_tokens_all: int
     continuation_token_ids: list[int]
     continuation: str
+    prompt_truncated_tokens: int = 0
 
 
 def _import_olmo_core() -> OlmoCoreImports:
@@ -393,15 +394,16 @@ def _resolve_checkpoint(
 def _resolve_max_model_len_alias(
     max_model_len: int | None,
     kwargs: dict[str, object],
+    provider: str = "OlmoCoreProvider",
 ) -> int | None:
     max_length = kwargs.pop("max_length", None)
     if max_length is None:
         return max_model_len
     if not isinstance(max_length, int):
-        raise ValueError("OlmoCoreProvider max_length must be an integer when set")
+        raise ValueError(f"{provider} max_length must be an integer when set")
     if max_model_len is not None and max_model_len != max_length:
         raise ValueError(
-            "OlmoCoreProvider received both max_model_len and max_length with different values"
+            f"{provider} received both max_model_len and max_length with different values"
         )
     return max_length
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -12,6 +13,11 @@ from olmo_eval.common.logging import get_logger
 from olmo_eval.common.types import LMOutput, LMRequest, LogProbEntry, RequestType, SamplingParams
 from olmo_eval.common.types.tools import ToolCall
 from olmo_eval.inference.base import InferenceProvider
+from olmo_eval.inference.errors import (
+    CONTEXT_OVERFLOW_KEY,
+    REQUEST_ERROR_KEY,
+    is_context_overflow,
+)
 from olmo_eval.inference.hf_cache import refresh_hf_cache
 from olmo_eval.inference.tokenizer_utils import encode_context_and_continuation
 from olmo_eval.inference.utils import run_async
@@ -243,6 +249,10 @@ class VLLMServerProvider(InferenceProvider):
     This provider can either connect to an existing vLLM server (if base_url
     is provided) or start and manage its own server subprocess.
 
+    Tool schemas are sent to ``/v1/chat/completions``, but the server only
+    returns parsed ``tool_calls`` when it was started with
+    ``--enable-auto-tool-choice``; see :attr:`_tool_calls_parsed`.
+
     Example:
         # Auto-start server (managed lifecycle)
         provider = VLLMServerProvider("meta-llama/Llama-3.1-8B-Instruct")
@@ -250,6 +260,8 @@ class VLLMServerProvider(InferenceProvider):
         # Or connect to existing server
         provider = VLLMServerProvider("model", base_url="http://localhost:8000/v1")
     """
+
+    supports_tools = True
 
     def __init__(
         self,
@@ -273,6 +285,8 @@ class VLLMServerProvider(InferenceProvider):
         completion_use_prompt_token_ids: bool | None = None,
         completion_client_side_stop_trim: bool | None = None,
         completion_sentencepiece_cleanup: bool | None = None,
+        enable_lora: bool = False,
+        lora_modules: list[str] | None = None,
         **server_kwargs: Any,
     ) -> None:
         """Initialize the provider.
@@ -307,6 +321,10 @@ class VLLMServerProvider(InferenceProvider):
                 stop sequence client-side after generation.
             completion_sentencepiece_cleanup: If True, replace SentencePiece space markers
                 with actual spaces in completion outputs.
+            enable_lora: Enable LoRA (Low-Rank Adaptation) support for model loading (server mode).
+            lora_modules: List of LoRA module paths to load (format: "module_name=/path/to/lora").
+                Only used if enable_lora is True (server mode). Raises an error if more than one
+                is passed.
             **server_kwargs: Additional vLLM server arguments.
         """
         super().__init__(model_name)
@@ -335,11 +353,25 @@ class VLLMServerProvider(InferenceProvider):
         self._max_length: int | None = max_model_len
         self._max_length_source: str | None = "configured" if max_model_len is not None else None
         self._max_length_discovery_attempted = max_model_len is not None
+        self._enable_lora = enable_lora
+        self._lora_modules = lora_modules
+        self._request_model_name = model_name
+        if lora_modules and len(lora_modules) > 1:
+            raise ValueError("the vllm server provider can accept only one lora module")
+        if enable_lora and lora_modules:
+            self._request_model_name = lora_modules[0].split("=", 1)[0]
+
+        #: Whether replies will carry parsed ``tool_calls``: True for a managed
+        #: server started with tool choice enabled, False for one started
+        #: without it, and None for an external server, whose flags are not
+        #: knowable from here.
+        self._tool_calls_parsed: bool | None = None
 
         if base_url:
             # Connect to existing server
             self.base_url = base_url
         else:
+            self._tool_calls_parsed = bool(enable_auto_tool_choice)
             # Start our own server
             from .vllm_server_utils import VLLMServerProcess
 
@@ -367,6 +399,10 @@ class VLLMServerProvider(InferenceProvider):
                     srv_kwargs["tool_call_parser"] = tool_call_parser
             if trust_remote_code:
                 srv_kwargs["trust_remote_code"] = True
+            if enable_lora:
+                srv_kwargs["enable_lora"] = True
+            if lora_modules:
+                srv_kwargs["lora_modules"] = lora_modules
             self._server = VLLMServerProcess(
                 model_name=model_name,
                 tensor_parallel_size=tensor_parallel_size,
@@ -552,7 +588,7 @@ class VLLMServerProvider(InferenceProvider):
 
         # Use remote tokenizer by default (no transformers dependency)
         if self._tokenizer is None:
-            self._tokenizer = RemoteTokenizer(self.base_url, self.model_name)
+            self._tokenizer = RemoteTokenizer(self.base_url, self._request_model_name)
         return self._tokenizer
 
     def get_tokenizer(self) -> Any:
@@ -738,8 +774,12 @@ class VLLMServerProvider(InferenceProvider):
 
         return None
 
-    def _completion_usage_metadata(self, usage: Any) -> dict[str, Any]:
-        """Extract completion usage metadata from SDK or raw JSON responses."""
+    def _completion_usage_metadata(self, usage: Any, num_choices: int = 1) -> dict[str, Any]:
+        """Extract per-output token counts from SDK or raw JSON response usage.
+
+        Response usage sums completion tokens over all choices, so the count
+        describes a single output only when the response has one choice.
+        """
         if not usage:
             return {}
 
@@ -753,7 +793,7 @@ class VLLMServerProvider(InferenceProvider):
         metadata: dict[str, Any] = {}
         if prompt_tokens is not None:
             metadata["prompt_tokens"] = prompt_tokens
-        if completion_tokens is not None:
+        if completion_tokens is not None and num_choices == 1:
             metadata["completion_tokens"] = completion_tokens
         return metadata
 
@@ -764,9 +804,12 @@ class VLLMServerProvider(InferenceProvider):
         logprobs_payload: Any,
         usage: Any,
         stop_sequences: list[str] | None,
+        finish_reason: str | None = None,
+        num_choices: int = 1,
     ) -> LMOutput:
         """Create a standardized LMOutput from completion response payloads."""
-        metadata = self._completion_usage_metadata(usage)
+        metadata = self._completion_usage_metadata(usage, num_choices)
+        metadata["finish_reason"] = finish_reason
         processed_text = self._postprocess_completion_text(text, stop_sequences)
 
         logprob_entries: list[LogProbEntry] | None = None
@@ -793,7 +836,7 @@ class VLLMServerProvider(InferenceProvider):
     ) -> list[LMOutput]:
         """Generate using the /v1/completions endpoint."""
         kwargs: dict[str, Any] = {
-            "model": self.model_name,
+            "model": self._request_model_name,
             "prompt": request.prompt,
             "n": params.num_samples,
             "logprobs": 1,  # Request logprobs for metrics
@@ -802,7 +845,7 @@ class VLLMServerProvider(InferenceProvider):
         # rather than sending null, which some OpenAI-compatible servers reject.
         if params.max_tokens is not None:
             kwargs["max_tokens"] = params.max_tokens
-        extra_body: dict[str, Any] = {"add_special_tokens": False}
+        extra_body: dict[str, Any] = {"add_special_tokens": bool(self._add_bos_token)}
 
         # Always send temperature explicitly to avoid server defaults (OpenAI API defaults to 1.0)
         kwargs["temperature"] = params.temperature
@@ -831,14 +874,17 @@ class VLLMServerProvider(InferenceProvider):
             response.raise_for_status()
             data = response.json()
             usage = data.get("usage")
+            choices = data.get("choices", [])
             return [
                 self._build_completion_output(
                     text=choice.get("text") or "",
+                    finish_reason=choice.get("finish_reason"),
                     logprobs_payload=choice.get("logprobs"),
                     usage=usage,
                     stop_sequences=stop_sequences,
+                    num_choices=len(choices),
                 )
-                for choice in data.get("choices", [])
+                for choice in choices
             ]
 
         if extra_body:
@@ -848,12 +894,80 @@ class VLLMServerProvider(InferenceProvider):
         return [
             self._build_completion_output(
                 text=choice.text or "",
+                finish_reason=getattr(choice, "finish_reason", None),
                 logprobs_payload=getattr(choice, "logprobs", None),
                 usage=usage,
                 stop_sequences=stop_sequences,
+                num_choices=len(response.choices),
             )
             for choice in response.choices
         ]
+
+    #: Room left for the turn markers the chat template adds around a reply.
+    _CONTEXT_MARGIN_TOKENS = 2
+
+    #: What to ask for when the prompt already fills the window. The request
+    #: will be rejected either way; this keeps the number recognisable.
+    _NO_ROOM_MAX_TOKENS = 1000
+
+    async def _fit_max_tokens(
+        self, max_tokens: int, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None
+    ) -> int:
+        """Shrink ``max_tokens`` to the room the prompt leaves in the context window.
+
+        Returns ``max_tokens`` unchanged when the window or the prompt length
+        cannot be established, so a server that does not report them behaves as
+        it did before.
+        """
+        context_length = self.max_length
+        if context_length is None:
+            return max_tokens
+
+        prompt_tokens = await self._count_chat_tokens(messages, tools)
+        if prompt_tokens is None:
+            return max_tokens
+
+        if context_length < prompt_tokens + self._CONTEXT_MARGIN_TOKENS:
+            return self._NO_ROOM_MAX_TOKENS
+        return min(max_tokens, context_length - prompt_tokens - self._CONTEXT_MARGIN_TOKENS)
+
+    async def _count_chat_tokens(
+        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None
+    ) -> int | None:
+        """Return the prompt's token count as the server's chat template renders it."""
+        payload: dict[str, Any] = {"model": self._request_model_name, "messages": messages}
+        if tools:
+            payload["tools"] = tools
+        if self.chat_template_kwargs:
+            payload["chat_template_kwargs"] = dict(self.chat_template_kwargs)
+
+        base_url = self.base_url.rstrip("/").removesuffix("/v1")
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as http_client:
+                response = await http_client.post(f"{base_url}/tokenize", json=payload)
+                response.raise_for_status()
+                data = response.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.warning("Could not count prompt tokens for max_tokens fitting: %s", exc)
+            return None
+
+        count = data.get("count")
+        if count is None:
+            tokens = data.get("tokens")
+            count = len(tokens) if isinstance(tokens, list) else None
+        return int(count) if count is not None else None
+
+    def _refuse_tools_without_parsing(self, requests: Sequence[LMRequest]) -> None:
+        """Fail when tool requests would go to a server that returns no tool calls."""
+        if self._tool_calls_parsed is not False or not any(r.tools for r in requests):
+            return
+        raise ValueError(
+            "This vLLM server was started without --enable-auto-tool-choice, so it "
+            "answers in plain text and returns no tool_calls. Every instance of a "
+            "tool-calling task would score as if the model called nothing. Remove the "
+            "provider.kwargs.enable_auto_tool_choice=false override, or run a task "
+            "variant that writes the functions into the prompt instead."
+        )
 
     async def _generate_chat(
         self, client: AsyncOpenAI, request: LMRequest, params: SamplingParams
@@ -872,14 +986,17 @@ class VLLMServerProvider(InferenceProvider):
 
         # Build request kwargs
         kwargs: dict[str, Any] = {
-            "model": self.model_name,
+            "model": self._request_model_name,
             "messages": messages,
             "n": params.num_samples,
         }
         # max_tokens=None means "generate to the context limit"; omit the field
         # rather than sending null, which some OpenAI-compatible servers reject.
-        if params.max_tokens is not None:
-            kwargs["max_tokens"] = params.max_tokens
+        max_tokens = params.max_tokens
+        if max_tokens is not None and params.fit_max_tokens_to_context:
+            max_tokens = await self._fit_max_tokens(max_tokens, messages, tools)
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
 
         # Always send temperature explicitly to avoid server defaults (OpenAI API defaults to 1.0)
         kwargs["temperature"] = params.temperature
@@ -929,12 +1046,9 @@ class VLLMServerProvider(InferenceProvider):
 
             # Convert logprobs to standard format
             logprob_entries: list[LogProbEntry] | None = None
-            metadata: dict[str, Any] = {}
+            metadata: dict[str, Any] = {"finish_reason": getattr(choice, "finish_reason", None)}
 
-            # Store token counts from server for accurate metrics
-            if usage:
-                metadata["prompt_tokens"] = usage.prompt_tokens
-                metadata["completion_tokens"] = usage.completion_tokens
+            metadata.update(self._completion_usage_metadata(usage, len(response.choices)))
 
             logprobs_data = getattr(choice, "logprobs", None)
             if logprobs_data and hasattr(logprobs_data, "content") and logprobs_data.content:
@@ -949,11 +1063,13 @@ class VLLMServerProvider(InferenceProvider):
                 # Compute metadata from logprobs
                 sum_logits = sum(entry["logprob"] for entry in logprob_entries)
                 num_tokens = len(logprob_entries)
-                metadata = {
-                    "sum_logits": sum_logits,
-                    "num_tokens": num_tokens,
-                    "num_tokens_all": num_tokens,
-                }
+                metadata.update(
+                    {
+                        "sum_logits": sum_logits,
+                        "num_tokens": num_tokens,
+                        "num_tokens_all": num_tokens,
+                    }
+                )
 
             outputs.append(
                 LMOutput(
@@ -986,21 +1102,45 @@ class VLLMServerProvider(InferenceProvider):
         Returns:
             List of output lists, one per request.
         """
-        from olmo_eval.inference.dispatch import dispatch_concurrent
+        from olmo_eval.inference.utils import dispatch_requests
 
+        # Validate tool support for the whole batch before dispatching requests.
+        self._refuse_tools_without_parsing(requests)
         params = self._default_sampling_params(sampling_params)
 
         async def process(req: LMRequest) -> list[LMOutput]:
-            return await self._generate_single_async(req, params)
+            return await self._generate_or_mark_overflow(req, params)
 
-        results = await dispatch_concurrent(
+        results = await dispatch_requests(
             requests,
             process,
             max_in_flight=self.max_concurrency,
             max_retries=self.max_retries,
-            on_progress=self._beaker_reporter.progress_callback("vLLM gen", units="req/sec"),
         )
-        return [r if r is not None else [] for r in results]
+        return results
+
+    async def _generate_or_mark_overflow(
+        self, request: LMRequest, params: SamplingParams
+    ) -> list[LMOutput]:
+        """Generate, recording a context overflow on the reply instead of raising.
+
+        A prompt too long for the window fails the same way every time, so it is
+        not worth retrying; marking it lets the caller see why the request failed.
+        """
+        try:
+            return await self._generate_single_async(request, params)
+        except Exception as exc:
+            if not is_context_overflow(exc):
+                raise
+            return [
+                LMOutput(
+                    text="",
+                    metadata={
+                        REQUEST_ERROR_KEY: f"context overflow: {exc}",
+                        CONTEXT_OVERFLOW_KEY: True,
+                    },
+                )
+            ]
 
     def generate(
         self,
@@ -1073,6 +1213,7 @@ class VLLMServerProvider(InferenceProvider):
             max_len = request.max_length if request.max_length is not None else self.max_length
             if max_len is not None and max_len <= 1:
                 raise ValueError("max_length must be greater than 1 for loglikelihood requests")
+            overflow = 0
             if max_len is not None and len(full_tokens) > max_len - 1:
                 full_tokens = full_tokens[-(max_len - 1) :]
                 overflow = len(context_enc) + len(continuation_enc) - (max_len - 1)
@@ -1088,7 +1229,7 @@ class VLLMServerProvider(InferenceProvider):
             resp = await http_client.post(
                 f"{self.base_url}/completions",
                 json={
-                    "model": self.model_name,
+                    "model": self._request_model_name,
                     "prompt": full_tokens,
                     "max_tokens": 1,
                     "temperature": params.temperature,
@@ -1165,7 +1306,10 @@ class VLLMServerProvider(InferenceProvider):
                         "total_logprob": total,
                         "sum_logits": total,
                         "num_tokens": num_tokens,
-                        "num_tokens_all": num_tokens,
+                        # Context plus continuation as sent (after truncation), matching the
+                        # offline vllm provider. Used for token accounting, not scoring.
+                        "num_tokens_all": len(full_tokens),
+                        "prompt_truncated_tokens": overflow,
                         "is_greedy": is_greedy,
                     },
                 )
@@ -1194,7 +1338,7 @@ class VLLMServerProvider(InferenceProvider):
         Returns:
             List of output lists with logprobs populated.
         """
-        from olmo_eval.inference.dispatch import dispatch_concurrent
+        from olmo_eval.inference.utils import dispatch_requests
 
         params = self._default_sampling_params(sampling_params)
         if params.truncate_prompt_tokens is not None or params.truncation_side is not None:
@@ -1202,26 +1346,14 @@ class VLLMServerProvider(InferenceProvider):
                 "truncate_prompt_tokens or truncation_side has been set in the params, "
                 "but is not supported for loglikelihood requests and will not be used."
             )
-        results = await dispatch_concurrent(
+        results = await dispatch_requests(
             requests,
             lambda request: self._logprobs_single_async(request, params),
             max_in_flight=self.max_concurrency,
             max_retries=self.max_retries,
         )
 
-        # Log if any requests failed (result is None)
-        failed_count = sum(1 for r in results if r is None)
-        if failed_count > 0:
-            # Try to get the actual error by running one request directly
-            try:
-                await self._logprobs_single_async(requests[0], params)
-            except Exception as e:
-                logger.error(
-                    f"alogprobs: {failed_count}/{len(requests)} requests failed. First error: {e!r}"
-                )
-
-        # Replace None with empty list for failed requests
-        return [r if r is not None else [] for r in results]
+        return results
 
     def logprobs(
         self,

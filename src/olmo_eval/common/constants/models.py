@@ -136,4 +136,30 @@ def get_model_presets() -> dict[str, ProviderConfig]:
             api_base="https://ai2-model-hub.allen.ai",
             required_secrets=("LITELLM_PROXY_API_KEY",),
         ),
+        # Multimodal (image-text-to-text) models. Run the released HF Molmo2
+        # checkpoint directly via AutoProcessor + AutoModelForImageTextToText;
+        # tasks attach the image to LMRequest.images. Requires the `hf` extra.
+        # fp32 weights + bf16 autocast matches mm_olmo's official amp_bf16 eval
+        # numerics (the released config declares dtype=float32, float32_attention).
+        "molmo2-4b": ProviderConfig(
+            kind=ProviderKind.HF,
+            model="allenai/Molmo2-4B",
+            trust_remote_code=True,
+            dtype="float32",
+            kwargs={"multimodal": True, "max_crops": 24, "autocast_dtype": "bfloat16"},
+        ),
+        "molmo2-8b": ProviderConfig(
+            kind=ProviderKind.HF,
+            model="allenai/Molmo2-8B",
+            trust_remote_code=True,
+            dtype="float32",
+            kwargs={"multimodal": True, "max_crops": 24, "autocast_dtype": "bfloat16"},
+        ),
+        "molmo2-o-7b": ProviderConfig(
+            kind=ProviderKind.HF,
+            model="allenai/Molmo2-O-7B",
+            trust_remote_code=True,
+            dtype="float32",
+            kwargs={"multimodal": True, "max_crops": 24, "autocast_dtype": "bfloat16"},
+        ),
     }

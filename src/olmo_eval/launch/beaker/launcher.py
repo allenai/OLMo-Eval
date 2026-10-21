@@ -9,7 +9,7 @@ Example:
         command=["olmo-eval", "run", "-m", "llama3.1-8b", "-t", "mmlu"],
         cluster="ai2/ceres",
         workspace="ai2/oe-data",
-        budget="ai2/oe-base",
+        budget="ai2/oe-other",
         num_gpus=1,
     )
     launcher = BeakerLauncher(workspace="ai2/oe-data")
@@ -35,16 +35,20 @@ from olmo_eval.common.constants.infrastructure import (
     BEAKER_DEFAULT_IMAGE,
     BEAKER_DEFAULT_WORKSPACE,
     BEAKER_KNOWN_CLUSTERS,
+    DEFAULT_WEKA_BUCKETS,
     NEW_CLUSTER_ALIASES,
 )
 from olmo_eval.common.repr import hide_unset
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from beaker import Beaker, BeakerExperiment, BeakerGroup
 
 log = logging.getLogger(__name__)
 
 __all__ = [
+    "DEFAULT_WEKA_BUCKETS",
     "BeakerEnvSecret",
     "BeakerWekaBucket",
     "BeakerJobConfig",
@@ -57,6 +61,8 @@ __all__ = [
     "validate_priority_configuration",
     "print_experiment_config",
     "resolve_clusters",
+    "validate_min_runtime",
+    "weka_buckets_with",
 ]
 
 # Rich console for pretty printing
@@ -129,9 +135,14 @@ def print_experiment_config(
         if clusters:
             header_lines.append(f"[bold blue]Clusters:[/] {', '.join(clusters)}")
 
-        preemptible = context.get("preemptible", True)
-        preempt_str = "[green]yes[/]" if preemptible else "[red]no[/]"
-        header_lines.append(f"[bold blue]Preemptible:[/] {preempt_str}")
+        min_runtime_ns = context.get("minRuntime")
+        if min_runtime_ns is not None:
+            min_runtime = _format_duration(min_runtime_ns // 1_000_000_000)
+            header_lines.append(f"[bold blue]Min runtime:[/] {min_runtime}")
+        else:
+            preemptible = context.get("preemptible", True)
+            preempt_str = "[green]yes[/]" if preemptible else "[red]no[/]"
+            header_lines.append(f"[bold blue]Preemptible:[/] {preempt_str}")
 
         header_text = Text.from_markup("\n".join(header_lines))
         _console.print(Panel(header_text, title="[bold]Beaker Experiment[/]", border_style="blue"))
@@ -316,6 +327,11 @@ class BeakerWekaBucket:
             self.mount = f"/weka/{self.bucket}"
 
 
+def weka_buckets_with(extra: Iterable[str] = ()) -> list[BeakerWekaBucket]:
+    """Return the default Weka buckets plus ``extra``, each mounted once at /weka/<bucket>."""
+    return [BeakerWekaBucket(name) for name in dict.fromkeys((*DEFAULT_WEKA_BUCKETS, *extra))]
+
+
 @hide_unset()
 @dataclass
 class BeakerJobConfig:
@@ -330,7 +346,7 @@ class BeakerJobConfig:
             command=["olmo-eval", "run", "-m", "llama3.1-8b", "-t", "mmlu"],
             cluster="ai2/ceres",
             workspace="ai2/oe-data",
-            budget="ai2/oe-base",
+            budget="ai2/oe-other",
             num_gpus=1,
         )
 
@@ -343,7 +359,10 @@ class BeakerJobConfig:
         num_gpus: Number of GPUs to request.
         shared_memory: Shared memory size (e.g., "10GiB").
         priority: Job priority level.
-        preemptible: Whether the job can be preempted.
+        preemptible: Whether the job can be preempted. Ignored and set to None when
+            min_runtime is set; combining False with min_runtime raises ValueError.
+        min_runtime: Minimum time the job runs before Beaker may preempt it (e.g., "2h").
+            Replaces preemptible, which Beaker has deprecated.
         timeout: Job timeout (e.g., "24h", "30m").
         retries: Number of retries on failure.
         beaker_image: Container image to use.
@@ -368,7 +387,8 @@ class BeakerJobConfig:
 
     # Job settings
     priority: str = "normal"
-    preemptible: bool = True
+    preemptible: bool | None = True
+    min_runtime: str | None = None
     timeout: str | None = "24h"
     retries: int | None = None
 
@@ -377,13 +397,7 @@ class BeakerJobConfig:
     description: str | None = None
 
     # Storage - defaults include common eval buckets
-    weka_buckets: list[BeakerWekaBucket] = field(
-        default_factory=lambda: [
-            BeakerWekaBucket("oe-training-default"),
-            BeakerWekaBucket("oe-eval-default"),
-            BeakerWekaBucket("oe-adapt-default"),
-        ]
-    )
+    weka_buckets: list[BeakerWekaBucket] = field(default_factory=weka_buckets_with)
     nfs: bool = False
 
     # Environment - defaults include HuggingFace cache on Weka
@@ -399,7 +413,7 @@ class BeakerJobConfig:
     # Result path
     result_path: str = "/results"
 
-    # Optional dependency groups to install at runtime (e.g., ["vllm", "postgres"])
+    # Optional dependency groups to install at runtime (e.g., ["vllm", "s3"])
     extras: list[str] = field(default_factory=list)
 
     # Group assignment - experiment will be added to these groups at creation time
@@ -410,6 +424,10 @@ class BeakerJobConfig:
 
     # GCS access - when True, injects user's GCS credentials as env secret
     inject_gcs_credentials: bool = False
+
+    # Results upload - when True, injects the shared uploader service account key so the
+    # job can upload results to the dashboard's ingest service
+    inject_upload_credentials: bool = False
 
     # Provider-specific dependencies (from provider config)
     provider_packages: list[str] | None = None
@@ -426,9 +444,6 @@ class BeakerJobConfig:
     # Registry mirror setup script to run during install (for sandbox jobs)
     setup_registry_mirror: bool = False
 
-    # Run setup_store_secrets during install to configure database access
-    setup_store_secrets: bool = False
-
     # Install vLLM in isolated venv (for server mode to avoid dependency conflicts)
     # When True, vLLM is installed in /opt/vllm-venv and VLLM_PYTHON points to it.
     # Use this for external evals that run vLLM as a server subprocess.
@@ -438,6 +453,17 @@ class BeakerJobConfig:
     # When True, runs setup_modal_gcp_secret script during install.
     # Requires MODAL_GCP_SECRET_NAME env var to be set with the secret name.
     setup_modal_gcp_secret: bool = False
+
+    def __post_init__(self) -> None:
+        if self.min_runtime is not None:
+            if self.preemptible is False:
+                raise ValueError(
+                    "preemptible=False cannot be combined with min_runtime; set min_runtime alone"
+                )
+            self.min_runtime = validate_min_runtime(self.min_runtime)
+            self.preemptible = None
+        elif self.preemptible is None:
+            self.preemptible = True
 
 
 def resolve_clusters(cluster: str | list[str]) -> list[str]:
@@ -745,6 +771,46 @@ def _parse_timeout(timeout: str) -> int:
     return total_ns if total_ns else 86400_000_000_000  # Default 24h
 
 
+_MIN_RUNTIME_PATTERN = re.compile(r"(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?")
+
+
+def validate_min_runtime(min_runtime: str) -> str:
+    """Validate a Beaker min runtime string such as "2h", "30m", or "1h30m".
+
+    Units are required and the duration must be positive. Beaker checks the allowed range
+    when the experiment is created.
+
+    Args:
+        min_runtime: Duration string using h, m, and s units.
+
+    Returns:
+        The duration string with surrounding whitespace removed.
+
+    Raises:
+        ValueError: If the string is not a positive duration in h, m, and s units.
+    """
+    value = min_runtime.strip()
+    match = _MIN_RUNTIME_PATTERN.fullmatch(value)
+    if not value or match is None:
+        raise ValueError(
+            f"invalid min runtime {min_runtime!r}; expected a duration like '2h', '30m', or '1h30m'"
+        )
+    if not any(int(part) for part in match.groups() if part):
+        raise ValueError(
+            f"min runtime {min_runtime!r} must be greater than zero; "
+            "omit it to allow preemption at any time"
+        )
+    return value
+
+
+def _format_duration(seconds: int) -> str:
+    """Format a duration in seconds as h/m/s units, such as "1h30m"."""
+    hours, rest = divmod(seconds, 3600)
+    minutes, secs = divmod(rest, 60)
+    parts = [f"{n}{unit}" for n, unit in ((hours, "h"), (minutes, "m"), (secs, "s")) if n]
+    return "".join(parts) or "0s"
+
+
 class BeakerLauncher:
     """Launches evaluation jobs on Beaker using beaker-gantry.
 
@@ -789,6 +855,41 @@ class BeakerLauncher:
         """Return the user-scoped GitHub token secret name for Gantry clones."""
         return f"{self.beaker.user_name}_GITHUB_TOKEN"
 
+    def beaker_token_secret(self, workspace: str, dry_run: bool) -> str | None:
+        """Return the user's BEAKER_TOKEN secret if it exists in ``workspace``.
+
+        The secret is never created: it holds a personal Beaker token, and it only
+        enables cosmetic status updates. A dry run does not query Beaker.
+        """
+        from olmo_eval.launch.beaker.secrets import beaker_token_secret_name, secret_exists
+
+        name = beaker_token_secret_name(self.beaker.user_name)
+        enable_hint = (
+            f"To enable them, create the secret: beaker secret write --workspace {workspace} "
+            f"{name} <your Beaker token>"
+        )
+        if dry_run:
+            _console.print(
+                f"[dim]BEAKER_TOKEN will be injected from secret {name} if it exists in "
+                f"{workspace}; otherwise job status updates in the Beaker UI are disabled. "
+                "Not checked in a dry run.[/dim]"
+            )
+            return None
+        try:
+            exists = secret_exists(
+                self.beaker, name, workspace if workspace != self._workspace else None
+            )
+        except Exception as e:
+            log.debug(f"Could not check for Beaker secret {name}: {e}")
+            exists = False
+        if exists:
+            return name
+        _console.print(
+            f"[yellow]Warning:[/yellow] Secret {name} not found in {workspace}, so job status "
+            f"updates in the Beaker UI are disabled. {enable_hint}"
+        )
+        return None
+
     def _build_install_cmd(
         self,
         extras: list[str],
@@ -797,7 +898,6 @@ class BeakerLauncher:
         task_packages: list[str] | None = None,
         setup_registry_mirror: bool = False,
         enable_sandbox: bool = False,
-        setup_store_secrets: bool = False,
         vllm_isolated_venv: bool = False,
         setup_modal_gcp_secret: bool = False,
     ) -> str:
@@ -818,7 +918,6 @@ class BeakerLauncher:
             task_packages: Optional list of task-specific packages to install.
             setup_registry_mirror: If True, run setup_dockerio_mirror script with MIRROR_HOSTS.
             enable_sandbox: If True, set up /dev/net/tun and Artifact Registry auth.
-            setup_store_secrets: If True, run setup_store_secrets to configure database access.
             vllm_isolated_venv: If True, install vLLM in isolated venv for server mode.
             setup_modal_gcp_secret: If True, run setup_modal_gcp_secret to create Modal secret.
 
@@ -847,7 +946,7 @@ class BeakerLauncher:
             steps.append(f'if [ -n "$MIRROR_HOSTS" ]; then {script} "$MIRROR_HOSTS"; fi')
 
         # Set up Artifact Registry auth for sandbox image caching
-        # Checks for GOOGLE_APPLICATION_CREDENTIALS and exits gracefully if not set
+        # Skips itself unless GOOGLE_APPLICATION_CREDENTIALS holds a service account key
         if enable_sandbox:
             script = "/gantry-runtime/src/olmo_eval/launch/beaker/scripts/setup_artifact_registry"
             steps.append(f"source {script}")
@@ -886,12 +985,16 @@ class BeakerLauncher:
         if runtime_torch_version:
             steps.append(build_install_command(runtime_torch_spec(), force_reinstall=True))
 
-        # Generate constraints from pre-installed CUDA packages to prevent uv from changing them
+        # Generate constraints from pre-installed CUDA packages to prevent uv from changing them.
+        # CUTLASS DSL is the exception: vLLM pins this package independently of
+        # Torch's CUDA package set, so constraining an image's older build makes
+        # an otherwise compatible vLLM impossible to resolve.
         constraints = "/tmp/cuda-constraints.txt"
-        # Constrain only torch itself and NVIDIA CUDA packages. Companion
-        # packages (torchvision/torchaudio) must stay replaceable so provider
-        # releases can swap them, and nvidia-cutlass-dsl pins break installs.
         steps.append(
+            # Match torch itself, but not companion packages such as
+            # torchvision or torchaudio. Provider releases pin those companions
+            # alongside their Torch generation and must be allowed to replace
+            # the versions inherited from the base image.
             f"uv pip freeze -q | grep -E '^(torch(==| @ )|nvidia-)' "
             f"| grep -vE '^nvidia-cutlass-dsl' > {constraints}"
         )
@@ -965,11 +1068,6 @@ class BeakerLauncher:
             for pkg in task_packages:
                 steps.append(build_install_command(pkg, constraints))
 
-        # Set up database credentials for --store
-        if setup_store_secrets:
-            script = "/gantry-runtime/src/olmo_eval/launch/beaker/scripts/setup_store_secrets"
-            steps.append(f"source {script}")
-
         # Set up Modal secret for GCP Artifact Registry (Modal sandboxes)
         if setup_modal_gcp_secret:
             script = "/gantry-runtime/src/olmo_eval/launch/beaker/scripts/setup_modal_gcp_secret"
@@ -1010,7 +1108,6 @@ class BeakerLauncher:
             config.task_packages,
             config.setup_registry_mirror,
             config.enable_sandbox,
-            config.setup_store_secrets,
             config.vllm_isolated_venv,
             config.setup_modal_gcp_secret,
         )
@@ -1026,10 +1123,12 @@ class BeakerLauncher:
             (secret.name, secret.secret) for secret in config.env_secrets
         ]
 
-        # Inject BEAKER_TOKEN so the running job can post status updates back to
-        # the workload description via BeakerStatusReporter.
+        # BEAKER_TOKEN lets the running job post status updates to the workload
+        # description via BeakerStatusReporter.
         if not any(name == "BEAKER_TOKEN" for name, _ in env_secrets):
-            env_secrets.append(("BEAKER_TOKEN", f"{self.beaker.user_name}_BEAKER_TOKEN"))
+            token_secret = self.beaker_token_secret(config.workspace, dry_run)
+            if token_secret:
+                env_secrets.append(("BEAKER_TOKEN", token_secret))
 
         # Inject AWS credentials if requested
         if config.inject_aws_credentials:
@@ -1041,11 +1140,26 @@ class BeakerLauncher:
 
         # Inject GCS credentials if requested
         google_credentials_secret: str | None = None
-        if config.inject_gcs_credentials:
+        if config.inject_gcs_credentials and dry_run:
+            # A dry run shows the secret name without writing credentials to Beaker.
+            google_credentials_secret = f"{self.beaker.user_name}_GOOGLE_CREDENTIALS"
+        elif config.inject_gcs_credentials:
             from olmo_eval.launch.beaker.gcs import ensure_gcs_secrets
 
             google_credentials_secret = ensure_gcs_secrets(config.workspace)
             log.info("Injecting GCS credentials for GCS access")
+
+        # Inject the uploader key for results upload. A dry run shows the secret name
+        # without reading the key or writing it to Beaker.
+        if config.inject_upload_credentials:
+            from olmo_eval.launch.beaker.uploader import (
+                UPLOADER_SECRET_NAME,
+                ensure_uploader_secret,
+            )
+            from olmo_eval.upload.config import UPLOAD_CREDENTIALS_ENV
+
+            secret = UPLOADER_SECRET_NAME if dry_run else ensure_uploader_secret(config.workspace)
+            env_secrets.append((UPLOAD_CREDENTIALS_ENV, secret))
 
         # Build env vars as tuples: (name, value)
         env_vars: list[tuple[str, str]] = list(config.env_vars.items())
@@ -1077,6 +1191,7 @@ class BeakerLauncher:
             shared_memory=config.shared_memory,
             priority=config.priority,
             preemptible=config.preemptible,
+            min_runtime=config.min_runtime,
             task_timeout=config.timeout,
             retries=config.retries,
             budget=config.budget,
@@ -1143,8 +1258,11 @@ class BeakerLauncher:
         header_lines.append(f"[bold blue]Clusters:[/] {', '.join(clusters)}")
         header_lines.append(f"[bold blue]Image:[/] {config.beaker_image}")
 
-        preempt_str = "[green]yes[/]" if config.preemptible else "[red]no[/]"
-        header_lines.append(f"[bold blue]Preemptible:[/] {preempt_str}")
+        if config.min_runtime is not None:
+            header_lines.append(f"[bold blue]Min runtime:[/] {config.min_runtime}")
+        else:
+            preempt_str = "[green]yes[/]" if config.preemptible else "[red]no[/]"
+            header_lines.append(f"[bold blue]Preemptible:[/] {preempt_str}")
 
         header_text = Text.from_markup("\n".join(header_lines))
         _console.print(Panel(header_text, title="[bold]Beaker Experiment[/]", border_style="blue"))
