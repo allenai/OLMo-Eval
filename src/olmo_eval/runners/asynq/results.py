@@ -12,6 +12,7 @@ from olmo_eval.common.beaker_status import BeakerStatusReporter
 from olmo_eval.common.logging import get_logger
 from olmo_eval.common.progress import ProgressLogger
 from olmo_eval.common.scorers.execution import format_scoring_error
+from olmo_eval.common.scoring_failures import RESPONSE_ERROR_KEY, format_scoring_failures
 from olmo_eval.common.types import Response
 from olmo_eval.common.types.trajectory import AgentTrajectory
 from olmo_eval.runners.asynq.monitoring import check_workers_alive
@@ -29,7 +30,6 @@ from olmo_eval.runners.common.types import (
 )
 from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
 from olmo_eval.runners.processing.generation_counts import format_generation_counts
-from olmo_eval.runners.processing.scoring_failures import format_scoring_failures
 from olmo_eval.runners.processing.utils import compute_task_hash
 
 if TYPE_CHECKING:
@@ -108,36 +108,24 @@ def _format_worker_failure(error: object, pending_instances: set[InstanceKey]) -
     return f"Worker process crashed with {_format_pending_instances(pending_instances)}: {error}"
 
 
-def _record_scoring_failure(
-    response: Response,
-    *,
-    scorer_names: list[str],
-    error: dict[str, str],
-) -> Response:
-    """Record the error on the outputs a raising ``score_responses`` left unscored.
+def _record_scoring_failure(response: Response, *, error: dict[str, str]) -> Response:
+    """Leave a response unscored after its ``score_responses`` raised.
 
-    An output that already has every scorer's verdict keeps it. The others get the
-    error under ``__response__`` and no score. If every output had its verdicts, the
-    failure came after scoring them, so all of them get the error. A response with no
+    The raise interrupted scoring, so no score the response may have received is
+    trusted: every output gets the error under ``__response__``. A response with no
     outputs keeps the error on the response itself.
     """
     if not response.outputs:
         response.scoring_error = error
         return response
-
-    def has_verdict(output) -> bool:
-        metadata = output.metadata or {}
-        return bool(scorer_names) and all(f"score:{name}" in metadata for name in scorer_names)
-
-    unscored = [output for output in response.outputs if not has_verdict(output)]
-    for output in unscored or response.outputs:
+    for output in response.outputs:
         if output.metadata is None:
             output.metadata = {}
         existing = output.metadata.get("scoring_errors")
         if not isinstance(existing, dict):
             existing = {}
             output.metadata["scoring_errors"] = existing
-        existing["__response__"] = dict(error)
+        existing[RESPONSE_ERROR_KEY] = dict(error)
     return response
 
 
@@ -257,11 +245,7 @@ async def process_results(
                     instance_idx,
                     error.get("message", error["type"]),
                 )
-                scored = _record_scoring_failure(
-                    response,
-                    scorer_names=list(task._get_scorers()),
-                    error=error,
-                )
+                scored = _record_scoring_failure(response, error=error)
 
         scored_responses[spec][instance_idx] = scored
         instances_scored[spec] += 1
@@ -280,7 +264,7 @@ async def process_results(
     # Pre-add error tasks to results (these don't need scoring)
     for spec, tracker in trackers.items():
         if tracker.error:
-            task_result = await finalize_task(tracker)
+            task_result = await finalize_task(tracker, max_hard_failure_rate)
             results[spec] = task_result
             tasks_complete += 1
             _report_task_completion(model_name, task_result)

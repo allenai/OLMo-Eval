@@ -56,7 +56,8 @@ uv run pytest tests/ --ignore=tests/integration -v
 - **Failures aren't scores.** No broad `except` around provider, judge, or scoring calls
   that substitutes a score; no sentinel scores; missing logprobs are not zero. A scorer
   that cannot decide raises; the runner leaves that output unscored and counts it against
-  the failure budget. Diagnostics must reach saved predictions.
+  the failure budget, and a task with no scored responses fails. Diagnostics must reach
+  saved predictions.
 - **Per-instance metrics.** Override `Metric.compute_instance()` when the metric differs
   from the scorer value, and return `None` for out-of-scope instances.
 - **Parity.** Match the cited reference exactly; keep reference bugs under the parity name

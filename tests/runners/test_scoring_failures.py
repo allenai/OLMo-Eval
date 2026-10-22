@@ -4,17 +4,17 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from olmo_eval.common.types import Instance, LMOutput, LMRequest, RequestType, Response
-from olmo_eval.evals.tasks.common import TaskConfig
-from olmo_eval.runners.asynq.preparation import compute_task_metrics
-from olmo_eval.runners.processing.scoring_failures import (
-    MAX_ERROR_MESSAGE_CHARS,
+from olmo_eval.common.scoring_failures import (
+    MAX_ERROR_DESCRIPTION_CHARS,
     ScoringState,
     count_scoring_failures,
     describe_error,
     measurable_responses,
     scoring_state,
 )
+from olmo_eval.common.types import Instance, LMOutput, LMRequest, RequestType, Response
+from olmo_eval.evals.tasks.common import TaskConfig
+from olmo_eval.runners.asynq.preparation import compute_task_metrics
 
 ERROR = {"phase": "execution", "type": "RuntimeError", "message": "scorer crashed"}
 
@@ -41,6 +41,9 @@ class _RecordingTask:
 
     def __init__(self) -> None:
         self.measured: list[Response] = []
+
+    def _get_scorers(self) -> dict[str, object]:
+        return {"code_exec": object()}
 
     def compute_metrics(self, responses: list[Response]) -> dict[str, dict[str, float]]:
         self.measured = list(responses)
@@ -108,7 +111,8 @@ def test_the_quoted_error_is_capped() -> None:
 
     described = describe_error(error)
 
-    assert len(described) == len("ValueError: ") + MAX_ERROR_MESSAGE_CHARS
+    assert len(described) == MAX_ERROR_DESCRIPTION_CHARS
+    assert described.startswith("ValueError: xxx")
     assert described.endswith("…")
 
 
@@ -158,3 +162,51 @@ def test_the_summary_warns_about_published_tasks_only() -> None:
         "2 instance(s) were scored from only some of their outputs. "
         "First scoring error: KeyError: 'gold'"
     ]
+
+
+class _EvaluatorFailsTask(_RecordingTask):
+    """A task whose compute_metrics finds it cannot score anything, as OmniDocBench does."""
+
+    def compute_metrics(self, responses: list[Response]) -> dict[str, dict[str, float]]:
+        for response in responses:
+            for output in response.outputs:
+                output.metadata["scoring_errors"] = {"code_exec": dict(ERROR)}
+        return {}
+
+
+def test_errors_recorded_while_computing_metrics_still_fail_the_task() -> None:
+    responses = [_response(_output()) for _ in range(3)]
+
+    result = compute_task_metrics(
+        "test",
+        _EvaluatorFailsTask(),  # type: ignore[arg-type]
+        responses,
+        {},
+        3,
+        0.0,
+        max_hard_failure_rate=1.0,
+    )
+
+    assert result.failure_budget_exceeded is True
+    assert result.error is not None and result.error.startswith("No instance was scored")
+    assert result.instances_unscored == 3
+
+
+def test_a_failure_on_a_response_without_outputs_reaches_the_predictions() -> None:
+    from olmo_eval.upload.extract import build_instance_row
+
+    failed = _response(scoring_error=dict(ERROR))
+    result = compute_task_metrics(
+        "test",
+        _RecordingTask(),  # type: ignore[arg-type]
+        [_response(_output()), failed],
+        {},
+        2,
+        0.0,
+        max_hard_failure_rate=1.0,
+    )
+
+    assert result.predictions is not None
+    record = result.predictions[1]
+    assert record["scoring_error"] == ERROR
+    assert build_instance_row(record, "1", None, 0, 0, None)["has_scoring_error"] is True

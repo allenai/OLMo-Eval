@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from olmo_eval.common.scoring_failures import ScoringState, scoring_state
 from olmo_eval.common.types import Instance, LMOutput, LMRequest, RequestType, Response
 from olmo_eval.evals.tasks.common import TaskConfig
 from olmo_eval.runners.asynq.preparation import compute_task_metrics
@@ -11,6 +12,9 @@ from olmo_eval.runners.asynq.preparation import compute_task_metrics
 
 class _Task:
     config = TaskConfig(name="test", data_source="test/data")
+
+    def _get_scorers(self) -> dict[str, object]:
+        return {"code_exec": object()}
 
     def compute_metrics(self, _responses: list[Response]) -> dict[str, dict[str, float]]:
         return {"accuracy": {"code_exec": 0.0}}
@@ -189,37 +193,19 @@ def test_missing_sandbox_invalidates_livecodebench_samples(
         assert error["infrastructure"] == "true"
 
 
-def test_a_response_failure_is_recorded_only_on_outputs_without_a_verdict() -> None:
+def test_a_response_failure_leaves_every_output_unscored() -> None:
     from olmo_eval.runners.asynq.results import _record_scoring_failure
 
     response = _response({"type": "ScoringIncompleteError", "infrastructure": "true"})
     response.outputs.append(LMOutput(text="ungraded"))
     response.outputs.append(LMOutput(text="graded", metadata={"score:code_exec": 1.0}))
 
-    _record_scoring_failure(
-        response,
-        scorer_names=["code_exec"],
-        error={"type": "ScoringIncompleteError", "infrastructure": "true"},
-    )
+    _record_scoring_failure(response, error={"type": "KeyError", "message": "'answer'"})
 
-    first, ungraded, graded = response.outputs
-    assert set(first.metadata["scoring_errors"]) == {"code_exec", "__response__"}
-    assert ungraded.metadata["scoring_errors"]["__response__"]["type"] == "ScoringIncompleteError"
-    assert "scoring_errors" not in graded.metadata
-    assert graded.metadata["score:code_exec"] == 1.0
-    assert "score:code_exec" not in ungraded.metadata
-    assert response.scores == {}
-
-
-def test_a_failure_after_every_verdict_marks_every_output() -> None:
-    from olmo_eval.runners.asynq.results import _record_scoring_failure
-
-    response = _response(None)
-    response.outputs[0].metadata["score:code_exec"] = 1.0
-
-    _record_scoring_failure(response, scorer_names=["code_exec"], error={"type": "KeyError"})
-
-    assert response.outputs[0].metadata["scoring_errors"]["__response__"]["type"] == "KeyError"
+    # The raise interrupted scoring, so even the output that had a score is not trusted.
+    for output in response.outputs:
+        assert output.metadata["scoring_errors"]["__response__"]["type"] == "KeyError"
+    assert scoring_state(response) is ScoringState.UNSCORED
 
 
 def test_a_failed_response_without_outputs_keeps_the_error() -> None:
@@ -228,6 +214,6 @@ def test_a_failed_response_without_outputs_keeps_the_error() -> None:
     response = _response(None)
     response.outputs = []
 
-    _record_scoring_failure(response, scorer_names=["code_exec"], error={"type": "KeyError"})
+    _record_scoring_failure(response, error={"type": "KeyError"})
 
     assert response.scoring_error == {"type": "KeyError"}

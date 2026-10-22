@@ -135,6 +135,9 @@ class _StubTask:
         metrics=(AccuracyMetric(),),
     )
 
+    def _get_scorers(self) -> dict[str, object]:
+        return {"code_exec": object()}
+
     def compute_metrics(self, responses: list[Response]) -> dict[str, dict[str, float]]:
         return CLEAN_METRICS
 

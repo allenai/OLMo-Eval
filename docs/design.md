@@ -109,8 +109,9 @@ remain an explicit failure. An eval that quietly scores a crashed instance as ze
 produces a believable wrong number, which is worse than a failed run.
 
 When a scorer cannot reach a verdict for an output, the output records the error and gets
-no score. An instance with no scored output is left out of the task's metrics, and one
-scored from only some of its outputs is scored from those. Instances left out this way
+no score from that scorer. An instance the scorer could not score at all is left out of
+that scorer's metrics, and one it scored from only some of its outputs is scored from
+those. Instances left out this way
 and instances that produced no output share one failure budget, `max_hard_failure_rate`
 (5% by default). A task within it publishes its metrics with the counts beside them; a
 task over it, or with nothing scored, fails and publishes none. Leaving failures out can

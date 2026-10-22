@@ -109,7 +109,7 @@ export function TasksTab(ctx: RunCtx) {
         header: "n",
         title: "Instances (saved / processed / failed / unscored)",
         headerTitle: "Instances saved / processed / failed (no output) / unscored",
-        width: 118,
+        width: 150,
         align: "right",
         sortValue: (r) => r.n,
         cell: (r) => (
@@ -119,7 +119,7 @@ export function TasksTab(ctx: RunCtx) {
             {r.instances_failed ? <span style={{ color: "var(--danger-fg)" }}>/{formatCount(r.instances_failed)}</span> : null}
             {r.scoring_failures?.instances_unscored ? (
               <span style={{ color: "var(--warn-fg)" }} title="Instances with no scored output, left out of the score">
-                /{formatCount(r.scoring_failures.instances_unscored)}
+                {" "}+{formatCount(r.scoring_failures.instances_unscored)} unscored
               </span>
             ) : null}
           </span>

@@ -1060,3 +1060,43 @@ class TestSamplingParamsInTaskHash:
         )
 
         assert config.to_dict()["sampling_params"]["fit_max_tokens_to_context"] is True
+
+
+@dataclass(frozen=True, slots=True)
+class _NamedScorer(ExactMatchScorer):
+    name: str = "first"
+
+
+@dataclass(frozen=True, slots=True)
+class _OtherScorer(ExactMatchScorer):
+    name: str = "second"
+
+
+def test_a_scorer_failure_leaves_the_instance_out_of_that_scorers_metric_only():
+    from olmo_eval.common.scoring_failures import ScoringState, task_scoring_state
+
+    config = TaskConfig(
+        name="test",
+        data_source="test/dataset",
+        metrics=(AccuracyMetric(scorer=_NamedScorer), AccuracyMetric(scorer=_OtherScorer)),
+    )
+    task = ConcreteTask(config)
+    request = LMRequest(request_type=RequestType.COMPLETION, prompt="q")
+    clean = Response(
+        instance=Instance(question="q", gold_answer="a"),
+        request=request,
+        outputs=[LMOutput(text="a")],
+        scores={"first": 0.0, "second": 0.0},
+    )
+    second_failed = Response(
+        instance=Instance(question="q", gold_answer="a"),
+        request=request,
+        outputs=[LMOutput(text="a", metadata={"scoring_errors": {"second": {"type": "KeyError"}}})],
+        scores={"first": 1.0},
+    )
+
+    metrics = task.compute_metrics([clean, second_failed])
+
+    # The first scorer scored both instances; the second only the clean one.
+    assert metrics["accuracy"] == {"first": 0.5, "second": 0.0}
+    assert task_scoring_state(second_failed, ("first", "second")) is ScoringState.UNSCORED

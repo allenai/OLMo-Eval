@@ -80,6 +80,11 @@ class CapabilityExecutionEnvironment:
     def is_running(self) -> bool:
         return self.manager.has_executor(self.capabilities)
 
+    @property
+    def has_running_executor(self) -> bool:
+        """Whether a running executor serves these capabilities, even if it is bound now."""
+        return self.manager.has_running_executor(self.capabilities)
+
     async def execute(self, command: str, timeout: float | None = None) -> str:
         return await self.manager.execute(
             command,
@@ -397,6 +402,13 @@ class SandboxManager:
             and idx not in self._bound_executors
             and executor.is_running
             for idx, executor in enumerate(self._executors)
+        )
+
+    def has_running_executor(self, required_capabilities: frozenset[str]) -> bool:
+        """Return whether a running executor supports the capabilities, bound or not."""
+        return any(
+            required_capabilities <= executor.config.capabilities and executor.is_running
+            for executor in self._executors
         )
 
     def for_capabilities(

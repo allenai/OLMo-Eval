@@ -310,7 +310,8 @@ def build_instance_row(
         "prompt_preview": request.preview[:PREVIEW_CHARS] if request and request.preview else None,
         "output_preview": text[:PREVIEW_CHARS] if isinstance(text, str) and text else None,
         "judge_verdict": _judge_verdict(judge),
-        "has_scoring_error": any(bool(o.get("scoring_errors")) for o in outputs),
+        "has_scoring_error": bool(rec.get("scoring_error"))
+        or any(bool(o.get("scoring_errors")) for o in outputs),
         "has_execution_result": any(o.get("execution_result") is not None for o in outputs),
         "has_judge_result": judge is not None,
         "has_trajectory": rec.get("trajectory") is not None,

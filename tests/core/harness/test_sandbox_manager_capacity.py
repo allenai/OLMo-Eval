@@ -66,3 +66,13 @@ async def test_scoring_environment_does_not_fail_over_from_healthy_sandbox() -> 
     assert broken.is_running is True
     assert broken.calls == 1
     assert healthy.calls == 0
+
+
+def test_a_bound_executor_still_serves_its_capability() -> None:
+    manager = make_manager(TrackingExecutor("only"))
+    environment = manager.for_capabilities(Capability.DEFAULT)
+    manager._bound_executors.add(0)
+
+    # No executor is free to lease right now, but one is running and will be again.
+    assert environment.is_running is False
+    assert environment.has_running_executor is True

@@ -7,17 +7,17 @@ from dataclasses import replace
 from typing import Any
 
 from olmo_eval.common.logging import get_logger
+from olmo_eval.common.scoring_failures import (
+    ScoringFailures,
+    count_scoring_failures,
+    measurable_responses,
+)
 from olmo_eval.common.types import Response, SamplingParams
 from olmo_eval.evals.tasks.common import Task, get_task
 from olmo_eval.runners.asynq.types import QueueItem, TaskTracker, summarize_failed_instances
 from olmo_eval.runners.common.types import DEFAULT_MAX_HARD_FAILURE_RATE, TaskResult
 from olmo_eval.runners.io.builders import build_predictions, build_requests_from_responses
 from olmo_eval.runners.processing.generation_counts import count_generations
-from olmo_eval.runners.processing.scoring_failures import (
-    ScoringFailures,
-    count_scoring_failures,
-    measurable_responses,
-)
 from olmo_eval.runners.processing.utils import get_metric_metadata
 
 logger = get_logger(__name__)
@@ -98,7 +98,9 @@ def build_requests_from_items(items: list[QueueItem], task_name: str) -> list[di
     return build_requests(instances, requests, task_name, sampling_params)
 
 
-async def finalize_task(tracker: TaskTracker) -> TaskResult:
+async def finalize_task(
+    tracker: TaskTracker, max_hard_failure_rate: float = DEFAULT_MAX_HARD_FAILURE_RATE
+) -> TaskResult:
     """Finalize a task tracker into a TaskResult.
 
     Only the task-level error path is exercised by the async runner, which calls
@@ -108,6 +110,7 @@ async def finalize_task(tracker: TaskTracker) -> TaskResult:
 
     Args:
         tracker: Completed TaskTracker
+        max_hard_failure_rate: The failure budget, as for compute_task_metrics.
 
     Returns:
         TaskResult with metrics and predictions
@@ -168,6 +171,7 @@ async def finalize_task(tracker: TaskTracker) -> TaskResult:
         failed_instances=tracker.failed_instances,
         total_instances=tracker.total_instances,
         duration_seconds=duration,
+        max_hard_failure_rate=max_hard_failure_rate,
     )
 
 
@@ -227,10 +231,14 @@ def compute_task_metrics(
             failure_budget_exceeded=budget_error is not None,
         )
 
-    # Unscored instances are left out of the metrics rather than counted as zeros.
-    measured = measurable_responses(scored_responses)
-    metrics = task.compute_metrics(measured)
-    failures = count_scoring_failures(scored_responses)
+    # Instances no scorer could score are left out rather than counted as zeros; the
+    # task's compute_metrics leaves out, per metric, those its own scorer could not.
+    scorers = tuple(task._get_scorers())
+    metrics = task.compute_metrics(measurable_responses(scored_responses, scorers=scorers))
+    # Counted after compute_metrics, which can itself record scoring errors (a task-level
+    # evaluator that failed, for example).
+    failures = count_scoring_failures(scored_responses, scorers)
+    measured = measurable_responses(scored_responses, scorers=scorers)
 
     # Build predictions
     predictions = build_predictions(scored_responses, metrics=task.config.metrics)

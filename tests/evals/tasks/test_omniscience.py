@@ -772,7 +772,9 @@ class TestEndToEnd:
         metrics = task.compute_metrics(responses)
         assert metrics["any__any__accuracy"]["omniscience_judge"] == 1.0
         assert metrics["any__any__omniscience_index"]["omniscience_judge"] == 100.0
-        assert metrics["judge_parsing_errors"]["omniscience_judge"] == 1.0
+        # The failed call is left out of every metric, its own error count included;
+        # the runner reports it among the task's scoring failures.
+        assert metrics["judge_parsing_errors"]["omniscience_judge"] == 0.0
 
     @pytest.mark.anyio
     async def test_no_warning_when_every_judge_call_succeeds(self, task, patch_judge, caplog):

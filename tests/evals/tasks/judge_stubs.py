@@ -38,8 +38,4 @@ async def score_like_the_runner(task, response: Response) -> Response:
     try:
         return (await task.score_responses([response]))[0]
     except Exception as exc:
-        return _record_scoring_failure(
-            response,
-            scorer_names=list(task._get_scorers()),
-            error=format_scoring_error(exc, phase="response"),
-        )
+        return _record_scoring_failure(response, error=format_scoring_error(exc, phase="response"))

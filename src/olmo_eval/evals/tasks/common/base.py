@@ -714,7 +714,8 @@ class Task(ABC):
             SandboxRequiredError: If an ExecutionScorer is used and no sandbox is
                 configured.
             SandboxInfrastructureError: If sandboxes are configured but none that
-                serves this task's capability is healthy.
+                serves the task's capability is running. A pool that runs out during
+                scoring fails each output with this error instead.
         """
         from olmo_eval.common.scorers.base import ProcessScorer
         from olmo_eval.common.scorers.execution import (
@@ -751,12 +752,16 @@ class Task(ABC):
         sync_scorers: dict[str, Scorer] = {}
         for name, scorer in scorers_by_name.items():
             if isinstance(scorer, ExecutionScorer):
-                if task_executor is None or not task_executor.is_running:
-                    # Sandboxes were configured but none serving this task is healthy.
+                # A sandbox bound to an agent session still counts: it frees up later.
+                serves_task = task_executor is not None and getattr(
+                    task_executor, "has_running_executor", True
+                )
+                if not serves_task:
+                    # Sandboxes were configured but none serving this task is running.
                     if context.execution_env is not None:
                         raise SandboxInfrastructureError(
-                            f"No healthy sandbox with capability {capability!r} remained "
-                            f"for {scorer.__class__.__name__}"
+                            f"No running sandbox serves {scorer.__class__.__name__} "
+                            f"(capability {capability!r})"
                         )
                     raise SandboxRequiredError(
                         f"{scorer.__class__.__name__} requires a sandbox. "
@@ -1012,23 +1017,22 @@ class Task(ABC):
         while preserving which scorer produced which value.
         """
         from olmo_eval.common.metrics import PassAtKMetric, PassPowKMetric
+        from olmo_eval.common.scoring_failures import measurable_responses
 
-        # Expand multi-output responses for pass@k/pass^k metrics only
-        expanded_responses: Sequence[Response] | None = None
-
+        scorers = tuple(self._get_scorers())
         result: dict[str, dict[str, float]] = {}
         for metric in self.config.metrics:
-            scorer_name = (
-                metric.scorer().name if hasattr(metric, "scorer") and metric.scorer else "default"
-            )
+            has_scorer = hasattr(metric, "scorer") and metric.scorer
+            scorer_name = metric.scorer().name if has_scorer else "default"
             if metric.name not in result:
                 result[metric.name] = {}
 
+            # An instance this metric's scorer could not score is left out of the metric.
+            measured = (
+                measurable_responses(responses, scorer_name, scorers) if has_scorer else responses
+            )
             # Use expanded responses for pass metrics, original for others
             if isinstance(metric, (PassAtKMetric, PassPowKMetric)):
-                if expanded_responses is None:
-                    expanded_responses = self._expand_multi_output_responses(responses)
-                result[metric.name][scorer_name] = metric.compute(expanded_responses)
-            else:
-                result[metric.name][scorer_name] = metric.compute(responses)
+                measured = self._expand_multi_output_responses(measured)
+            result[metric.name][scorer_name] = metric.compute(measured)
         return result

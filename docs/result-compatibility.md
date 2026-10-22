@@ -26,13 +26,15 @@ Add an entry in the PR that makes the change, newest first. Each entry states:
   instance with some scored outputs is scored from those, including pass@k and pass^k.
   Unscored instances and instances with no output share the failure budget
   (`max_hard_failure_rate`, 5% by default); a task over it, or with nothing scored,
-  fails and publishes no metrics. The rule that one infrastructure scoring error failed
-  the whole task is gone, so a judged task with a few judge failures now publishes.
-  Judge tasks no longer raise when every sample of an instance fails.
+  fails and publishes no metrics. The rule that one infrastructure scoring error (a
+  judge that gave no verdict, a lost or missing sandbox) withheld the whole task is
+  gone, so such a task now publishes when its failures fit the budget. Judge tasks no
+  longer raise when every sample of an instance fails.
 - **Identity**: task hashes are unchanged.
 - **Comparability**: an earlier result is affected only if its predictions carry
-  `scoring_errors`. A metric that averaged in those zeros could only rise if higher is
-  better, and only fall if lower is better. Metrics that already
+  `scoring_errors`. Leaving out a zero raises a mean of non-negative scores: a
+  higher-is-better metric that averaged those zeros in comes out better, and a
+  lower-is-better one, such as an error rate, comes out worse. Metrics that already
   excluded failed outputs, such as the judged-task, omniscience and Arena-Hard metrics,
   are unchanged, except that a run with a few judge failures is no longer withheld.
   Counts that tasks keep of their own errors, such as omniscience's

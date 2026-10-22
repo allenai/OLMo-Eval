@@ -56,7 +56,10 @@ export interface ScoringFailures {
     infrastructure: NonNegativeInt32;
     /** Unscored outputs by exception type, from each output's first error. */
     by_type: { [type: string]: NonNegativeInt32 };
-    /** The first scoring error as "Type: message", capped at 500 characters. */
+    /**
+     * The first scoring error as "Type: message", capped at 500 characters.
+     * @maxLength 500
+     */
     first_error?: string | null;
 }
 

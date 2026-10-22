@@ -69,7 +69,7 @@ class TaskResult:
     instances_failed: int = 0
     instances_unscored: int = 0
     failure_budget_exceeded: bool = False
-    # See olmo_eval.runners.processing.scoring_failures; None when nothing failed scoring.
+    # See olmo_eval.common.scoring_failures; None when nothing failed scoring.
     scoring_failures: dict[str, Any] | None = None
     # See olmo_eval.runners.processing.generation_counts.
     generation_counts: dict[str, int] | None = None

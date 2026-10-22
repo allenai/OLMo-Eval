@@ -1360,6 +1360,7 @@
         },
         "first_error": {
           "description": "The first scoring error as \"Type: message\", capped at 500 characters.",
+          "maxLength": 500,
           "type": [
             "string",
             "null"

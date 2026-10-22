@@ -205,7 +205,7 @@ class ScoringFailuresIn(_In):
     outputs_unscored: NonNeg32
     infrastructure: NonNeg32
     by_type: dict[str, NonNeg32]
-    first_error: str | None = None
+    first_error: str | None = Field(default=None, max_length=500)
 
 
 class TaskResultIn(_In):

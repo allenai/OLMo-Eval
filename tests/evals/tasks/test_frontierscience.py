@@ -751,7 +751,7 @@ class TestRunnerShapedScoring:
     async def test_an_instance_whose_every_judge_call_failed_is_unscored(
         self, olympiad, monkeypatch
     ):
-        from olmo_eval.runners.processing.scoring_failures import (
+        from olmo_eval.common.scoring_failures import (
             ScoringState,
             measurable_responses,
             scoring_state,

@@ -7,6 +7,7 @@ import os
 from typing import Any
 
 from olmo_eval.common.logging import get_logger
+from olmo_eval.common.scoring_failures import format_scoring_failures
 from olmo_eval.runners.common.models import (
     MetricsOutput,
     ModelMetadata,
@@ -15,7 +16,6 @@ from olmo_eval.runners.common.models import (
 )
 from olmo_eval.runners.common.types import RUN_TIMING_KEYS, TASK_COST_KEYS
 from olmo_eval.runners.processing.generation_counts import format_generation_counts
-from olmo_eval.runners.processing.scoring_failures import format_scoring_failures
 from olmo_eval.runners.processing.utils import get_primary_metric
 
 logger = get_logger("runners.metrics")

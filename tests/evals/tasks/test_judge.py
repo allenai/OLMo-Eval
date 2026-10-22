@@ -9,6 +9,7 @@ import pytest
 
 from olmo_eval.common.multi_turn import scripted_chat_request
 from olmo_eval.common.scorers.llm_judge import parse_judge_spec
+from olmo_eval.common.scoring_failures import ScoringState, scoring_state
 from olmo_eval.common.types import (
     TURNS_KEY,
     Instance,
@@ -30,7 +31,6 @@ from olmo_eval.evals.tasks.common.judge import (
 )
 from olmo_eval.evals.tasks.hle import HLEAccuracyMetric, HLETruncationRateMetric
 from olmo_eval.inference.retry import retry_with_backoff
-from olmo_eval.runners.processing.scoring_failures import ScoringState, scoring_state
 from tests.evals.tasks.judge_stubs import use_judge
 
 pytestmark = pytest.mark.usefixtures("judge_test_env")
