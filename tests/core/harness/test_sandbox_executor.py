@@ -666,6 +666,34 @@ async def test_local_capture_bounds_both_streams_and_keeps_the_verdict(monkeypat
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("removal_times_out", [False, True])
+async def test_failed_http_shutdown_force_removes_local_container(monkeypatch, removal_times_out):
+    from types import SimpleNamespace
+
+    executor = SandboxExecutor(SandboxConfig(image="test", mode=SandboxMode.DOCKER))
+    executor._deployment = SimpleNamespace(
+        container_name="wedged", stop=mock.AsyncMock(side_effect=ConnectionResetError())
+    )
+    executor._runtime = SimpleNamespace()
+    process = SimpleNamespace(
+        returncode=None if removal_times_out else 0,
+        communicate=mock.AsyncMock(side_effect=TimeoutError())
+        if removal_times_out
+        else mock.AsyncMock(return_value=(b"", b"")),
+        kill=mock.Mock(),
+        wait=mock.AsyncMock(return_value=-9),
+    )
+    create = mock.AsyncMock(return_value=process)
+    monkeypatch.setattr("asyncio.create_subprocess_exec", create)
+    await executor.stop()
+    assert create.await_args.args == ("podman", "rm", "-f", "wedged")
+    assert executor._deployment is None
+    if removal_times_out:
+        process.kill.assert_called_once()
+        process.wait.assert_awaited_once()
+
+
+@pytest.mark.anyio
 async def test_background_output_after_completion_is_preserved(monkeypatch):
     from types import SimpleNamespace
 
