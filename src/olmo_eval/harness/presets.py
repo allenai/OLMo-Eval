@@ -68,6 +68,23 @@ def lazy(fn: Callable[[str], HarnessConfig]) -> Lazy:
     return Lazy(fn)
 
 
+def _browsecomp_plus_harness(name: str, *, get_document: bool) -> HarnessConfig:
+    tools = ["search"]
+    if get_document:
+        tools.append("get_document")
+    return HarnessConfig(
+        name=name,
+        provider=ProviderConfig(kind=ProviderKind.VLLM_SERVER, kwargs={"timeout": 120}),
+        tools=tuple(tools),
+        max_turns=10,
+        max_concurrency=4,
+        scaffold="openai_agents",
+        required_secrets=("OPENAI_API_KEY",),
+        max_hard_failure_rate=0.0,
+        batching=BatchConfig.streaming(),
+    )
+
+
 # ─────────────────────────────────────────────────────────
 # Preset Harness Configurations
 # ─────────────────────────────────────────────────────────
@@ -75,6 +92,16 @@ def lazy(fn: Callable[[str], HarnessConfig]) -> Lazy:
 
 class HarnessPresets:
     """Harness presets. Access as HarnessPresets.name or get_harness_preset("name")."""
+
+    @lazy
+    def browsecomp_plus(name: str) -> HarnessConfig:
+        """BrowseComp-Plus with search snippets."""
+        return _browsecomp_plus_harness(name, get_document=False)
+
+    @lazy
+    def browsecomp_plus_get_document(name: str) -> HarnessConfig:
+        """BrowseComp-Plus with search and full documents."""
+        return _browsecomp_plus_harness(name, get_document=True)
 
     @lazy
     def default(name: str) -> HarnessConfig:
