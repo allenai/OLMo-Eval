@@ -47,7 +47,7 @@ from olmo_eval_api.services.subjects import (
     models_task_results,
     resolve_subjects,
 )
-from olmo_eval_api.services.suites import SuiteNode, leaves
+from olmo_eval_api.services.suites import SuiteNode, leaves, walk_suites
 from olmo_eval_api.stats.mde import z
 
 from .deps import SessionDep, UserDep
@@ -240,19 +240,75 @@ async def model_series(
     )
 
 
+def _progression_gap_metric_keys(
+    node: SuiteNode, population: Sequence[Mapping[str, Mapping[Any, Any]]]
+) -> dict[str, str | None] | None:
+    """Carry complete descendant GAP anchors, withholding ambiguous shared leaves."""
+    selected: dict[str, str | None] = {}
+    for descendant, _, _ in walk_suites(node):
+        keys = primary_gap_metric_keys(descendant, population)
+        if keys is None or not any(keys.values()):
+            continue
+        for name, key in keys.items():
+            selected[name] = key if name not in selected or selected[name] == key else None
+    return selected or None
+
+
 def _panel_score(
-    node: SuiteNode | None, task: str | None, trs: Mapping[str, Mapping[Any, Any]], metric: str
+    node: SuiteNode | None,
+    task: str | None,
+    trs: Mapping[str, Mapping[Any, Any]],
+    metric: str,
+    metric_keys: Mapping[str, str | None] | None = None,
 ) -> tuple[float | None, float | None, int | None, Mapping[Any, Any] | None]:
     """(score, stderr, n, task result) for a task or suite panel from merged task results."""
     if node is not None:
-        result = score_suite(node, trs)
+        result = score_suite(node, trs, metric_keys=metric_keys)
         return result.score, result.stderr, result.n_instances or None, None
     tr = trs.get(task or "")
     if tr is None:
         return None, None, None, None
+    if metric == "primary" and metric_keys is not None:
+        selected = metric_keys.get(task or "")
+        if selected is None:
+            return None, None, tr["num_instances"], tr
+        metric = selected
     if metric == "primary" or metric == tr["primary_metric"]:
         return tr["score"], tr["stderr"], tr["num_instances"], tr
     return (tr["metrics"] or {}).get(metric), None, tr["num_instances"], tr
+
+
+def _suite_panel_meta(
+    node: SuiteNode,
+    population: Sequence[Mapping[str, Mapping[Any, Any]]],
+    metric_keys: Mapping[str, str | None] | None,
+) -> a.MetricMeta:
+    """Prefer metadata from subjects whose primary metrics match the selection."""
+    ordered = population
+    if metric_keys:
+        ordered = sorted(
+            population,
+            key=lambda trs: (
+                not all(
+                    trs.get(name, {}).get("primary_metric") == key
+                    for name, key in metric_keys.items()
+                )
+            ),
+        )
+    result = next(
+        (
+            score
+            for trs in ordered
+            if (score := score_suite(node, trs, metric_keys=metric_keys)).score is not None
+        ),
+        None,
+    )
+    return a.MetricMeta(
+        higher_is_better=result.higher_is_better if result else None,
+        display_format=result.display_format if result else "raw",
+        unit=None,
+        kind="bounded" if result and result.display_format == "percent" else "unbounded",
+    )
 
 
 @router.get("/models/progression", response_model=a.ProgressionResponse)
@@ -276,7 +332,8 @@ async def model_progression(
         (
             await session.execute(
                 text(
-                    f"SELECT {MODEL_COLUMNS} FROM models m WHERE {where} ORDER BY m.step NULLS LAST"
+                    f"SELECT {MODEL_COLUMNS} FROM models m WHERE {where} "
+                    "ORDER BY m.step NULLS LAST, m.model_id"
                 ),
                 params,
             )
@@ -287,6 +344,7 @@ async def model_progression(
     if not models:
         raise not_found(f"Model series {series!r} not found")
     defs = await load_defs(session)
+    scope_node: SuiteNode | None = None
     panels_spec: list[tuple[str, str, SuiteNode | None]] = []  # (kind, name, node)
     if scope:
         kind, _, name = scope.partition(":")
@@ -294,6 +352,7 @@ async def model_progression(
             if name not in defs:
                 raise bad_request(f"unknown suite {name!r}")
             node = tree(name, defs)
+            scope_node = node
             panels_spec.append(("suite", name, node))
             panels_spec.extend(("task", t, None) for t in leaves(node)[:24])
         elif kind == "task" and name:
@@ -352,7 +411,8 @@ async def model_progression(
                 await session.execute(
                     text(
                         f"SELECT {TR_COLUMNS} FROM task_results tr WHERE tr.model_id = ANY(:ids) "
-                        "AND tr.finalized_at IS NOT NULL ORDER BY tr.run_created_at"
+                        "AND tr.finalized_at IS NOT NULL "
+                        "ORDER BY tr.run_created_at, tr.run_id, tr.id"
                     ),
                     {"ids": model_ids},
                 )
@@ -362,19 +422,50 @@ async def model_progression(
         )
     model_by_id = {m["m_model_id"]: m for m in models}
     ref_subjects, _ = await resolve_subjects(session, _csv(references))
+    by_run: dict[str, list[Mapping[Any, Any]]] = {}
+    for tr in all_trs:
+        by_run.setdefault(tr["run_id"], []).append(tr)
+    run_population = [latest_by_task(run_trs) for run_trs in by_run.values()]
+    # Anchor on the first complete subject in stable step/model or creation/run order.
+    population = list(merged.values()) if merge == "latest" else list(run_population)
+    population.extend(subject.trs for subject in ref_subjects)
+    inherited_keys = (
+        _progression_gap_metric_keys(scope_node, population)
+        if scope_node is not None and metric == "primary"
+        else None
+    )
     panels = []
     for kind, name, node in panels_spec:
+        if node is not None:
+            metric_keys = (
+                primary_gap_metric_keys(node, population)
+                if metric == "primary"
+                else dict.fromkeys(leaves(node), metric)
+            )
+        else:
+            metric_keys = (
+                inherited_keys if inherited_keys is not None and name in inherited_keys else None
+            )
         points: list[a.ProgressionPoint] = []
         meta = None
         if merge == "latest":
             for mid in model_ids:
                 trs = merged[mid]
-                score, stderr, n, tr = _panel_score(node, name, trs, metric)
+                score, stderr, n, tr = _panel_score(node, name, trs, metric, metric_keys)
                 if score is None:
                     continue
                 if tr is not None and meta is None:
                     meta = metric_meta_or_none(
-                        meta_for(tr, tr["primary_metric"] if metric == "primary" else metric)
+                        meta_for(
+                            tr,
+                            (
+                                metric_keys.get(name)
+                                if metric_keys is not None
+                                else tr["primary_metric"]
+                            )
+                            if metric == "primary"
+                            else metric,
+                        )
                     )
                 contributing = [trs[t] for t in (leaves(node) if node else [name]) if t in trs]
                 newest = max(contributing, key=lambda x: x["run_created_at"])
@@ -393,17 +484,22 @@ async def model_progression(
                     )
                 )
         else:
-            by_run: dict[str, list[Mapping[Any, Any]]] = {}
-            for tr in all_trs:
-                by_run.setdefault(tr["run_id"], []).append(tr)
-            for run_trs in by_run.values():
-                trs = latest_by_task(run_trs)
-                score, stderr, n, tr = _panel_score(node, name, trs, metric)
+            for trs in run_population:
+                score, stderr, n, tr = _panel_score(node, name, trs, metric, metric_keys)
                 if score is None:
                     continue
                 if tr is not None and meta is None:
                     meta = metric_meta_or_none(
-                        meta_for(tr, tr["primary_metric"] if metric == "primary" else metric)
+                        meta_for(
+                            tr,
+                            (
+                                metric_keys.get(name)
+                                if metric_keys is not None
+                                else tr["primary_metric"]
+                            )
+                            if metric == "primary"
+                            else metric,
+                        )
                     )
                 any_tr = next(iter(trs.values()))
                 m = model_by_id[any_tr["model_id"]]
@@ -422,17 +518,10 @@ async def model_progression(
                 )
             points.sort(key=lambda p: (p.step is None, p.step or 0, p.date))
         if node is not None and meta is None:
-            sample = next((trs for trs in merged.values() if trs), {})
-            result = score_suite(node, sample) if sample else None
-            meta = a.MetricMeta(
-                higher_is_better=result.higher_is_better if result else None,
-                display_format=result.display_format if result else "raw",
-                unit=None,
-                kind="bounded" if result and result.display_format == "percent" else "unbounded",
-            )
+            meta = _suite_panel_meta(node, population, metric_keys)
         refs = []
         for s in ref_subjects:
-            score, stderr, _, _ = _panel_score(node, name, s.trs, metric)
+            score, stderr, _, _ = _panel_score(node, name, s.trs, metric, metric_keys)
             refs.append(
                 a.ProgressionReference(subject=s.key, label=s.label, score=score, stderr=stderr)
             )

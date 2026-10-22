@@ -656,6 +656,237 @@ def test_suite_counts_include_derived_scores_even_without_corpus_metrics_or_with
     assert suite_generation_counts(node, tasks) == {"generations": 10}
 
 
+def test_gap_progression_points_use_one_population_metric() -> None:
+    from olmo_eval_api.routers.api.catalog import _panel_score
+    from olmo_eval_api.services.read_suites import primary_gap_metric_keys
+
+    node = build_tree(
+        "pair", {"pair": ("gap", [{"type": "task", "name": "in"}, {"type": "task", "name": "out"}])}
+    )
+    checkpoints: list[dict[str, dict[str, Any]]] = [
+        {
+            name: {
+                "score": score,
+                "stderr": 0.0,
+                "num_instances": 32,
+                "primary_metric": metric,
+                "display_format": "percent",
+                "higher_is_better": True,
+                "metrics": {metric: score},
+            }
+            for name in ["in", "out"]
+        }
+        for metric, score in [("strict", 0.4), ("flex", 0.9)]
+    ]
+    keys = primary_gap_metric_keys(node, checkpoints)
+    assert _panel_score(node, None, checkpoints[0], "primary", keys)[0] == 0.4
+    assert _panel_score(node, None, checkpoints[1], "primary", keys)[0] is None
+    checkpoints[1]["in"]["metrics"]["strict"] = 0.5
+    checkpoints[1]["out"]["metrics"]["strict"] = 0.6
+    assert _panel_score(node, None, checkpoints[1], "primary", keys)[0] == 0.6
+
+
+def test_shared_gap_task_anchors_are_selected_per_matrix_row() -> None:
+    from olmo_eval_api.routers.api.compare import _suite_rows, matrix_metric_keys
+    from olmo_eval_api.services.subjects import Subject
+
+    node = build_tree(
+        "both",
+        {
+            "both": ("none", [{"type": "suite", "name": "a"}, {"type": "suite", "name": "b"}]),
+            "a": ("gap", [{"type": "task", "name": "in"}, {"type": "task", "name": "out_a"}]),
+            "b": ("gap", [{"type": "task", "name": "in"}, {"type": "task", "name": "out_b"}]),
+        },
+    )
+    subjects = [
+        Subject(
+            "r:strict",
+            "run",
+            {},
+            None,
+            trs={
+                name: {"primary_metric": "strict", "score": score}
+                for name, score in [("in", 0.6), ("out_a", 0.4), ("out_b", None)]
+            },
+        ),
+        Subject(
+            "r:flex",
+            "run",
+            {},
+            None,
+            trs={
+                name: {"primary_metric": "flex", "score": score}
+                for name, score in [("in", 0.7), ("out_a", None), ("out_b", 0.5)]
+            },
+        ),
+    ]
+    rows = []
+    _suite_rows(node, 0, None, rows)
+    selected = matrix_metric_keys(rows, "primary", subjects, None)
+    by_suite = {
+        row.name: keys for row, keys in zip(rows, selected, strict=True) if row.kind == "suite"
+    }
+    assert by_suite["a"] == {"in": "strict", "out_a": "strict"}
+    assert by_suite["b"] == {"in": "flex", "out_b": "flex"}
+    in_tasks = [
+        (row.parent, keys["in"])
+        for row, keys in zip(rows, selected, strict=True)
+        if row.kind == "task" and row.name == "in"
+    ]
+    assert in_tasks == [("a", "strict"), ("b", "flex")]
+
+
+@pytest.mark.parametrize("missing_companion", [False, True])
+def test_matrix_parent_keeps_leaves_from_unanchored_gap_child(missing_companion):
+    from olmo_eval_api.routers.api.compare import RowSpec, _matrix_suite_row, matrix_metric_keys
+    from olmo_eval_api.schemas.api import MatrixRequest
+    from olmo_eval_api.services.subjects import Subject
+    from olmo_eval_api.stats.paired import Side
+
+    node = build_tree(
+        "root",
+        {
+            "root": (
+                "average",
+                [{"type": "suite", "name": "pair"}, {"type": "task", "name": "other"}],
+            ),
+            "pair": ("gap", [{"type": "task", "name": "in"}, {"type": "task", "name": "out"}]),
+        },
+    )
+    trs: dict[str, Mapping[Any, Any]] = {
+        name: {
+            "score": score,
+            "stderr": 0.02,
+            "num_instances": 10,
+            "display_format": "percent",
+            "higher_is_better": True,
+            "primary_metric": metric,
+        }
+        for name, score, metric in [("in", 0.2, "acc"), ("out", 0.4, "f1"), ("other", 0.8, "acc")]
+    }
+    if missing_companion:
+        del trs["out"]
+    subject = Subject("r:model001", "run", {}, None, trs=trs)
+    spec = RowSpec("suite:root", "suite", "root", 0, None, "average", node)
+    checks = matrix_metric_keys([spec], "primary", [subject], None)[0]
+    sides_keys = matrix_metric_keys([spec], "primary", [subject], None, require_gap_anchor=False)[0]
+    assert checks["in"] == "acc"
+    sides = {
+        name: {subject.key: Side(name, "hash", trs[name]["score"], 0.02, False)}
+        for name, key in sides_keys.items()
+        if name in trs and key is not None
+    }
+    row = _matrix_suite_row(
+        spec,
+        [subject],
+        None,
+        sides,
+        MatrixRequest(subjects=[subject.key], scope="suite:root", metric="primary"),
+        None,
+        metric_keys=checks,
+    )
+    assert row.cells[0].score == pytest.approx(sum(tr["score"] for tr in trs.values()) / len(trs))
+    assert row.meta is not None
+    assert row.meta.display_format == "percent"
+    assert row.meta.higher_is_better is True
+
+
+@pytest.mark.parametrize(
+    "aggregation", ["gap", "average", "weighted_average", "average_of_averages"]
+)
+def test_progression_meta_prefers_the_selected_primary_subject(aggregation):
+    from olmo_eval_api.routers.api.catalog import _suite_panel_meta
+    from olmo_eval_api.services.read_suites import primary_gap_metric_keys
+
+    node = build_tree(
+        "pair",
+        {"pair": (aggregation, [{"type": "task", "name": "in"}, {"type": "task", "name": "out"}])},
+    )
+    early = {
+        name: {
+            "score": 0.3,
+            "num_instances": 10,
+            "primary_metric": metric,
+            "metrics": {"strict": 0.3},
+            "display_format": "percent",
+            "higher_is_better": True,
+        }
+        for name, metric in [("in", "flex"), ("out", "strict")]
+    }
+    anchor = {
+        name: {
+            "score": 0.5,
+            "num_instances": 10,
+            "primary_metric": "strict",
+            "metrics": {"strict": 0.5},
+            "display_format": "percent",
+            "higher_is_better": True,
+        }
+        for name in ["in", "out"]
+    }
+    keys = (
+        primary_gap_metric_keys(node, [early, anchor])
+        if aggregation == "gap"
+        else {"in": "strict", "out": "strict"}
+    )
+    if aggregation == "gap":
+        assert keys == {"in": "strict", "out": "strict"}
+    meta = _suite_panel_meta(node, [early, anchor], keys)
+    assert meta.display_format == "percent"
+    assert meta.higher_is_better is True
+
+
+@pytest.mark.parametrize("secondary", [False, True])
+def test_generated_gap_task_panel_uses_its_parent_anchor(secondary):
+    from olmo_eval_api.routers.api.catalog import _panel_score
+
+    tr = {
+        "score": 0.9,
+        "stderr": 0.01,
+        "num_instances": 10,
+        "primary_metric": "flex",
+        "metrics": {"flex": 0.9, **({"strict": 0.4} if secondary else {})},
+    }
+    result = _panel_score(None, "in", {"in": tr}, "primary", {"in": "strict"})
+    assert result[0] == (0.4 if secondary else None)
+
+
+def test_nested_gap_task_rows_use_the_nearest_gap_ancestor():
+    from olmo_eval_api.routers.api.compare import _suite_rows, matrix_metric_keys
+    from olmo_eval_api.services.subjects import Subject
+
+    defs = {
+        "pair": ("gap", [{"type": "suite", "name": "wrapped"}]),
+        "wrapped": ("average", [{"type": "task", "name": "in"}, {"type": "task", "name": "out"}]),
+    }
+    rows = []
+    _suite_rows(build_tree("pair", defs), 0, None, rows)
+    subjects = [
+        Subject(
+            key=f"r:{name}",
+            kind="run",
+            model={},
+            run={"run_id": name},
+            trs={
+                task: {
+                    "primary_metric": metric,
+                    "metrics": {metric: 0.5},
+                    "score": 0.5,
+                    "num_instances": 10,
+                    "display_format": "percent",
+                    "higher_is_better": True,
+                }
+                for task, metric in zip(("in", "out"), metrics, strict=True)
+            },
+        )
+        for name, metrics in (("mixed001", ("flex", "strict")), ("anchor01", ("strict", "strict")))
+    ]
+    keys = matrix_metric_keys(rows, "primary", subjects, None)
+    for row, selected in zip(rows, keys, strict=True):
+        if row.kind == "task":
+            assert selected[row.name] == "strict"
+
+
 @pytest.mark.parametrize("aggregation", ["none", "display_only"])
 def test_no_score_matrix_suites_keep_paired_deltas_and_metadata(aggregation):
     from types import SimpleNamespace
@@ -718,3 +949,61 @@ def test_no_score_matrix_suites_keep_paired_deltas_and_metadata(aggregation):
     assert row.cells[1].delta.delta == pytest.approx(0.2)
     assert row.meta is not None and row.meta.display_format == "percent"
     assert row.meta.higher_is_better is True
+
+
+def test_nested_gap_progression_carries_anchors_without_losing_unrelated_leaves():
+    from olmo_eval_api.routers.api.catalog import _panel_score, _progression_gap_metric_keys
+
+    node = build_tree(
+        "root",
+        {
+            "root": (
+                "none",
+                [{"type": "suite", "name": "pair"}, {"type": "task", "name": "other"}],
+            ),
+            "pair": ("gap", [{"type": "task", "name": "in"}, {"type": "task", "name": "out"}]),
+        },
+    )
+    population = [
+        {
+            name: {
+                "primary_metric": metric,
+                "score": score,
+                "metrics": {metric: score},
+                "stderr": None,
+                "num_instances": 10,
+                "display_format": "percent",
+                "higher_is_better": True,
+            }
+            for name in ("in", "out", "other")
+        }
+        for metric, score in (("strict", 0.4), ("flex", 0.9))
+    ]
+    selected = _progression_gap_metric_keys(node, population)
+    assert selected == {"in": "strict", "out": "strict"}
+    assert _panel_score(None, "out", population[0], "primary", selected)[0] == 0.4
+    assert _panel_score(None, "out", population[1], "primary", selected)[0] is None
+    average = build_tree("root", {"root": ("average", [{"type": "task", "name": "other"}])})
+    assert _panel_score(average, None, population[1], "primary")[0] == 0.9
+
+
+def test_progression_withholds_a_leaf_with_conflicting_gap_anchors():
+    from olmo_eval_api.routers.api.catalog import _progression_gap_metric_keys
+
+    node = build_tree(
+        "root",
+        {
+            "root": ("none", [{"type": "suite", "name": "a"}, {"type": "suite", "name": "b"}]),
+            "a": ("gap", [{"type": "task", "name": "in"}, {"type": "task", "name": "shared"}]),
+            "b": ("gap", [{"type": "task", "name": "shared"}, {"type": "task", "name": "out"}]),
+        },
+    )
+    population = [
+        {name: {"primary_metric": "strict", "score": 0.5} for name in ("in", "shared")},
+        {name: {"primary_metric": "flex", "score": 0.5} for name in ("shared", "out")},
+    ]
+    assert _progression_gap_metric_keys(node, population) == {
+        "in": "strict",
+        "shared": None,
+        "out": "flex",
+    }
