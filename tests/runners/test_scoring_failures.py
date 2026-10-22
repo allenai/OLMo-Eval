@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from olmo_eval.common.types import Instance, LMOutput, LMRequest, RequestType, Response
 from olmo_eval.evals.tasks.common import TaskConfig
 from olmo_eval.runners.asynq.preparation import compute_task_metrics
 from olmo_eval.runners.processing.scoring_failures import (
+    MAX_ERROR_MESSAGE_CHARS,
     ScoringState,
+    count_scoring_failures,
+    describe_error,
     measurable_responses,
     scoring_state,
 )
@@ -72,3 +77,84 @@ def test_the_runner_computes_metrics_without_the_unscored_instances() -> None:
     assert result.num_instances == 2
     assert result.predictions is not None
     assert result.predictions[1]["model_output"][0]["scoring_errors"]["code_exec"] == ERROR
+
+
+def test_failures_are_counted_by_instance_output_and_type() -> None:
+    infra = {"type": "SandboxInfrastructureError", "infrastructure": "true"}
+    responses = [
+        _response(_output(failed=True)),
+        _response(_output(), _output(failed=True)),
+        _response(
+            LMOutput(text="o", metadata={"scoring_errors": {"code_exec": infra}}),
+        ),
+        _response(scoring_error={"type": "KeyError", "message": "'gold'"}),
+        _response(_output()),
+    ]
+
+    failures = count_scoring_failures(responses)
+
+    assert failures.to_dict() == {
+        "instances_unscored": 3,
+        "instances_partially_scored": 1,
+        "outputs_unscored": 3,
+        "infrastructure": 1,
+        "by_type": {"KeyError": 1, "RuntimeError": 2, "SandboxInfrastructureError": 1},
+        "first_error": "RuntimeError: scorer crashed",
+    }
+
+
+def test_the_quoted_error_is_capped() -> None:
+    error = {"type": "ValueError", "message": "x" * 10_000}
+
+    described = describe_error(error)
+
+    assert len(described) == len("ValueError: ") + MAX_ERROR_MESSAGE_CHARS
+    assert described.endswith("…")
+
+
+def test_the_task_line_and_metrics_json_report_the_failures() -> None:
+    from olmo_eval.runners.asynq.results import _format_instance_accounting, aggregate_results
+    from olmo_eval.runners.processing.metrics import build_single_model_metrics
+
+    responses = [_response(_output()) for _ in range(30)]
+    responses += [_response(_output(failed=True)), _response(_output(), _output(failed=True))]
+    result = compute_task_metrics("t", _RecordingTask(), responses, {}, 32, 0.0)  # type: ignore[arg-type]
+
+    assert result.error is None
+    assert "1 unscored, 1 partially scored" in _format_instance_accounting(result)
+
+    provider = SimpleNamespace(alias="m", model="org/m", kind="vllm_server", to_dict=dict)
+    results = aggregate_results(
+        results={"t": result},
+        expanded_tasks=["t"],
+        task_specs=["t"],
+        provider_config=provider,
+        attention_backend=None,
+    )
+    entry = build_single_model_metrics(results).to_dict()["tasks"][0]
+    assert entry["scoring_failures"]["instances_unscored"] == 1
+    assert entry["scoring_failures"]["instances_partially_scored"] == 1
+
+
+def test_the_summary_warns_about_published_tasks_only() -> None:
+    from olmo_eval.runners.processing.metrics import scoring_failure_warnings
+
+    failures = {
+        "instances_unscored": 1,
+        "instances_partially_scored": 2,
+        "outputs_unscored": 3,
+        "first_error": "KeyError: 'gold'",
+    }
+    results = {
+        "tasks": {
+            "published": {"metrics": {}, "scoring_failures": failures},
+            "over_budget": {"error": "over budget", "scoring_failures": failures},
+            "clean": {"metrics": {}},
+        }
+    }
+
+    assert scoring_failure_warnings(results) == [
+        "published: 1 instance(s) could not be scored and are left out of its metrics; "
+        "2 instance(s) were scored from only some of their outputs. "
+        "First scoring error: KeyError: 'gold'"
+    ]

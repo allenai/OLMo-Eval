@@ -547,7 +547,11 @@ async def test_an_unrated_question_is_incomplete_not_scored(task, monkeypatch):
     scored.append(await score_like_the_runner(task, unrated))
     result = compute_task_metrics("mt_bench", task, scored, {}, len(scored), 0.0)
 
-    assert result.error is not None and result.error.startswith("Incomplete: 1 output score(s)")
+    assert (
+        result.error is not None
+        and "could not be scored" in result.error
+        and result.instances_unscored >= 1
+    )
     assert result.metrics["score"] == {"mt_bench_judge": 7.0}
     assert result.metrics["score_turn_2"] == {"mt_bench_judge": 6.0}
     judge_result = unrated.outputs[0].metadata["judge_result"]

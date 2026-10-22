@@ -21,7 +21,7 @@ from olmo_eval.runners.asynq.types import (
     ResultItem,
     TaskTracker,
 )
-from olmo_eval.runners.common.constants import HardFailureRateExceeded
+from olmo_eval.runners.common.constants import FailureBudgetExceeded
 from olmo_eval.runners.common.types import (
     DEFAULT_MAX_HARD_FAILURE_RATE,
     TASK_COST_KEYS,
@@ -29,6 +29,7 @@ from olmo_eval.runners.common.types import (
 )
 from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
 from olmo_eval.runners.processing.generation_counts import format_generation_counts
+from olmo_eval.runners.processing.scoring_failures import format_scoring_failures
 from olmo_eval.runners.processing.utils import compute_task_hash
 
 if TYPE_CHECKING:
@@ -171,8 +172,8 @@ async def process_results(
         model_name: Model name for reporting.
         save_predictions: Whether to save predictions.
         write_predictions_fn: Function to write predictions.
-        max_hard_failure_rate: Fraction of a task's instances allowed to hard-fail
-            before the task is marked failed.
+        max_hard_failure_rate: Fraction of a task's instances allowed to have no
+            output or no scored output before the task is marked failed.
 
     Returns:
         Dict mapping task spec to TaskResult.
@@ -420,6 +421,9 @@ def _format_instance_accounting(result: TaskResult) -> str:
     accounting = f"{result.num_instances}/{result.instances_processed} instances saved"
     if result.instances_failed:
         accounting += f", {result.instances_failed} hard-failed"
+    scoring = format_scoring_failures(result.scoring_failures)
+    if scoring:
+        accounting += f", {scoring}"
     return accounting
 
 
@@ -509,6 +513,8 @@ def aggregate_results(
         task_data["instances_saved"] = task_result.num_instances
         task_data["instances_processed"] = task_result.instances_processed
         task_data["instances_failed"] = task_result.instances_failed
+        if task_result.scoring_failures is not None:
+            task_data["scoring_failures"] = task_result.scoring_failures
         if task_result.error_summary:
             task_data["error_summary"] = task_result.error_summary
         if task_result.generation_counts is not None:
@@ -531,8 +537,8 @@ def aggregate_results(
     return results_dict
 
 
-def check_hard_failure_gate(results: dict[str, TaskResult]) -> None:
-    """Fail the run when any task exceeded its hard-failure-rate budget.
+def check_failure_budget(results: dict[str, TaskResult]) -> None:
+    """Fail the run when any task exceeded its failure budget or scored nothing.
 
     Call this only after results have been written, so the failing run still leaves
     metrics.json and predictions behind for diagnosis.
@@ -541,15 +547,13 @@ def check_hard_failure_gate(results: dict[str, TaskResult]) -> None:
         results: Dict mapping task spec to TaskResult.
 
     Raises:
-        HardFailureRateExceeded: If at least one task tripped the gate.
+        FailureBudgetExceeded: If at least one task tripped the gate.
     """
     tripped = sorted(
-        (result for result in results.values() if result.hard_failure_rate_exceeded),
+        (result for result in results.values() if result.failure_budget_exceeded),
         key=lambda result: result.spec,
     )
     if not tripped:
         return
     details = "; ".join(f"{result.spec}: {result.error}" for result in tripped)
-    raise HardFailureRateExceeded(
-        f"{len(tripped)} task(s) exceeded the hard failure rate threshold: {details}"
-    )
+    raise FailureBudgetExceeded(f"{len(tripped)} task(s) exceeded their failure budget: {details}")
