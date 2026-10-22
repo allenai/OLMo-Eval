@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from olmo_eval.common.beaker_status import BeakerStatusReporter
 from olmo_eval.common.logging import get_logger
 from olmo_eval.common.progress import ProgressLogger
+from olmo_eval.common.scorers.execution import format_scoring_error as _format_scoring_error
 from olmo_eval.common.types import Response
 from olmo_eval.common.types.trajectory import AgentTrajectory
 from olmo_eval.runners.asynq.monitoring import check_workers_alive
@@ -106,18 +107,6 @@ def _format_worker_failure(error: object, pending_instances: set[InstanceKey]) -
     return f"Worker process crashed with {_format_pending_instances(pending_instances)}: {error}"
 
 
-def _format_scoring_error(exc: Exception, *, phase: str) -> dict[str, str]:
-    """Build a JSON-serializable scoring error payload."""
-    error = {
-        "phase": phase,
-        "type": type(exc).__qualname__,
-    }
-    message = str(exc).strip()
-    if message:
-        error["message"] = message
-    return error
-
-
 def _record_scoring_failure(
     response: Response,
     *,
@@ -135,7 +124,13 @@ def _record_scoring_failure(
         if not isinstance(existing, dict):
             existing = {}
             output.metadata["scoring_errors"] = existing
-        existing["__response__"] = error
+        response_error = dict(error)
+        if any(
+            isinstance(detail, dict) and detail.get("infrastructure") == "true"
+            for detail in existing.values()
+        ) or (scorer_names and all(f"score:{name}" in output.metadata for name in scorer_names)):
+            response_error.pop("infrastructure", None)
+        existing["__response__"] = response_error
         for scorer_name in scorer_names:
             output.metadata.setdefault(f"score:{scorer_name}", 0.0)
 

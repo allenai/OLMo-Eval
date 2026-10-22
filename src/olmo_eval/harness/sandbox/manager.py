@@ -625,11 +625,12 @@ class SandboxManager:
                             f"an infrastructure failure from {executor.name}: {exc}"
                         )
             except _NoSandboxAvailableError:
-                if last_infrastructure_error is None:
+                if not failover_on_quarantine:
                     raise
                 raise SandboxInfrastructureError(
                     f"No healthy sandbox remained for {sorted(required_capabilities)} "
-                    f"after infrastructure failures: {last_infrastructure_error}"
+                    "after infrastructure failures: "
+                    f"{last_infrastructure_error or 'no compatible sandbox was available'}"
                 ) from last_infrastructure_error
 
     async def acquire_binding(

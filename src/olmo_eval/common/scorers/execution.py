@@ -30,6 +30,24 @@ class ScoringIncompleteError(RuntimeError):
     """
 
 
+def format_scoring_error(exc: Exception, *, phase: str) -> dict[str, str]:
+    """Describe a scoring failure and identify scores lost to infrastructure."""
+    error = {"phase": phase, "type": type(exc).__qualname__}
+    message = str(exc).strip()
+    if message:
+        error["message"] = message
+    infrastructure = isinstance(exc, (ScoringIncompleteError, SandboxRequiredError))
+    try:
+        from olmo_eval.harness.sandbox.errors import SandboxInfrastructureError
+
+        infrastructure |= isinstance(exc, SandboxInfrastructureError)
+    except ImportError:
+        pass
+    if infrastructure:
+        error["infrastructure"] = "true"
+    return error
+
+
 @dataclass(frozen=True)
 class ContextScorer(Scorer):
     """Base class for scorers that require access to ScoringContext.
