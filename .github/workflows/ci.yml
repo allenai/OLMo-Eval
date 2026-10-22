@@ -37,15 +37,11 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v7
 
-      # Run the locked ruff version without installing the project environment.
-      - name: Resolve locked ruff version
-        run: echo "RUFF_VERSION=$(uv export --frozen --only-group dev --no-hashes --no-emit-project | sed -n 's/^ruff==//p')" >> "$GITHUB_ENV"
-
       - name: Run Ruff linter
-        run: uvx "ruff@${RUFF_VERSION}" check src/ tests/
+        run: uv run --frozen --no-group vllm ruff check src/ tests/
 
       - name: Run Ruff formatter check
-        run: uvx "ruff@${RUFF_VERSION}" format --check src/ tests/
+        run: uv run --frozen --no-group vllm ruff format --check src/ tests/
 
   type-check:
     name: Type Check
@@ -101,19 +97,15 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v7
 
-      # Coverage is reported from the 3.12 job only, so the 3.13 job skips collecting it.
-      - name: Run unit tests
-        env:
-          COVERAGE_ARGS: >-
-            ${{ matrix.python-version == '3.12'
-              && '--cov=src/olmo_eval --cov-report=xml --cov-report=html --cov-report=term-missing'
-              || '' }}
+      - name: Run unit tests with coverage
         run: |
           uv run --frozen --no-group vllm pytest tests/ \
             --ignore=tests/integration/ \
             -v \
-            -n 4 --dist worksteal \
-            $COVERAGE_ARGS
+            --cov=src/olmo_eval \
+            --cov-report=xml \
+            --cov-report=html \
+            --cov-report=term-missing
 
       - name: Generate coverage summary
         if: matrix.python-version == '3.12'
