@@ -283,9 +283,9 @@ def _suite_panel_meta(
     population: Sequence[Mapping[str, Mapping[Any, Any]]],
     metric_keys: Mapping[str, str | None] | None,
 ) -> a.MetricMeta:
-    """Prefer metadata from subjects whose primary metrics establish the GAP anchor."""
+    """Prefer metadata from subjects whose primary metrics match the selection."""
     ordered = population
-    if node.aggregation == "gap" and metric_keys:
+    if metric_keys:
         ordered = sorted(
             population,
             key=lambda trs: (

@@ -791,12 +791,16 @@ def test_matrix_parent_keeps_leaves_from_unanchored_gap_child(missing_companion)
     assert row.meta.higher_is_better is True
 
 
-def test_gap_progression_meta_prefers_the_primary_anchor_subject():
+@pytest.mark.parametrize(
+    "aggregation", ["gap", "average", "weighted_average", "average_of_averages"]
+)
+def test_progression_meta_prefers_the_selected_primary_subject(aggregation):
     from olmo_eval_api.routers.api.catalog import _suite_panel_meta
     from olmo_eval_api.services.read_suites import primary_gap_metric_keys
 
     node = build_tree(
-        "pair", {"pair": ("gap", [{"type": "task", "name": "in"}, {"type": "task", "name": "out"}])}
+        "pair",
+        {"pair": (aggregation, [{"type": "task", "name": "in"}, {"type": "task", "name": "out"}])},
     )
     early = {
         name: {
@@ -820,8 +824,13 @@ def test_gap_progression_meta_prefers_the_primary_anchor_subject():
         }
         for name in ["in", "out"]
     }
-    keys = primary_gap_metric_keys(node, [early, anchor])
-    assert keys == {"in": "strict", "out": "strict"}
+    keys = (
+        primary_gap_metric_keys(node, [early, anchor])
+        if aggregation == "gap"
+        else {"in": "strict", "out": "strict"}
+    )
+    if aggregation == "gap":
+        assert keys == {"in": "strict", "out": "strict"}
     meta = _suite_panel_meta(node, [early, anchor], keys)
     assert meta.display_format == "percent"
     assert meta.higher_is_better is True
