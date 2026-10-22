@@ -16,6 +16,28 @@ Add an entry in the PR that makes the change, newest first. Each entry states:
 - **Comparability**: which earlier results remain comparable and what replaces the old
   behavior, if anything.
 
+## 2026-10-22: Scoring failures are left out and budgeted, not scored as zero (#492)
+
+- **Affected**: every task run by `AsyncEvalRunner` whose scoring failed for some output:
+  a scorer that raised, a judge with no verdict after its retries, or a lost or missing
+  sandbox. Runs where every output was scored are unchanged.
+- **Change**: a failed output used to be recorded as 0 and kept in the metrics. It now
+  has no score. An instance with no scored output is left out of the metrics, and an
+  instance with some scored outputs is scored from those, including pass@k and pass^k.
+  Unscored instances and instances with no output share the failure budget
+  (`max_hard_failure_rate`, 5% by default); a task over it, or with nothing scored,
+  fails and publishes no metrics. The rule that one infrastructure scoring error failed
+  the whole task is gone, so a judged task with a few judge failures now publishes.
+  Judge tasks no longer raise when every sample of an instance fails.
+- **Identity**: task hashes are unchanged.
+- **Comparability**: an earlier result is affected only if its predictions carry
+  `scoring_errors`. A metric that averaged in those zeros could only rise if higher is
+  better, and only fall if lower is better. Metrics that already
+  excluded failed outputs, such as the judged-task, omniscience and Arena-Hard metrics,
+  are unchanged, except that a run with a few judge failures is no longer withheld.
+  Counts that tasks keep of their own errors, such as omniscience's
+  `judge_parsing_errors`, now count only failures that did not raise.
+
 ## 2026-10-16: `ctc_contradiction` scores its high-low gold pairs (#490)
 
 - **Affected**: `ctc_contradiction` at rungs `r64k`, `r128k`, `r256k`, `r512k` and `r1m`,
