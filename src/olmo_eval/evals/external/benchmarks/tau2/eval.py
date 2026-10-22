@@ -8,10 +8,10 @@ import logging
 import math
 import shlex
 import time
-from collections import defaultdict
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from olmo_eval.common.openai_credentials import litellm_model_name
 from olmo_eval.evals.external.base import SandboxedExternalEval
@@ -24,6 +24,20 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 Tau2Domain = Literal["airline", "retail", "telecom"]
+TAU2_REPOSITORY = "https://github.com/pdasigi/tau2-bench-verified.git"
+TAU2_COMMIT = "05bfc0d4d2d963b13a00fce833deac0be255315c"
+TAU2_RESULTS_FILE = "data/simulations/results.json"
+TAU2_SUCCESS_TOLERANCE = 1e-6
+TAU2_TERMINATION_REASONS = frozenset(
+    {
+        "agent_error",
+        "agent_stop",
+        "max_steps",
+        "too_many_errors",
+        "user_error",
+        "user_stop",
+    }
+)
 
 # Default max tokens if we can't query the server
 DEFAULT_MAX_TOKENS = 32768
@@ -76,6 +90,39 @@ class Tau2Args:
     log_level: str | None = None
     enforce_communication_protocol: bool = False
 
+    def __post_init__(self) -> None:
+        if self.domain not in ("airline", "retail", "telecom"):
+            raise ValueError(
+                f"domain must be 'airline', 'retail', or 'telecom', got {self.domain!r}"
+            )
+
+        for name in ("num_trials", "max_steps", "max_concurrency"):
+            value = getattr(self, name)
+            if value <= 0:
+                raise ValueError(f"{name} must be positive, got {value}")
+
+        for name in ("max_tokens", "max_model_len", "num_tasks"):
+            value = getattr(self, name)
+            if value is not None and value <= 0:
+                raise ValueError(f"{name} must be positive when set, got {value}")
+
+        if self.max_errors is not None and self.max_errors < 0:
+            raise ValueError(f"max_errors must be nonnegative when set, got {self.max_errors}")
+        if self.seed is not None and self.seed < 0:
+            raise ValueError(f"seed must be nonnegative when set, got {self.seed}")
+        for name in ("temperature", "user_temperature"):
+            value = getattr(self, name)
+            if value is not None and value < 0:
+                raise ValueError(f"{name} must be nonnegative when set, got {value}")
+
+        if self.task_ids is not None:
+            if not isinstance(self.task_ids, list) or not self.task_ids:
+                raise ValueError("task_ids must be a non-empty list when set")
+            if any(not isinstance(task_id, str) or not task_id for task_id in self.task_ids):
+                raise ValueError("task_ids must contain non-empty strings")
+            if len(self.task_ids) != len(set(self.task_ids)):
+                raise ValueError("task_ids must not contain duplicates")
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Tau2Args:
         # Handle task_ids which can be comma-separated string or list
@@ -113,8 +160,8 @@ class Tau2ExternalEval(SandboxedExternalEval):
     @property
     def description(self) -> str:
         return (
-            "Evaluates LLM agents on customer service tasks across airline and retail domains. "
-            "Measures task completion rate and constraint satisfaction."
+            "Evaluates LLM agents on customer service tasks across airline, retail, and telecom "
+            "domains. Measures task completion rate and constraint satisfaction."
         )
 
     @property
@@ -137,9 +184,8 @@ class Tau2ExternalEval(SandboxedExternalEval):
             # Using Pradeep's repo as it handles two errors that the original does not:
             # 1) The assistant returning an empty response.
             # 2) Litellm's timeouts errors.
-            f"git clone https://github.com/pdasigi/tau2-bench-verified.git {repo}",
-            # Pin to commit 05bfc0d
-            f"cd {repo} && git checkout 05bfc0d",
+            f"git clone {TAU2_REPOSITORY} {repo}",
+            f"cd {repo} && git checkout {TAU2_COMMIT}",
             f"cd {repo} && uv sync",
             f"mkdir -p {self.results_dir}",
         )
@@ -177,7 +223,10 @@ class Tau2ExternalEval(SandboxedExternalEval):
         container_runtime: str = "podman",
     ) -> ExternalEvalResult:
         start_time = time.time()
-        tau2_args = Tau2Args.from_dict(args)
+        try:
+            tau2_args = Tau2Args.from_dict(args)
+        except (TypeError, ValueError) as e:
+            return self._error_result(f"Invalid Tau2 arguments: {e}", start_time)
         all_output: list[str] = []
 
         # Extract URL and model name from provider for sandbox use
@@ -227,7 +276,8 @@ class Tau2ExternalEval(SandboxedExternalEval):
                     executor,
                     "\n".join(all_output),
                     run_result.exit_code,
-                    tau2_args.num_trials,
+                    tau2_args,
+                    model_name,
                     output_dir,
                 )
 
@@ -350,100 +400,260 @@ sys.exit(main())
         executor: SandboxExecutor,
         raw_output: str,
         exit_code: int,
-        num_trials: int,
+        tau2_args: Tau2Args,
+        model_name: str,
         output_dir: str | None = None,
     ) -> ExternalEvalResult:
         """Extract metrics from tau2-bench results."""
-        # tau2 saves results to {repo}/data/simulations/*.json
-        results_path = f"{self.working_dir}/tau2-bench/data/simulations"
-        ls_result = await executor.execute_command(
-            f"ls {results_path}/*.json 2>/dev/null", timeout=30.0
-        )
-        if not ls_result.success:
+        if exit_code != 0:
             return ExternalEvalResult(
-                name=self.name, success=False, error="No results files found", raw_output=raw_output
+                name=self.name,
+                success=False,
+                error=f"Tau2 exited with code {exit_code}",
+                raw_output=raw_output,
             )
 
-        all_metrics: dict[str, float] = {}
-        metadata: dict[str, Any] = {}
-        predictions: list[dict[str, Any]] = []
+        results_file = f"{self.working_dir}/tau2-bench/{TAU2_RESULTS_FILE}"
+        cat_result = await executor.execute_command(
+            f"cat {shlex.quote(results_file)}", timeout=30.0
+        )
+        if not cat_result.success:
+            return ExternalEvalResult(
+                name=self.name,
+                success=False,
+                error=f"Tau2 results file is missing or unreadable: {results_file}",
+                raw_output=raw_output,
+            )
 
-        for json_file in ls_result.output.strip().split("\n"):
-            if not (json_file := json_file.strip()):
-                continue
+        try:
+            data = json.loads(cat_result.output)
+        except json.JSONDecodeError as e:
+            return ExternalEvalResult(
+                name=self.name,
+                success=False,
+                error=f"Invalid Tau2 results JSON: {e}",
+                raw_output=raw_output,
+            )
 
-            cat_result = await executor.execute_command(f"cat {json_file}", timeout=30.0)
-            if not cat_result.success:
-                continue
+        try:
+            simulations_by_task = self._validate_result_inventory(data, tau2_args)
+        except ValueError as e:
+            return ExternalEvalResult(
+                name=self.name,
+                success=False,
+                error=f"Invalid Tau2 result inventory: {e}",
+                raw_output=raw_output,
+            )
 
-            try:
-                data = json.loads(cat_result.output)
-                if "simulations" in data and "tasks" in data:
-                    all_metrics.update(self._compute_pass_k_metrics(data, num_trials))
-                    predictions.extend(self._build_predictions(data))
-                    metadata["simulations_file"] = json_file
-                    metadata["num_tasks"] = len(data["tasks"])
+        metrics = self._compute_pass_k_metrics(simulations_by_task, tau2_args.num_trials)
+        predictions = self._build_predictions(data["tasks"], simulations_by_task)
+        simulations = data["simulations"]
+        successful_simulations = sum(
+            self._is_successful(simulation["reward_info"]["reward"]) for simulation in simulations
+        )
+        termination_counts = dict(
+            sorted(Counter(simulation["termination_reason"] for simulation in simulations).items())
+        )
+        info = data["info"]
+        metadata: dict[str, Any] = {
+            "benchmark_repository": TAU2_REPOSITORY,
+            "benchmark_commit": TAU2_COMMIT,
+            "simulations_file": results_file,
+            "model_name": model_name,
+            "domain": info["environment_info"]["domain_name"],
+            "user_llm": tau2_args.user_llm,
+            "task_split_name": tau2_args.task_split_name or "base",
+            "seed": info["seed"],
+            "num_tasks": len(data["tasks"]),
+            "num_trials": info["num_trials"],
+            "max_steps": info["max_steps"],
+            "max_errors": info["max_errors"],
+            "max_concurrency": tau2_args.max_concurrency,
+            "expected_simulations": len(data["tasks"]) * tau2_args.num_trials,
+            "observed_simulations": len(simulations),
+            "successful_simulations": successful_simulations,
+            "termination_counts": termination_counts,
+            "tau2_run_info": {
+                "git_commit": info["git_commit"],
+                "agent": info["agent_info"],
+                "user": info["user_info"],
+            },
+        }
 
-                    # Save simulation file with trajectories to output directory
-                    if output_dir:
-                        trajectories_path = Path(output_dir) / "tau2_trajectories.json"
-                        trajectories_path.parent.mkdir(parents=True, exist_ok=True)
-                        with open(trajectories_path, "w") as f:
-                            json.dump(data, f, indent=2)
-                        metadata["trajectories_file"] = str(trajectories_path)
-                        logger.info(f"[{self.name}] Trajectories saved to {trajectories_path}")
-            except json.JSONDecodeError as e:
-                logger.warning(f"[{self.name}] Failed to parse {json_file}: {e}")
+        if output_dir:
+            trajectories_path = Path(output_dir) / "tau2_trajectories.json"
+            trajectories_path.parent.mkdir(parents=True, exist_ok=True)
+            with trajectories_path.open("w") as f:
+                json.dump(data, f, indent=2)
+            metadata["trajectories_file"] = str(trajectories_path)
+            logger.info(f"[{self.name}] Trajectories saved to {trajectories_path}")
 
         return ExternalEvalResult(
             name=self.name,
-            success=exit_code == 0 and bool(all_metrics),
-            metrics=all_metrics,
+            success=True,
+            metrics=metrics,
             metadata=metadata,
             raw_output=raw_output,
-            predictions=predictions if predictions else None,
+            predictions=predictions,
         )
 
-    def _compute_pass_k_metrics(self, data: dict[str, Any], num_trials: int) -> dict[str, float]:
+    @staticmethod
+    def _is_successful(reward: float) -> bool:
+        return (1.0 - TAU2_SUCCESS_TOLERANCE) <= reward <= (1.0 + TAU2_SUCCESS_TOLERANCE)
+
+    def _validate_result_inventory(
+        self, data: Any, tau2_args: Tau2Args
+    ) -> dict[str, list[dict[str, Any]]]:
+        if not isinstance(data, dict):
+            raise ValueError("top-level result must be an object")
+
+        tasks = data.get("tasks")
+        simulations = data.get("simulations")
+        info = data.get("info")
+        if not isinstance(tasks, list) or not tasks:
+            raise ValueError("tasks must be a non-empty list")
+        if not isinstance(simulations, list) or not simulations:
+            raise ValueError("simulations must be a non-empty list")
+        if not isinstance(info, dict):
+            raise ValueError("info must be an object")
+
+        task_ids: list[str] = []
+        for index, task in enumerate(tasks):
+            if not isinstance(task, dict):
+                raise ValueError(f"task at index {index} must be an object")
+            task_data = cast(dict[str, Any], task)
+            task_id = task_data.get("id")
+            if not isinstance(task_id, str) or not task_id:
+                raise ValueError(f"task at index {index} has an invalid id")
+            task_ids.append(task_id)
+        if len(task_ids) != len(set(task_ids)):
+            duplicates = sorted(
+                task_id for task_id, count in Counter(task_ids).items() if count > 1
+            )
+            raise ValueError(f"duplicate task IDs: {duplicates}")
+
+        if info.get("git_commit") != TAU2_COMMIT:
+            raise ValueError(
+                f"benchmark commit mismatch: {info.get('git_commit')!r} != {TAU2_COMMIT!r}"
+            )
+        if info.get("num_trials") != tau2_args.num_trials:
+            raise ValueError(
+                f"num_trials mismatch: {info.get('num_trials')!r} != {tau2_args.num_trials}"
+            )
+        if info.get("max_steps") != tau2_args.max_steps:
+            raise ValueError(
+                f"max_steps mismatch: {info.get('max_steps')!r} != {tau2_args.max_steps}"
+            )
+        if tau2_args.max_errors is not None and info.get("max_errors") != tau2_args.max_errors:
+            raise ValueError(
+                f"max_errors mismatch: {info.get('max_errors')!r} != {tau2_args.max_errors}"
+            )
+        if tau2_args.seed is not None and info.get("seed") != tau2_args.seed:
+            raise ValueError(f"seed mismatch: {info.get('seed')!r} != {tau2_args.seed}")
+        environment_info = info.get("environment_info")
+        if not isinstance(environment_info, dict):
+            raise ValueError("info.environment_info must be an object")
+        if environment_info.get("domain_name") != tau2_args.domain:
+            raise ValueError(
+                f"domain mismatch: {environment_info.get('domain_name')!r} != {tau2_args.domain!r}"
+            )
+        for name in ("agent_info", "user_info"):
+            if not isinstance(info.get(name), dict):
+                raise ValueError(f"info.{name} must be an object")
+
+        task_id_set = set(task_ids)
+        simulation_ids: set[str] = set()
+        observed_slots: set[tuple[str, int]] = set()
+        simulations_by_task: dict[str, list[dict[str, Any]]] = {task_id: [] for task_id in task_ids}
+        for index, simulation in enumerate(simulations):
+            if not isinstance(simulation, dict):
+                raise ValueError(f"simulation at index {index} must be an object")
+            simulation_data = cast(dict[str, Any], simulation)
+
+            simulation_id = simulation_data.get("id")
+            if not isinstance(simulation_id, str) or not simulation_id:
+                raise ValueError(f"simulation at index {index} has an invalid id")
+            if simulation_id in simulation_ids:
+                raise ValueError(f"duplicate simulation ID: {simulation_id!r}")
+            simulation_ids.add(simulation_id)
+
+            task_id = simulation_data.get("task_id")
+            if task_id not in task_id_set:
+                raise ValueError(f"unexpected task ID in simulation: {task_id!r}")
+            trial = simulation_data.get("trial")
+            if isinstance(trial, bool) or not isinstance(trial, int):
+                raise ValueError(f"trial for task {task_id!r} must be an integer")
+            if not 0 <= trial < tau2_args.num_trials:
+                raise ValueError(
+                    f"trial for task {task_id!r} is out of range: {trial}; "
+                    f"expected 0..{tau2_args.num_trials - 1}"
+                )
+
+            slot = (task_id, trial)
+            if slot in observed_slots:
+                raise ValueError(f"duplicate task/trial slot: {slot!r}")
+            observed_slots.add(slot)
+
+            reward_info = simulation_data.get("reward_info")
+            if not isinstance(reward_info, dict):
+                raise ValueError(f"reward_info for slot {slot!r} must be an object")
+            reward = reward_info.get("reward")
+            if isinstance(reward, bool) or not isinstance(reward, int | float):
+                raise ValueError(f"reward for slot {slot!r} must be numeric")
+            if not math.isfinite(reward):
+                raise ValueError(f"reward for slot {slot!r} must be finite")
+
+            termination_reason = simulation_data.get("termination_reason")
+            if termination_reason not in TAU2_TERMINATION_REASONS:
+                raise ValueError(
+                    f"termination_reason for slot {slot!r} is invalid: {termination_reason!r}"
+                )
+
+            simulations_by_task[task_id].append(simulation_data)
+
+        expected_slots = {
+            (task_id, trial) for task_id in task_ids for trial in range(tau2_args.num_trials)
+        }
+        missing_slots = sorted(expected_slots - observed_slots)
+        if missing_slots:
+            preview = missing_slots[:5]
+            suffix = "..." if len(missing_slots) > len(preview) else ""
+            raise ValueError(f"missing task/trial slots: {preview}{suffix}")
+
+        for task_simulations in simulations_by_task.values():
+            task_simulations.sort(key=lambda simulation: simulation["trial"])
+        return simulations_by_task
+
+    def _compute_pass_k_metrics(
+        self, simulations_by_task: dict[str, list[dict[str, Any]]], num_trials: int
+    ) -> dict[str, float]:
         """Compute pass^k metrics from tau2-bench simulations.
 
         See: https://arxiv.org/abs/2406.12045
         """
-        task_ids = {task["id"] for task in data["tasks"]}
-        simulation_ids = {sim["task_id"] for sim in data["simulations"]}
-
-        if task_ids != simulation_ids:
-            logger.warning(f"[{self.name}] Missing simulations: {task_ids - simulation_ids}")
-            return {}
-
-        # Group rewards by task
-        rewards_by_task: dict[str, list[float]] = defaultdict(list)
-        for sim in data["simulations"]:
-            rewards_by_task[sim["task_id"]].append(sim["reward_info"]["reward"])
-
-        # Compute pass^k for each k
         metrics: dict[str, float] = {}
         for k in range(1, num_trials + 1):
-            pass_k_values = []
-            for rewards in rewards_by_task.values():
-                c = int(sum(rewards))
-                pass_k_values.append(math.comb(c, k) / math.comb(num_trials, k))
-            if pass_k_values:
-                metrics[f"pass^{k}"] = sum(pass_k_values) / len(pass_k_values)
+            pass_k_values: list[float] = []
+            for simulations in simulations_by_task.values():
+                successful_trials = sum(
+                    self._is_successful(simulation["reward_info"]["reward"])
+                    for simulation in simulations
+                )
+                pass_k_values.append(math.comb(successful_trials, k) / math.comb(num_trials, k))
+            metrics[f"pass^{k}"] = sum(pass_k_values) / len(pass_k_values)
 
         return metrics
 
-    def _build_predictions(self, data: dict[str, Any]) -> list[dict[str, Any]]:
+    def _build_predictions(
+        self,
+        tasks: list[dict[str, Any]],
+        simulations_by_task: dict[str, list[dict[str, Any]]],
+    ) -> list[dict[str, Any]]:
         """Build per-task predictions from tau2-bench simulations."""
-        # Group simulations by task
-        sims_by_task: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        for sim in data["simulations"]:
-            sims_by_task[sim["task_id"]].append(sim)
-
         predictions = []
-        for task in data["tasks"]:
+        for task in tasks:
             task_id = task["id"]
-            task_sims = sims_by_task.get(task_id, [])
+            task_sims = simulations_by_task[task_id]
 
             # Extract per-trial data
             trials = []
@@ -466,9 +676,10 @@ sys.exit(main())
 
             # Compute aggregated metrics
             rewards = [t["reward"] for t in trials]
-            success_rate = sum(rewards) / len(rewards) if rewards else 0.0
+            success_rate = sum(self._is_successful(reward) for reward in rewards) / len(rewards)
+            average_reward = sum(rewards) / len(rewards)
             total_duration = sum(t.get("duration") or 0 for t in trials)
-            avg_duration = total_duration / len(trials) if trials else 0.0
+            avg_duration = total_duration / len(trials)
             total_agent_cost = sum(t.get("agent_cost") or 0 for t in trials)
             total_user_cost = sum(t.get("user_cost") or 0 for t in trials)
             total_cost = total_agent_cost + total_user_cost
@@ -483,6 +694,7 @@ sys.exit(main())
                     "native_id": task_id,
                     "instance_metrics": {
                         "success_rate": {"external": success_rate},
+                        "average_reward": {"external": average_reward},
                         "avg_duration": {"external": avg_duration},
                         "total_cost": {"external": total_cost},
                         "error_rate": {"external": error_rate},
