@@ -170,6 +170,45 @@ class TestTask:
         assert fewshot1 is fewshot2  # Same object (cached)
 
 
+class _PackagedTask(ConcreteTask):
+    """Keeps every document except those marked ``skip``, recording each one's line."""
+
+    def process_doc(self, doc: dict, index: int = 0) -> Instance | None:
+        if doc.get("skip"):
+            return None
+        return Instance(question=doc["q"], gold_answer=None, metadata={"line": index})
+
+
+class TestPackagedInstances:
+    def test_reads_the_packaged_jsonl_through_process_doc(self, monkeypatch, tmp_path):
+        (tmp_path / "data.jsonl").write_text(
+            '{"q": "first"}\n\n{"q": "dropped", "skip": true}\n{"q": "second"}\n',
+            encoding="utf-8",
+        )
+        packages: list[str] = []
+
+        def files(package: str):
+            packages.append(package)
+            return tmp_path
+
+        monkeypatch.setattr("olmo_eval.evals.tasks.common.base.files", files)
+        task = _PackagedTask(TaskConfig(name="test", data_source="data.jsonl"))
+
+        instances = list(task._load_packaged_instances("some.package", "data.jsonl"))
+
+        assert packages == ["some.package"]
+        assert [(i.question, i.metadata["line"]) for i in instances] == [
+            ("first", 0),
+            ("second", 3),
+        ]
+
+    def test_requires_a_package(self):
+        task = _PackagedTask(TaskConfig(name="test", data_source="data.jsonl"))
+
+        with pytest.raises(ValueError, match="no package"):
+            list(task._load_packaged_instances(None, "data.jsonl"))
+
+
 @pytest.mark.anyio
 class TestTaskScoring:
     """Tests for Task scoring functionality."""
@@ -969,3 +1008,53 @@ class TestMixedWorkloadScoring:
         assert scored[0].outputs[0].metadata["score:timed_process"] == 1.0
         assert scored[0].outputs[0].metadata["score:tracked_context"] == 1.0
         assert scored[0].outputs[0].metadata["score:tracked_exec"] == 1.0
+
+
+class TestSamplingParamsInTaskHash:
+    """Sampling fields added later must not move the hash of tasks that don't use them."""
+
+    #: The sampling fields stored task hashes were computed with.
+    HASHED_SAMPLING_FIELDS = frozenset(
+        {
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "top_k",
+            "stop_sequences",
+            "num_samples",
+            "logprobs",
+            "do_sample",
+            "truncate_prompt_tokens",
+            "truncation_side",
+        }
+    )
+
+    def test_every_newer_field_is_emitted_only_when_set(self):
+        from dataclasses import fields
+
+        from olmo_eval.common.types import SamplingParams
+
+        newer = {f.name for f in fields(SamplingParams)} - self.HASHED_SAMPLING_FIELDS
+
+        # A field missing here would change every task's hash.
+        assert newer <= set(TaskConfig._SAMPLING_FIELDS_EMITTED_WHEN_SET)
+
+    def test_an_unset_newer_field_is_left_out_of_the_config(self):
+        from olmo_eval.common.types import SamplingParams
+
+        config = TaskConfig(
+            name="test", data_source="test/dataset", sampling_params=SamplingParams()
+        )
+
+        assert set(config.to_dict()["sampling_params"]) == self.HASHED_SAMPLING_FIELDS
+
+    def test_a_set_newer_field_is_hashed(self):
+        from olmo_eval.common.types import SamplingParams
+
+        config = TaskConfig(
+            name="test",
+            data_source="test/dataset",
+            sampling_params=SamplingParams(fit_max_tokens_to_context=True),
+        )
+
+        assert config.to_dict()["sampling_params"]["fit_max_tokens_to_context"] is True

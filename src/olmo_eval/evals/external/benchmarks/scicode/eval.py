@@ -29,6 +29,7 @@ from olmo_eval.harness.sandbox.config import (
     SandboxMode,
 )
 from olmo_eval.inference.base import InferenceProvider
+from olmo_eval.inference.errors import first_output
 from olmo_eval.inference.metrics.core.collector import InstrumentedProvider
 from olmo_eval.inference.providers.vllm_server import VLLMServerProvider
 
@@ -235,7 +236,7 @@ class SciCodeExternalEval(ExternalEval):
                 messages=({"role": "user", "content": prompt},),
             )
             results = await provider.agenerate([request], sampling_params)
-            text = results[0][0].text
+            text = first_output(results[0] if results else []).text
             code = scicode_prompts.extract_step_code(text)
             step_texts[idx] = text
             step_codes[idx] = code

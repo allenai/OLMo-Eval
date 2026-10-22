@@ -83,11 +83,11 @@ class DenseCaptionMetric(Metric):
             return None
         return float(result[self.field_name]) * self.scale
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         # The scorer channel is recall; it is not this metric's per-instance value.
         return False
 
-    def pairwise_display_format(self) -> str:
+    def display_format(self) -> str:
         return "raw"
 
 
@@ -114,10 +114,10 @@ class DenseCaptionAvgMetric(Metric):
     def compute_instance(self, response: Response) -> float | None:
         return None
 
-    def supports_pairwise_scorer_fallback(self) -> bool:
+    def supports_scorer_fallback(self) -> bool:
         return False
 
-    def pairwise_display_format(self) -> str:
+    def display_format(self) -> str:
         return "raw"
 
 

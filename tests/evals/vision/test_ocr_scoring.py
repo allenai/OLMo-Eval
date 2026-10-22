@@ -207,8 +207,8 @@ class TestOlmocrBench:
 
     def test_error_count_is_lower_is_better(self, scored):
         task, _ = scored
-        assert _metric(task, "n_test_errors").pairwise_higher_is_better() is False
-        assert _metric(task, "overall").pairwise_higher_is_better() is True
+        assert _metric(task, "n_test_errors").higher_is_better() is False
+        assert _metric(task, "overall").higher_is_better() is True
 
 
 # ---------------------------------------------------------------------------
@@ -362,9 +362,9 @@ class TestOmniDocBenchTask:
     def test_edit_distances_are_lower_is_better(self):
         task = get_task("omnidocbench")
         for name in ("text_edit", "formula_edit", "read_order_edit", "text_edit_english"):
-            assert _metric(task, name).pairwise_higher_is_better() is False
+            assert _metric(task, name).higher_is_better() is False
         for name in ("overall", "table_teds", "formula_cdm"):
-            assert _metric(task, name).pairwise_higher_is_better() is True
+            assert _metric(task, name).higher_is_better() is True
 
     def test_evaluator_failure_is_an_infrastructure_error(self, monkeypatch):
         def fail(*args, **kwargs):

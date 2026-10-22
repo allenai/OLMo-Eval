@@ -10,7 +10,7 @@ Scoring follows the official MathVista protocol: deterministic short-circuits
 (empty response, verbatim choice, int/float parse) and otherwise GPT-4
 (``gpt-4-0613``) answer extraction — exactly mm_olmo's ``extract_answer``
 (``quick_extract=False``).  This is the **default** task scorer (requires
-``OPENAI_API_KEY``; responses cached per-run, see ``MathVistaGptScorer``).
+``OPENAI_API_KEY`` or ``OPENROUTER_API_KEY``; responses cached per-run, see ``MathVistaGptScorer``).
 The ``math_vista:offline`` variant replaces the GPT step with deterministic
 letter/value extraction for API-free runs (an approximation, not the protocol).
 

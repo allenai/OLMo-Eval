@@ -1,0 +1,10 @@
+node_modules
+dist
+*.local
+*.log
+.DS_Store
+.vite
+/test-results/
+
+# Telegraf is a licensed font. CI downloads it before the Docker build; never commit it.
+/public/fonts/

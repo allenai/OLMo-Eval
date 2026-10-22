@@ -25,7 +25,7 @@ from olmo_eval.evals.tasks.common import Task, register_variant
 
 logger = logging.getLogger(__name__)
 
-judge_sampling = SamplingParams(max_tokens=32768, temperature=0.6, top_p=0.95)
+judge_sampling = SamplingParams(max_tokens=None, temperature=0.6, top_p=0.95)
 base_sampling = SamplingParams(
     max_tokens=1024,
     temperature=0.6,

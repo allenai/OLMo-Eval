@@ -28,6 +28,7 @@ from olmo_eval.launch.beaker import (
     print_experiment_config,
     resolve_clusters,
     validate_priority_configuration,
+    weka_buckets_with,
 )
 from olmo_eval.launch.beaker.secrets import ensure_common_secrets
 from olmo_eval.launch.config import (
@@ -52,4 +53,5 @@ __all__ = [
     "print_experiment_config",
     "resolve_clusters",
     "validate_priority_configuration",
+    "weka_buckets_with",
 ]
