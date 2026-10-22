@@ -266,6 +266,12 @@ class SamplingParams:
     #: ``max_tokens`` makes the server reject the whole request.
     fit_max_tokens_to_context: bool = False
 
+    def __post_init__(self) -> None:
+        # JSON/CLI overrides arrive as lists. Keep these frozen parameters
+        # hashable because the async runner groups requests by sampling params.
+        if isinstance(self.stop_sequences, list):
+            object.__setattr__(self, "stop_sequences", tuple(self.stop_sequences))
+
 
 @dataclass(slots=True)
 class LMOutput:
