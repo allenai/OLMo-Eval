@@ -20,6 +20,7 @@ import aiohttp
 
 from olmo_eval.common.execution.environment import ExecutionResult
 
+from ._local_process import COMMAND_CLEANUP, COMMAND_SUPERVISOR
 from .config import SandboxConfig, SandboxMode
 from .diagnostics import start_internal_monitor
 from .errors import SandboxTransportError
@@ -256,8 +257,12 @@ class SandboxExecutor:
                         "sh",
                         "-c",
                         "command -v bash >/dev/null && "
+                        "command -v python3 >/dev/null && "
                         "setsid --help | grep -q -- --wait && "
-                        "timeout --help | grep -q -- --kill-after",
+                        "timeout --help | grep -q -- --kill-after && "
+                        "python3 -I -c 'import ctypes, os; from pathlib import Path; "
+                        "assert ctypes.CDLL(None).prctl(36, 1, 0, 0, 0) == 0; "
+                        'Path(f"/proc/self/task/{os.getpid()}/children").read_text()\'',
                     ],
                     5.0,
                 )
@@ -271,7 +276,7 @@ class SandboxExecutor:
                         raise RuntimeError("Sandbox became unhealthy during capability probing")
                     self._log(
                         logging.WARNING,
-                        "GNU process-control tools unavailable; using HTTP commands",
+                        "Local process supervision unavailable; using HTTP commands",
                     )
             self._log(logging.DEBUG, "Sandbox deployment ready!")
 
@@ -558,7 +563,7 @@ class SandboxExecutor:
         """Execute a command in the sandbox and return structured result.
 
         Background processes survive normal completion. Local command deadlines
-        and cancellation terminate the command's remaining session processes.
+        and cancellation terminate the command's remaining descendants.
 
         Args:
             command: The bash command to execute.
@@ -638,55 +643,26 @@ class SandboxExecutor:
         command_id = uuid.uuid4().hex
         pid_file = f"/tmp/_sandbox_pgid_{command_id}"
         marker = f"__OLMO_STARTED_{command_id}__\n"
-        script = (
-            f"cat /proc/$$/stat > {pid_file} && "
-            f"printf '%s\\n' {marker.rstrip()} && "
-            f'exec timeout --kill-after=5s {timeout}s "$@"'
-        )
-        cleanup_script = """
-ready=0
-for attempt in {1..20}; do
-    if IFS= read -r row 2>/dev/null < "$1"; then ready=1; break; fi
-    sleep 0.1
-done
-[ "$ready" = 1 ] || exit 0
-session=${row%% *}
-read -r -a recorded <<< "${row##*) }"
-if IFS= read -r leader < /proc/$session/stat 2>/dev/null; then
-    read -r -a current <<< "${leader##*) }"
-    if [ "${recorded[19]}" != "${current[19]}" ]; then rm -f "$1"; exit 0; fi
-fi
-for pass in {1..40}; do
-    found=0
-    for file in /proc/[0-9]*/stat; do
-        IFS= read -r row < "$file" 2>/dev/null || continue
-        read -r -a fields <<< "${row##*) }"
-        [ "${fields[3]}" = "$session" ] && [ "${fields[0]}" != Z ] || continue
-        kill -KILL -- "${row%% *}" 2>/dev/null || true
-        found=1
-    done
-    [ "$found" = 1 ] || break
-    sleep 0.05
-done
-for file in /proc/[0-9]*/stat; do
-    IFS= read -r row < "$file" 2>/dev/null || continue
-    read -r -a fields <<< "${row##*) }"
-    if [ "${fields[3]}" = "$session" ] && [ "${fields[0]}" != Z ]; then
-        echo "Command session still has live processes after cleanup" >&2
-        exit 75
-    fi
-done
-rm -f "$1"
-"""
-        cleanup = ["bash", "-c", cleanup_script, "_", pid_file]
+        cleanup = ["bash", "-c", COMMAND_CLEANUP, "_", pid_file]
         argv = ["bash", "-c", command] if isinstance(command, str) else list(command)
-        started = time.monotonic()
         cleanup_session = True
         command_cancelled = False
         try:
             try:
                 response = await self._execute_stream_control(
-                    ["setsid", "--wait", "bash", "-c", script, "_", *argv], timeout + 10.0
+                    [
+                        "setsid",
+                        "--wait",
+                        "python3",
+                        "-I",
+                        "-c",
+                        COMMAND_SUPERVISOR,
+                        pid_file,
+                        marker.rstrip(),
+                        str(timeout),
+                        *argv,
+                    ],
+                    timeout + 10.0,
                 )
             except TimeoutError as exc:
                 await self._quarantine_if_unresponsive(exc)
@@ -700,13 +676,34 @@ rm -f "$1"
                 error = RuntimeError(response.stderr or "Container command never started")
                 await self._quarantine_if_unresponsive(error)
                 raise SandboxTransportError(str(error)) from error
-            timed_out = (
-                response.exit_code in (9, 124, 137) and time.monotonic() - started >= timeout
+            finish_marker = (
+                "\n" + marker.rstrip().replace("__OLMO_STARTED_", "__OLMO_FINISHED_", 1) + ":"
             )
+            output, separator, completion = response.stdout[len(marker) :].rpartition(finish_marker)
+            try:
+                if not separator:
+                    raise ValueError("Missing completion record")
+                completion = completion.lstrip()
+                report, report_end = json.JSONDecoder().raw_decode(completion)
+                trailing_output = completion[report_end:]
+                if not trailing_output.startswith("\n"):
+                    raise ValueError("Incomplete completion record")
+                output += trailing_output[1:]
+                if (
+                    not isinstance(report, dict)
+                    or type(report.get("exit_code")) is not int
+                    or report["exit_code"] != response.exit_code
+                    or type(report.get("timed_out")) is not bool
+                ):
+                    raise ValueError("Missing or invalid completion record")
+            except (ValueError, TypeError) as exc:
+                self._quarantined_reason = f"Command supervisor did not confirm completion: {exc}"
+                raise SandboxTransportError(self._quarantined_reason) from exc
+            timed_out = report["timed_out"]
             cleanup_session = timed_out
             return ExecutionResult(
                 response.exit_code == 0,
-                response.stdout[len(marker) :] + response.stderr,
+                output + response.stderr,
                 response.exit_code,
                 "timeout" if timed_out else None,
             )
@@ -714,7 +711,7 @@ rm -f "$1"
             command_cancelled = True
             raise
         finally:
-            control = cleanup if cleanup_session else ["rm", "-f", pid_file]
+            control = cleanup if cleanup_session else ["rm", "-f", pid_file, pid_file + ".clean"]
 
             async def clean_session() -> None:
                 try:
@@ -1107,7 +1104,7 @@ rm -f "$1"
         """Execute code in the specified language.
 
         Background processes survive normal completion. Local command deadlines
-        and cancellation terminate the command's remaining session processes.
+        and cancellation terminate the command's remaining descendants.
 
         Args:
             code: Source code to execute.

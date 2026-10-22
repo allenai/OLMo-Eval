@@ -151,9 +151,9 @@ class TestStreamingControlCommand(unittest.IsolatedAsyncioTestCase):
             await executor.execute_command("blocked", timeout=0.01)
         health.assert_awaited_once()
         commands = [call.args[0] for call in control.await_args_list]
-        self.assertEqual(commands[0][:3], ["setsid", "--wait", "bash"])
-        self.assertIn("--kill-after=5s", commands[0][4])
-        self.assertIn("kill -KILL", commands[1][2])
+        self.assertEqual(commands[0][:3], ["setsid", "--wait", "python3"])
+        self.assertIn("--kill-after=5s", commands[0][5])
+        self.assertIn("kill -USR1", commands[1][2])
         executor._runtime.execute.assert_not_called()
 
     async def test_local_cancellation_kills_the_process_group(self) -> None:
@@ -175,7 +175,7 @@ class TestStreamingControlCommand(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(asyncio.CancelledError):
                 await task
         self.assertEqual(len(cleanup), 1)
-        self.assertIn("kill -KILL", cleanup[0][2])
+        self.assertIn("kill -USR1", cleanup[0][2])
 
     async def test_local_health_probe_bypasses_blocked_http_server(self) -> None:
         executor = self._executor()
@@ -239,7 +239,11 @@ class TestStreamingControlCommand(unittest.IsolatedAsyncioTestCase):
         executor._deployment.is_alive = mock.AsyncMock(return_value=True)
         control = mock.AsyncMock(
             side_effect=[
-                mock.Mock(stdout="__OLMO_STARTED_test__\ncompleted", stderr="", exit_code=0),
+                mock.Mock(
+                    stdout='__OLMO_STARTED_test__\ncompleted\n__OLMO_FINISHED_test__:{"exit_code":0,"timed_out":false}\n',
+                    stderr="",
+                    exit_code=0,
+                ),
                 TimeoutError(),
                 mock.Mock(exit_code=0),
             ]
@@ -480,7 +484,7 @@ class TestSessionTimeout(unittest.IsolatedAsyncioTestCase):
 @pytest.mark.anyio
 @pytest.mark.parametrize("cancel_before_record", [False, True])
 @pytest.mark.parametrize("cleanup_mode", ["immediate", "delayed", "stubborn"])
-async def test_session_cleanup_reaches_nested_process_groups(
+async def test_session_cleanup_waits_for_supervisor_confirmation(
     monkeypatch, tmp_path, cancel_before_record, cleanup_mode
 ):
     import shlex
@@ -501,7 +505,7 @@ async def test_session_cleanup_reaches_nested_process_groups(
 
     if not cancel_before_record:
         record.write_text(stat(100, 100, 100, 7))
-    for pid, group, session in [(100, 100, 100), (101, 100, 100), (102, 102, 100), (200, 200, 200)]:
+    for pid, group, session in [(100, 100, 100)]:
         path = proc / str(pid)
         path.mkdir()
         (path / "stat").write_text(stat(pid, group, session, 7))
@@ -517,10 +521,14 @@ async def test_session_cleanup_reaches_nested_process_groups(
         if command[0] == "setsid":
             if cancel_before_record:
                 raise asyncio.CancelledError
-            return SimpleNamespace(stdout="__OLMO_STARTED_test__\n", stderr="", exit_code=124)
+            return SimpleNamespace(
+                stdout='__OLMO_STARTED_test__\n\n__OLMO_FINISHED_test__:{"exit_code":124,"timed_out":true}\n',
+                stderr="",
+                exit_code=124,
+            )
         script = command[2].replace("/proc", shlex.quote(str(proc)))
         # Intercept signals so the real cleanup script operates only on the fixture's process table.
-        remove = "" if stubborn else "rm -f " + shlex.quote(str(proc)) + '/"$3"/stat; '
+        remove = "" if stubborn else "touch " + shlex.quote(str(record) + ".clean") + "; "
         if cleanup_mode == "delayed":
             remove = "(sleep 0.3; " + remove + ") >/dev/null 2>&1 & "
         script = (
@@ -551,31 +559,23 @@ async def test_session_cleanup_reaches_nested_process_groups(
     elif stubborn:
         from olmo_eval.harness.sandbox.errors import SandboxTransportError
 
-        with pytest.raises(SandboxTransportError, match="live processes"):
+        with pytest.raises(SandboxTransportError, match="cleanup not confirmed"):
             await executor.execute_command("true", timeout=0)
     else:
         result = await executor.execute_command("true", timeout=0)
         assert result.error == "timeout"
-    assert {int(pid) for pid in kills.read_text().splitlines()} == {100, 101, 102}
+    assert {int(pid) for pid in kills.read_text().splitlines()} == {100}
     assert record.exists() is stubborn
     assert executor.is_running is (not stubborn)
 
 
 @pytest.mark.anyio
 @pytest.mark.parametrize(
-    "exit_code,elapsed,label",
-    [
-        (124, 0.1, None),
-        (137, 0.1, None),
-        (124, 4, "timeout"),
-        (137, 4, "timeout"),
-        (9, 4, "timeout"),
-        (0, 4, None),
-    ],
+    "exit_code,timed_out",
+    [(124, False), (137, False), (124, True), (137, True), (9, True), (0, False)],
 )
-async def test_command_timeout_label_respects_exit_and_elapsed_time(
-    monkeypatch, exit_code, elapsed, label
-):
+async def test_command_timeout_label_uses_supervisor_result(monkeypatch, exit_code, timed_out):
+    import json
     from types import SimpleNamespace
 
     executor = SandboxExecutor(SandboxConfig(image="test", mode=SandboxMode.DOCKER))
@@ -584,24 +584,50 @@ async def test_command_timeout_label_respects_exit_and_elapsed_time(
     monkeypatch.setattr(
         "olmo_eval.harness.sandbox.executor.uuid.uuid4", lambda: SimpleNamespace(hex="test")
     )
-    times = iter([0, elapsed])
-    monkeypatch.setattr(
-        "olmo_eval.harness.sandbox.executor.time", SimpleNamespace(monotonic=lambda: next(times))
-    )
     commands = []
 
     async def control(command, timeout):
         commands.append(command)
+        report = json.dumps({"exit_code": exit_code, "timed_out": timed_out})
         return SimpleNamespace(
-            stdout="__OLMO_STARTED_test__\n",
+            stdout="__OLMO_STARTED_test__\noutput\n__OLMO_FINISHED_test__:" + report + "\n",
             stderr="",
             exit_code=exit_code if command[0] == "setsid" else 0,
         )
 
     monkeypatch.setattr(executor, "_execute_stream_control", control)
     result = await executor.execute_command("true", timeout=3)
-    assert result.error == label
-    assert (commands[1][0] == "bash") == (label == "timeout")
+    assert result.error == ("timeout" if timed_out else None)
+    assert result.output == "output"
+    assert (commands[1][0] == "bash") == timed_out
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("completion", ["", "invalid", '{"exit_code":0,"timed_out":false}'])
+async def test_missing_or_failed_supervisor_completion_quarantines(monkeypatch, completion):
+    from types import SimpleNamespace
+
+    from olmo_eval.harness.sandbox.errors import SandboxTransportError
+
+    executor = SandboxExecutor(SandboxConfig(image="test", mode=SandboxMode.DOCKER))
+    executor._deployment = SimpleNamespace(container_name="test")
+    executor._runtime = SimpleNamespace()
+    monkeypatch.setattr(
+        "olmo_eval.harness.sandbox.executor.uuid.uuid4", lambda: SimpleNamespace(hex="test")
+    )
+
+    async def control(command, timeout):
+        if command[0] == "setsid":
+            output = "__OLMO_STARTED_test__\n"
+            if completion:
+                output += "\n__OLMO_FINISHED_test__:" + completion + "\n"
+            return SimpleNamespace(stdout=output, stderr="cleanup failed", exit_code=1)
+        return SimpleNamespace(stdout="", stderr="", exit_code=0)
+
+    monkeypatch.setattr(executor, "_execute_stream_control", control)
+    with pytest.raises(SandboxTransportError, match="confirm completion"):
+        await executor.execute_command("true", timeout=3)
+    assert not executor.is_running
 
 
 @pytest.mark.anyio
@@ -658,3 +684,27 @@ async def test_failed_http_shutdown_force_removes_local_container(monkeypatch, r
     if removal_times_out:
         process.kill.assert_called_once()
         process.wait.assert_awaited_once()
+
+
+@pytest.mark.anyio
+async def test_background_output_after_completion_is_preserved(monkeypatch):
+    from types import SimpleNamespace
+
+    executor = SandboxExecutor(SandboxConfig(image="test", mode=SandboxMode.DOCKER))
+    executor._deployment = SimpleNamespace(container_name="test")
+    executor._runtime = SimpleNamespace()
+    monkeypatch.setattr(
+        "olmo_eval.harness.sandbox.executor.uuid.uuid4", lambda: SimpleNamespace(hex="test")
+    )
+
+    async def control(command, timeout):
+        return SimpleNamespace(
+            stdout='__OLMO_STARTED_test__\nforeground\n__OLMO_FINISHED_test__:{"exit_code":0,"timed_out":false}\nbackground\n',
+            stderr="",
+            exit_code=0,
+        )
+
+    monkeypatch.setattr(executor, "_execute_stream_control", control)
+    result = await executor.execute_command("trusted-probe", timeout=3)
+    assert result.success and result.output == "foregroundbackground\n"
+    assert executor.is_running
