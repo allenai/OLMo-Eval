@@ -14,6 +14,7 @@ from olmo_eval.runners.asynq.types import QueueItem, TaskTracker, summarize_fail
 from olmo_eval.runners.common.types import DEFAULT_MAX_HARD_FAILURE_RATE, TaskResult
 from olmo_eval.runners.io.builders import build_predictions, build_requests_from_responses
 from olmo_eval.runners.processing.generation_counts import count_generations
+from olmo_eval.runners.processing.scoring_failures import measurable_responses
 from olmo_eval.runners.processing.utils import get_metric_metadata
 
 logger = get_logger(__name__)
@@ -158,7 +159,7 @@ async def finalize_task(tracker: TaskTracker) -> TaskResult:
     # Score and compute metrics
     tracker.task.strip_thinking_traces(responses)
     scored = await tracker.task.score_responses(responses)
-    metrics = tracker.task.compute_metrics(scored)
+    metrics = tracker.task.compute_metrics(measurable_responses(scored))
     infrastructure_failures = _count_infrastructure_scoring_errors(scored)
 
     # Build predictions
@@ -245,8 +246,8 @@ def compute_task_metrics(
             hard_failure_rate_exceeded=gate_error is not None,
         )
 
-    # Compute metrics from pre-scored responses
-    metrics = task.compute_metrics(scored_responses)
+    # Unscored instances are left out of the metrics rather than counted as zeros.
+    metrics = task.compute_metrics(measurable_responses(scored_responses))
     infrastructure_failures = _count_infrastructure_scoring_errors(scored_responses)
 
     # Build predictions

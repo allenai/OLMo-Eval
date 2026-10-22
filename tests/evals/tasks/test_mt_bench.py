@@ -5,7 +5,6 @@ from collections import Counter
 
 import pytest
 
-from olmo_eval.common.scorers import ScoringIncompleteError
 from olmo_eval.common.types import (
     FOLLOW_UP_TURNS_KEY,
     TURNS_KEY,
@@ -473,8 +472,7 @@ class TestScoring:
         judge, _ = _turn_judge(["no rating"] * judge_module.JUDGE_ATTEMPTS, [_rated(6)])
         use_judge(monkeypatch, judge)
 
-        with pytest.raises(ScoringIncompleteError):
-            await task.score_responses([response])
+        await task.score_responses([response])
 
         judge_result = response.outputs[0].metadata["judge_result"]
         assert judge_result["parse_error"] is True
@@ -491,10 +489,10 @@ class TestScoring:
 
         use_judge(monkeypatch, judge)
 
-        with pytest.raises(ScoringIncompleteError, match="judge unavailable"):
-            await task.score_responses([response])
+        await task.score_responses([response])
 
         error = response.outputs[0].metadata["scoring_errors"]["mt_bench_judge"]
+        assert "judge unavailable" in error["message"]
         assert error["infrastructure"] == "true"
         assert "score" not in response.scores
 

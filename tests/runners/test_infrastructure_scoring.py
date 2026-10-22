@@ -16,14 +16,15 @@ class _Task:
         return {"accuracy": {"code_exec": 0.0}}
 
 
-def _response(error: dict[str, str]) -> Response:
+def _response(error: dict[str, str] | None) -> Response:
+    """A response with one output, carrying ``error`` as its code_exec scoring error if set."""
     return Response(
         instance=Instance(question="question", gold_answer="answer"),
         request=LMRequest(request_type=RequestType.COMPLETION, prompt="question"),
         outputs=[
             LMOutput(
                 text="output",
-                metadata={"scoring_errors": {"code_exec": error}},
+                metadata={} if error is None else {"scoring_errors": {"code_exec": error}},
             )
         ],
     )
@@ -127,16 +128,45 @@ def test_missing_sandbox_invalidates_livecodebench_samples(
         assert error["infrastructure"] == "true"
 
 
-def test_response_failure_counts_only_outputs_without_a_recorded_verdict() -> None:
+def test_a_response_failure_is_recorded_only_on_outputs_without_a_verdict() -> None:
     from olmo_eval.runners.asynq.results import _record_scoring_failure
 
     response = _response({"type": "ScoringIncompleteError", "infrastructure": "true"})
     response.outputs.append(LMOutput(text="ungraded"))
     response.outputs.append(LMOutput(text="graded", metadata={"score:code_exec": 1.0}))
-    scored = _record_scoring_failure(
+
+    _record_scoring_failure(
         response,
         scorer_names=["code_exec"],
         error={"type": "ScoringIncompleteError", "infrastructure": "true"},
     )
-    result = compute_task_metrics("test", _Task(), [scored], {}, 1, 0.0)  # type: ignore[arg-type]
-    assert result.error == "Incomplete: 2 output score(s) failed due to sandbox infrastructure"
+
+    first, ungraded, graded = response.outputs
+    assert set(first.metadata["scoring_errors"]) == {"code_exec", "__response__"}
+    assert ungraded.metadata["scoring_errors"]["__response__"]["type"] == "ScoringIncompleteError"
+    assert "scoring_errors" not in graded.metadata
+    assert graded.metadata["score:code_exec"] == 1.0
+    assert "score:code_exec" not in ungraded.metadata
+    assert response.scores == {}
+
+
+def test_a_failure_after_every_verdict_marks_every_output() -> None:
+    from olmo_eval.runners.asynq.results import _record_scoring_failure
+
+    response = _response(None)
+    response.outputs[0].metadata["score:code_exec"] = 1.0
+
+    _record_scoring_failure(response, scorer_names=["code_exec"], error={"type": "KeyError"})
+
+    assert response.outputs[0].metadata["scoring_errors"]["__response__"]["type"] == "KeyError"
+
+
+def test_a_failed_response_without_outputs_keeps_the_error() -> None:
+    from olmo_eval.runners.asynq.results import _record_scoring_failure
+
+    response = _response(None)
+    response.outputs = []
+
+    _record_scoring_failure(response, scorer_names=["code_exec"], error={"type": "KeyError"})
+
+    assert response.scoring_error == {"type": "KeyError"}

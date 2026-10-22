@@ -113,37 +113,30 @@ def _record_scoring_failure(
     scorer_names: list[str],
     error: dict[str, str],
 ) -> Response:
-    """Annotate a response whose ``score_responses`` raised.
+    """Record the error on the outputs a raising ``score_responses`` left unscored.
 
-    Every output gets the error under ``__response__``. The infrastructure flag is
-    kept only for outputs that lost their score to it: an output that already
-    records an infrastructure error, or that already has every scorer's verdict,
-    is not counted a second time.
+    An output that already has every scorer's verdict keeps it. The others get the
+    error under ``__response__`` and no score. If every output had its verdicts, the
+    failure came after scoring them, so all of them get the error. A response with no
+    outputs keeps the error on the response itself.
     """
-    for scorer_name in scorer_names:
-        response.scores.setdefault(scorer_name, 0.0)
+    if not response.outputs:
+        response.scoring_error = error
+        return response
 
-    for output in response.outputs:
+    def has_verdict(output) -> bool:
+        metadata = output.metadata or {}
+        return bool(scorer_names) and all(f"score:{name}" in metadata for name in scorer_names)
+
+    unscored = [output for output in response.outputs if not has_verdict(output)]
+    for output in unscored or response.outputs:
         if output.metadata is None:
             output.metadata = {}
         existing = output.metadata.get("scoring_errors")
         if not isinstance(existing, dict):
             existing = {}
             output.metadata["scoring_errors"] = existing
-        response_error = dict(error)
-        already_counted = any(
-            isinstance(detail, dict) and detail.get("infrastructure") == "true"
-            for detail in existing.values()
-        )
-        has_verdict = bool(scorer_names) and all(
-            f"score:{name}" in output.metadata for name in scorer_names
-        )
-        if already_counted or has_verdict:
-            response_error.pop("infrastructure", None)
-        existing["__response__"] = response_error
-        for scorer_name in scorer_names:
-            output.metadata.setdefault(f"score:{scorer_name}", 0.0)
-
+        existing["__response__"] = dict(error)
     return response
 
 

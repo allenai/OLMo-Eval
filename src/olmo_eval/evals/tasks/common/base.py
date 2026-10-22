@@ -41,13 +41,18 @@ def _store_output_score(
     output: LMOutput,
     *,
     scorer_name: str,
-    score: float,
+    score: float | None,
     scoring_error: dict[str, str] | None = None,
 ) -> None:
-    """Store a per-output scorer result on output metadata."""
+    """Store a per-output scorer result on output metadata.
+
+    An output whose scoring failed gets its ``scoring_error`` and no score: a score it
+    never received is not a zero.
+    """
     if output.metadata is None:
         output.metadata = {}
-    output.metadata[f"score:{scorer_name}"] = score
+    if score is not None:
+        output.metadata[f"score:{scorer_name}"] = score
     if scoring_error is not None:
         existing = output.metadata.get("scoring_errors")
         if not isinstance(existing, dict):
@@ -57,12 +62,15 @@ def _store_output_score(
 
 
 class OutputScore(NamedTuple):
-    """Scoring result for a single output (execution / context scorers)."""
+    """Scoring result for a single output (execution / context scorers).
+
+    ``score`` is None when scoring failed; ``scoring_error`` then says why.
+    """
 
     resp_idx: int
     scorer_name: str
     out_idx: int
-    score: float
+    score: float | None
     scoring_error: dict[str, str] | None
 
 
@@ -71,7 +79,7 @@ class ResponseScore(NamedTuple):
 
     resp_idx: int
     scorer_name: str
-    output_scores: dict[int, float]
+    output_scores: dict[int, float | None]
     output_errors: dict[int, dict[str, str]]
 
 
@@ -822,7 +830,7 @@ class Task(ABC):
                         scorer.name,
                         error.get("message", error["type"]),
                     )
-                    return OutputScore(resp_idx, scorer.name, out_idx, 0.0, error)
+                    return OutputScore(resp_idx, scorer.name, out_idx, None, error)
                 return OutputScore(resp_idx, scorer.name, out_idx, score, None)
 
             async def score_context(
@@ -843,7 +851,7 @@ class Task(ABC):
                         scorer.name,
                         error.get("message", error["type"]),
                     )
-                    return OutputScore(resp_idx, scorer.name, out_idx, 0.0, error)
+                    return OutputScore(resp_idx, scorer.name, out_idx, None, error)
                 return OutputScore(resp_idx, scorer.name, out_idx, score, None)
 
             async def score_process(
@@ -857,7 +865,10 @@ class Task(ABC):
                     response.instance,
                     list(response.outputs),
                 )
-                output_scores = {out_idx: result.score for out_idx, result in enumerate(results)}
+                output_scores = {
+                    out_idx: None if result.error is not None else result.score
+                    for out_idx, result in enumerate(results)
+                }
                 output_errors = {
                     out_idx: result.error
                     for out_idx, result in enumerate(results)
@@ -884,7 +895,7 @@ class Task(ABC):
 
             # Store individual scores in output metadata for pass@k expansion
             # Structure: {resp_idx: {scorer_name: {out_idx: score}}}
-            scores_by_response: dict[int, dict[str, dict[int, float]]] = {}
+            scores_by_response: dict[int, dict[str, dict[int, float | None]]] = {}
             scoring_errors_by_response: dict[int, dict[int, dict[str, dict[str, str]]]] = {}
             for result in results:
                 if isinstance(result, OutputScore):
@@ -937,7 +948,11 @@ class Task(ABC):
                             score=score,
                             scoring_error=scoring_error,
                         )
-                    response.scores[scorer_name] = self._aggregate_output_scores(output_scores)
+                    # Aggregate over the outputs that were scored. With none, the
+                    # response has no score for this scorer rather than a zero.
+                    scored = {i: s for i, s in output_scores.items() if s is not None}
+                    if scored:
+                        response.scores[scorer_name] = self._aggregate_output_scores(scored)
 
     def _aggregate_output_scores(self, scores: dict[int, float]) -> float:
         """Collapse per-output scorer values into one response-level score."""

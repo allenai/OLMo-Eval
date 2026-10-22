@@ -6,7 +6,6 @@ import math
 
 import pytest
 
-from olmo_eval.common.scorers import ScoringIncompleteError
 from olmo_eval.common.types import LMOutput, RequestType, Response
 from olmo_eval.evals.tasks import hle
 from olmo_eval.evals.tasks.common import OutputScoreAggregation, get_task, task_exists
@@ -319,13 +318,12 @@ class TestScoring:
         assert "failed on 1/2 output(s)" in caplog.text
 
     @pytest.mark.anyio
-    async def test_a_batch_of_malformed_replies_fails_instead_of_scoring(self, task, monkeypatch):
+    async def test_a_batch_of_malformed_replies_is_unscored_not_wrong(self, task, monkeypatch):
         responses = [_response(task), _response(task)]
         judge, _ = scripted_judge(*["garbage"] * (2 * judge_module.JUDGE_ATTEMPTS))
         use_judge(monkeypatch, judge)
 
-        with pytest.raises(ScoringIncompleteError, match="failed for every sample"):
-            await task.score_responses(responses)
+        await task.score_responses(responses)
 
         for response in responses:
             output = response.outputs[0]

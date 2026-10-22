@@ -765,7 +765,7 @@ class TestEndToEnd:
 
         failed = responses[1]
         assert failed.outputs[0].metadata["scoring_errors"]["omniscience_judge"]
-        assert failed.scores["omniscience_judge"] == 0.0
+        assert "omniscience_judge" not in failed.scores
         assert failed.instance.metadata["is_parsing_error"] is True
         assert failed.instance.metadata["judge_result"]["grade"] == "PARSING_ERROR"
 

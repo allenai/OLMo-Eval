@@ -604,7 +604,6 @@ class _FrontierScience(Task, ABC):
             {key: {} for key in self.score_keys} for _ in responses
         ]
         judge_errors: list[Exception] = []
-        failed_by_response: list[int] = [0] * len(responses)
         for (response_index, output_index), scores in zip(jobs, results, strict=True):
             if isinstance(scores, BaseException):
                 # Cancellation and other non-Exception failures are control flow, not
@@ -613,30 +612,17 @@ class _FrontierScience(Task, ABC):
                 if not isinstance(scores, Exception):
                     raise scores
                 judge_errors.append(scores)
-                failed_by_response[response_index] += 1
                 # Record through the standard scorer-error channel so an omitted
                 # trial stays auditable after the run.
                 _store_output_score(
                     responses[response_index].outputs[output_index],
                     scorer_name=FRONTIERSCIENCE_SCORER_NAME,
-                    score=0.0,
+                    score=None,
                     scoring_error=format_scoring_error(scores, phase="judge"),
                 )
                 continue
             for key, value in scores.items():
                 collected[response_index][key][output_index] = value
-
-        # An instance whose every judge call failed has no score of its own. Raising
-        # hands it to the runner, which annotates every output with the standard
-        # ``__response__`` scoring error and logs the failure. Note the instance still
-        # scores 0.0 and stays in the denominator -- the runner keeps the response and
-        # has no path for excluding a scoring failure from a metric.
-        for response_index, response in enumerate(responses):
-            if response.outputs and failed_by_response[response_index] == len(response.outputs):
-                raise RuntimeError(
-                    "FrontierScience judge failed for every sample of instance "
-                    f"{response.instance.metadata.get('id', response_index)}"
-                ) from judge_errors[0]
 
         if judge_errors:
             logger.warning(
@@ -647,9 +633,13 @@ class _FrontierScience(Task, ABC):
                 judge_errors[0],
             )
 
+        # An instance whose every judge call failed gets no score; its outputs carry
+        # the errors, and the runner counts it as unscored. An instance with no output
+        # was never judged and scores 0.0, as an unanswered question.
         for response, per_key in zip(responses, collected, strict=True):
             for key, output_scores in per_key.items():
-                response.scores[key] = self._aggregate_output_scores(output_scores)
+                if output_scores or not response.outputs:
+                    response.scores[key] = self._aggregate_output_scores(output_scores)
 
         unparsed = sum(
             1

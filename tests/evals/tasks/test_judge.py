@@ -8,7 +8,6 @@ from typing import Any
 import pytest
 
 from olmo_eval.common.multi_turn import scripted_chat_request
-from olmo_eval.common.scorers import ScoringIncompleteError
 from olmo_eval.common.scorers.llm_judge import parse_judge_spec
 from olmo_eval.common.types import (
     TURNS_KEY,
@@ -31,6 +30,7 @@ from olmo_eval.evals.tasks.common.judge import (
 )
 from olmo_eval.evals.tasks.hle import HLEAccuracyMetric, HLETruncationRateMetric
 from olmo_eval.inference.retry import retry_with_backoff
+from olmo_eval.runners.processing.scoring_failures import ScoringState, scoring_state
 from tests.evals.tasks.judge_stubs import use_judge
 
 pytestmark = pytest.mark.usefixtures("judge_test_env")
@@ -283,13 +283,14 @@ class TestScoreResponses:
         assert "ValueError: judge unavailable" in error["message"]
 
     @pytest.mark.anyio
-    async def test_an_instance_with_no_judged_sample_is_incomplete(self, monkeypatch):
+    async def test_an_instance_with_no_judged_sample_is_unscored(self, monkeypatch):
         judge, _ = _scripted_judge({"garbled": ["?"] * JUDGE_ATTEMPTS})
         use_judge(monkeypatch, judge)
         response = _response("garbled")
 
-        with pytest.raises(ScoringIncompleteError, match="failed for every sample"):
-            await _PassFailTask(_config()).score_responses([response])
+        await _PassFailTask(_config()).score_responses([response])
+
+        assert scoring_state(response) is ScoringState.UNSCORED
 
         output = response.outputs[0]
         assert output.metadata["scoring_errors"]["judge"]["type"] == "JudgeParseError"
@@ -425,12 +426,13 @@ class TestJudgeCalls:
         use_judge(monkeypatch, judge)
         response = _response("answer")
 
-        with pytest.raises(ScoringIncompleteError, match="judge unavailable"):
-            await _RatingTask(_config()).score_responses([response])
+        await _RatingTask(_config()).score_responses([response])
 
         assert len(calls) == 2
         error = response.outputs[0].metadata["scoring_errors"]["judge"]
         assert "ValueError: judge unavailable" in error["message"]
+        assert "score:judge" not in response.outputs[0].metadata
+        assert scoring_state(response) is ScoringState.UNSCORED
 
     @pytest.mark.anyio
     async def test_a_transient_api_error_is_retried(self, monkeypatch):
@@ -460,8 +462,10 @@ class TestJudgeCalls:
         use_judge(monkeypatch, judge)
         response = _response("answer")
 
-        with pytest.raises(ScoringIncompleteError, match="recorded no consensus score"):
-            await _ForgetfulTask(_config()).score_responses([response])
+        await _ForgetfulTask(_config()).score_responses([response])
+
+        error = response.outputs[0].metadata["scoring_errors"]["judge"]
+        assert "recorded no consensus score" in error["message"]
 
 
 class TestMetrics:
