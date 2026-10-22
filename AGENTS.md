@@ -42,6 +42,41 @@ uv run pytest tests/ --ignore=tests/integration -v
   `olmo-eval suite inspect <suite>`, `olmo-eval task inspect <spec> --request`,
   `olmo-eval run -m mock -t <spec> -o limit=5`.
 
+## Before running an eval
+
+Results should reach the olmo-eval database whenever they measure an established eval.
+Uploads use the user's Google Application Default Credentials, for local runs and for
+`olmo-eval beaker launch` alike. Without them, a local run keeps results only on disk and a
+Beaker launch stops with an error.
+
+Before `olmo-eval run` or `olmo-eval beaker launch` with a real model, check credentials:
+
+```bash
+gcloud auth application-default print-access-token > /dev/null
+```
+
+If the check fails, ask the user a multiple-choice question before running, such as "Do
+you want to log in first so that your eval results can be uploaded to the olmo-eval
+database?", with these options:
+
+- **Log in first (recommended).** Give the user the command and wait for them to confirm,
+  then rerun the check. The login opens a browser, so the user runs it, not the agent (in
+  Claude Code, by typing `! <command>`). Tell them to sign in with their @allenai.org
+  account.
+
+  ```bash
+  gcloud auth application-default login
+  ```
+
+  If `gcloud` is missing, point them to `brew install --cask google-cloud-sdk` on macOS or
+  <https://cloud.google.com/sdk/docs/install>.
+- **Run without uploading.** Pass `--no-upload`.
+
+Skip the question and pass `--no-upload` when the eval is new or in progress: a task, spec,
+or scoring change that isn't on `main` yet, including validation runs for an open PR. Those
+results can be uploaded after merge with `olmo-eval results upload <output-dir>`. Mock and
+dry runs need no credentials.
+
 ## Invariants
 
 - **Spec meaning is fixed.** Don't change an existing spec's prompt, data, extraction,
