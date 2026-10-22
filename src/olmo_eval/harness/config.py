@@ -248,15 +248,31 @@ class HarnessConfig:
     def merge_provider(self, provider: ProviderConfig) -> HarnessConfig:
         """Merge model info from provider while preserving harness provider settings.
 
-        The harness's provider kind takes precedence if explicitly set (non-default),
-        while model-specific fields come from the new provider.
+        If the harness preset customized its provider config in any way, its
+        `kind` is authoritative for local/GPU-backed models (even when that kind
+        equals ProviderConfig's own default, e.g. VLLM_SERVER) since a
+        customization implies the preset depends on a specific local provider
+        kind (e.g. dr_tulu's tool-calling scaffold needs an HTTP-served model).
+        It never overrides an API-backed model's kind (litellm, mock), since
+        those were deliberately chosen and aren't local execution modes the
+        harness could meaningfully swap. Otherwise the harness didn't express
+        an opinion about the provider at all, and the model's own provider
+        config (including its kind) is used as-is.
         """
         defaults = ProviderConfig()
+        if self.provider == defaults:
+            return self.with_provider(provider)
+
         overrides = {
             f.name: getattr(self.provider, f.name)
             for f in fields(self.provider)
             if getattr(self.provider, f.name) != getattr(defaults, f.name)
         }
+        # The harness customized its provider and wants a specific kind, but
+        # only impose that on models that are themselves local/GPU-backed;
+        # never override a deliberately API-backed model (litellm, mock).
+        if provider.requires_gpu:
+            overrides["kind"] = self.provider.kind
         # kwargs should merge, not replace
         if self.provider.kwargs:
             overrides["kwargs"] = {**provider.kwargs, **self.provider.kwargs}
