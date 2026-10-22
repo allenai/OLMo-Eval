@@ -271,3 +271,14 @@ async def test_finalize_task_applies_the_configured_budget() -> None:
 
     assert (await finalize_task(tracker())).failure_budget_exceeded is True
     assert (await finalize_task(tracker(), max_hard_failure_rate=0.5)).error is None
+
+
+def test_the_summary_prints_warnings_as_plain_text(capsys) -> None:
+    from olmo_eval.runners.processing.metrics import log_summary
+
+    failures = {"instances_unscored": 1, "first_error": "KeyError: '[gold]'"}
+    log_summary({"tasks": {"t": {"metrics": {}, "scoring_failures": failures}}})
+
+    printed = capsys.readouterr().out
+    assert "[yellow]" not in printed
+    assert "KeyError: '[gold]'" in printed

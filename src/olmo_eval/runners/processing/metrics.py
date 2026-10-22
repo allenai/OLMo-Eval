@@ -392,9 +392,10 @@ def log_summary(results: dict[str, Any], multi_model: bool = False) -> None:
 
     warnings = scoring_failure_warnings(results, multi_model=multi_model)
     if warnings:
-        console.print("[yellow]Warnings[/yellow]")
+        console.print("Warnings", style="yellow")
         for warning in warnings:
-            console.print(f"[yellow]- {warning}[/yellow]", highlight=False, markup=False)
+            # The warning quotes an error message, so it is printed as plain text.
+            console.print(f"- {warning}", style="yellow", highlight=False, markup=False)
 
 
 def scoring_failure_warnings(results: dict[str, Any], multi_model: bool = False) -> list[str]:
