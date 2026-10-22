@@ -45,6 +45,9 @@ uv run pytest tests/ --ignore=tests/integration -v
 ## Before running an eval
 
 Results should reach the olmo-eval database whenever they measure an established eval.
+An eval is established when the run uses task specs and scoring code from `main`
+unchanged, and in progress when it depends on a task, spec, or scoring change not yet on
+`main`.
 Uploads use the user's Google Application Default Credentials, for local runs and for
 `olmo-eval beaker launch` alike. Without them, a local run keeps results only on disk and a
 Beaker launch stops with an error.
@@ -72,10 +75,9 @@ database?", with these options:
   <https://cloud.google.com/sdk/docs/install>.
 - **Run without uploading.** Pass `--no-upload`.
 
-Skip the question and pass `--no-upload` when the eval is new or in progress: a task, spec,
-or scoring change that isn't on `main` yet, including validation runs for an open PR. Those
-results can be uploaded after merge with `olmo-eval results upload <output-dir>`. Mock and
-dry runs need no credentials.
+Skip the question and pass `--no-upload` for an in-progress eval, including validation runs
+for an open PR. Those results can be uploaded after merge with
+`olmo-eval results upload <output-dir>`. Mock and dry runs need no credentials.
 
 ## Invariants
 
