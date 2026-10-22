@@ -97,7 +97,8 @@ async def run_task_results_endpoint(
 ) -> a.RunTaskResultsResponse:
     run = await _run_row(session, run_id)
     sql = f"""
-        SELECT {TR_COLUMNS}, tr.error_summary, tr.mean_completion_tokens, tr.truncation_rate,
+        SELECT {TR_COLUMNS}, tr.error_summary, tr.scoring_failures,
+               tr.mean_completion_tokens, tr.truncation_rate,
                tr.finish_reason_counts, tr.predictions_path, tr.requests_path,
                tv.base_task, tv.num_fewshot, tv.task_limit, tv.split, tv.suites
         FROM task_results tr
@@ -110,7 +111,7 @@ async def run_task_results_endpoint(
         subject = await resolve_one(session, baseline)
     used = list(trs) + (list(subject.trs.values()) if subject else [])
     key = cache_key(
-        "run-task-results-v2",
+        "run-task-results-v3",
         {"run_id": run_id, "baseline": baseline, **stats.__dict__},
         used,
     )
@@ -182,6 +183,7 @@ async def run_task_results_endpoint(
             instances_processed=tr["instances_processed"],
             instances_failed=tr["instances_failed"],
             generation_counts=tr["generation_counts"],
+            scoring_failures=tr["scoring_failures"],
             instances_stored=int(tr["instances_stored"] or 0),
             metrics=tr["metrics"] or {},
             error=tr["error"],

@@ -17,7 +17,8 @@ from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
 from olmo_eval.common.formatters import Formatter
 from olmo_eval.common.metrics import Metric
 from olmo_eval.common.repr import hide_unset
-from olmo_eval.common.scorers import Scorer, ScoringIncompleteError
+from olmo_eval.common.scorers import Scorer
+from olmo_eval.common.scorers.execution import format_scoring_error
 from olmo_eval.common.types import (
     Instance,
     LMOutput,
@@ -36,39 +37,22 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _format_scoring_error(exc: Exception, *, phase: str) -> dict[str, str]:
-    """Build a JSON-serializable scoring error payload."""
-    error = {
-        "phase": phase,
-        "type": type(exc).__qualname__,
-    }
-    message = str(exc).strip()
-    if message:
-        error["message"] = message
-    if isinstance(exc, ScoringIncompleteError):
-        error["infrastructure"] = "true"
-    else:
-        try:
-            from olmo_eval.harness.sandbox import SandboxInfrastructureError
-
-            if isinstance(exc, SandboxInfrastructureError):
-                error["infrastructure"] = "true"
-        except ImportError:
-            pass
-    return error
-
-
 def _store_output_score(
     output: LMOutput,
     *,
     scorer_name: str,
-    score: float,
+    score: float | None,
     scoring_error: dict[str, str] | None = None,
 ) -> None:
-    """Store a per-output scorer result on output metadata."""
+    """Store a per-output scorer result on output metadata.
+
+    An output whose scoring failed gets its ``scoring_error`` and no score: a score it
+    never received is not a zero.
+    """
     if output.metadata is None:
         output.metadata = {}
-    output.metadata[f"score:{scorer_name}"] = score
+    if score is not None:
+        output.metadata[f"score:{scorer_name}"] = score
     if scoring_error is not None:
         existing = output.metadata.get("scoring_errors")
         if not isinstance(existing, dict):
@@ -78,12 +62,15 @@ def _store_output_score(
 
 
 class OutputScore(NamedTuple):
-    """Scoring result for a single output (execution / context scorers)."""
+    """Scoring result for a single output (execution / context scorers).
+
+    ``score`` is None when scoring failed; ``scoring_error`` then says why.
+    """
 
     resp_idx: int
     scorer_name: str
     out_idx: int
-    score: float
+    score: float | None
     scoring_error: dict[str, str] | None
 
 
@@ -92,7 +79,7 @@ class ResponseScore(NamedTuple):
 
     resp_idx: int
     scorer_name: str
-    output_scores: dict[int, float]
+    output_scores: dict[int, float | None]
     output_errors: dict[int, dict[str, str]]
 
 
@@ -724,13 +711,17 @@ class Task(ABC):
             context: Scoring context with execution environment and concurrency settings.
 
         Raises:
-            SandboxRequiredError: If an ExecutionScorer is used without a valid
-                execution environment in the context.
+            SandboxRequiredError: If an ExecutionScorer is used and no sandbox is
+                configured.
+            SandboxInfrastructureError: If sandboxes are configured but none that
+                serves the task's capability is running. A pool that runs out during
+                scoring fails each output with this error instead.
         """
         from olmo_eval.common.scorers.base import ProcessScorer
         from olmo_eval.common.scorers.execution import (
             ContextScorer,
             ExecutionScorer,
+            SandboxInfrastructureError,
             SandboxRequiredError,
         )
 
@@ -742,6 +733,7 @@ class Task(ABC):
 
         # Route to task-specific sandbox if sandbox_env is configured
         sandbox_cap = self.config.sandbox_env.capability if self.config.sandbox_env else None
+        capability = sandbox_cap or "default"
         if execution_env is not None and hasattr(execution_env, "for_capabilities"):
             from olmo_eval.harness.sandbox.config import Capability
 
@@ -760,7 +752,14 @@ class Task(ABC):
         sync_scorers: dict[str, Scorer] = {}
         for name, scorer in scorers_by_name.items():
             if isinstance(scorer, ExecutionScorer):
-                if task_executor is None:
+                if task_executor is None or not task_executor.is_running:
+                    # Sandboxes were configured but none serving this task is running:
+                    # they failed, or none was configured with this capability.
+                    if context.execution_env is not None:
+                        raise SandboxInfrastructureError(
+                            f"No running sandbox has capability {capability!r} for "
+                            f"{scorer.__class__.__name__}"
+                        )
                     raise SandboxRequiredError(
                         f"{scorer.__class__.__name__} requires a sandbox. "
                         "Configure sandboxes in HarnessConfig."
@@ -824,7 +823,7 @@ class Task(ABC):
                         assert task_executor is not None
                         score = await scorer.ascore(response.instance, output, task_executor)
                 except Exception as exc:
-                    error = _format_scoring_error(exc, phase="execution")
+                    error = format_scoring_error(exc, phase="execution")
                     instance_id = response.instance.metadata.get("id", str(resp_idx))
                     logger.warning(
                         "Async scoring failed for instance %s output %s with scorer %s: %s",
@@ -833,7 +832,7 @@ class Task(ABC):
                         scorer.name,
                         error.get("message", error["type"]),
                     )
-                    return OutputScore(resp_idx, scorer.name, out_idx, 0.0, error)
+                    return OutputScore(resp_idx, scorer.name, out_idx, None, error)
                 return OutputScore(resp_idx, scorer.name, out_idx, score, None)
 
             async def score_context(
@@ -845,7 +844,7 @@ class Task(ABC):
                     async with ctx_semaphore:
                         score = await scorer.ascore_with_context(response.instance, output, context)
                 except Exception as exc:
-                    error = _format_scoring_error(exc, phase="context")
+                    error = format_scoring_error(exc, phase="context")
                     instance_id = response.instance.metadata.get("id", str(resp_idx))
                     logger.warning(
                         "Context scoring failed for instance %s output %s with scorer %s: %s",
@@ -854,7 +853,7 @@ class Task(ABC):
                         scorer.name,
                         error.get("message", error["type"]),
                     )
-                    return OutputScore(resp_idx, scorer.name, out_idx, 0.0, error)
+                    return OutputScore(resp_idx, scorer.name, out_idx, None, error)
                 return OutputScore(resp_idx, scorer.name, out_idx, score, None)
 
             async def score_process(
@@ -868,7 +867,10 @@ class Task(ABC):
                     response.instance,
                     list(response.outputs),
                 )
-                output_scores = {out_idx: result.score for out_idx, result in enumerate(results)}
+                output_scores = {
+                    out_idx: None if result.error is not None else result.score
+                    for out_idx, result in enumerate(results)
+                }
                 output_errors = {
                     out_idx: result.error
                     for out_idx, result in enumerate(results)
@@ -895,7 +897,7 @@ class Task(ABC):
 
             # Store individual scores in output metadata for pass@k expansion
             # Structure: {resp_idx: {scorer_name: {out_idx: score}}}
-            scores_by_response: dict[int, dict[str, dict[int, float]]] = {}
+            scores_by_response: dict[int, dict[str, dict[int, float | None]]] = {}
             scoring_errors_by_response: dict[int, dict[int, dict[str, dict[str, str]]]] = {}
             for result in results:
                 if isinstance(result, OutputScore):
@@ -948,7 +950,11 @@ class Task(ABC):
                             score=score,
                             scoring_error=scoring_error,
                         )
-                    response.scores[scorer_name] = self._aggregate_output_scores(output_scores)
+                    # Aggregate over the outputs that were scored. With none, the
+                    # response has no score for this scorer rather than a zero.
+                    scored = {i: s for i, s in output_scores.items() if s is not None}
+                    if scored:
+                        response.scores[scorer_name] = self._aggregate_output_scores(scored)
 
     def _aggregate_output_scores(self, scores: dict[int, float]) -> float:
         """Collapse per-output scorer values into one response-level score."""
@@ -1008,23 +1014,22 @@ class Task(ABC):
         while preserving which scorer produced which value.
         """
         from olmo_eval.common.metrics import PassAtKMetric, PassPowKMetric
+        from olmo_eval.common.scoring_failures import measurable_responses
 
-        # Expand multi-output responses for pass@k/pass^k metrics only
-        expanded_responses: Sequence[Response] | None = None
-
+        scorers = tuple(self._get_scorers())
         result: dict[str, dict[str, float]] = {}
         for metric in self.config.metrics:
-            scorer_name = (
-                metric.scorer().name if hasattr(metric, "scorer") and metric.scorer else "default"
-            )
+            has_scorer = hasattr(metric, "scorer") and metric.scorer
+            scorer_name = metric.scorer().name if has_scorer else "default"
             if metric.name not in result:
                 result[metric.name] = {}
 
+            # An instance this metric's scorer could not score is left out of the metric.
+            measured = (
+                measurable_responses(responses, scorer_name, scorers) if has_scorer else responses
+            )
             # Use expanded responses for pass metrics, original for others
             if isinstance(metric, (PassAtKMetric, PassPowKMetric)):
-                if expanded_responses is None:
-                    expanded_responses = self._expand_multi_output_responses(responses)
-                result[metric.name][scorer_name] = metric.compute(expanded_responses)
-            else:
-                result[metric.name][scorer_name] = metric.compute(responses)
+                measured = self._expand_multi_output_responses(measured)
+            result[metric.name][scorer_name] = metric.compute(measured)
         return result

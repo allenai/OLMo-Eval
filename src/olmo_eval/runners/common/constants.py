@@ -7,8 +7,8 @@ class ValidationError(Exception):
     pass
 
 
-class HardFailureRateExceeded(Exception):
-    """Raised when a task's hard-failure rate exceeds the configured threshold.
+class FailureBudgetExceeded(Exception):
+    """Raised when a task's failed and unscored instances exceed its failure budget.
 
     Raised after results have been written, so a run that trips the gate still
     leaves its metrics.json and predictions behind for diagnosis.

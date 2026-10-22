@@ -36,7 +36,7 @@ export function TasksTab(ctx: RunCtx) {
         if (query && !query.split(/[\s:]+/).filter(Boolean).every((tok) => t.task_name.toLowerCase().includes(tok))) return false;
         if (suiteFilter && !t.suites.includes(suiteFilter)) return false;
         if (flags.includes("changed") && !t.baseline?.delta.significant) return false;
-        if (flags.includes("failed") && !t.error && !t.instances_failed) return false;
+        if (flags.includes("failed") && !t.error && !t.instances_failed && !t.scoring_failures?.instances_unscored) return false;
         if (flags.includes("config") && !t.baseline?.delta.hash_mismatch) return false;
         return true;
       }),
@@ -107,9 +107,9 @@ export function TasksTab(ctx: RunCtx) {
       {
         id: "n",
         header: "n",
-        title: "Instances (saved / processed / failed)",
-        headerTitle: "Instances saved / processed / failed",
-        width: 118,
+        title: "Instances (saved / processed / failed / unscored)",
+        headerTitle: "Instances saved / processed / failed (no output) / unscored",
+        width: 150,
         align: "right",
         sortValue: (r) => r.n,
         cell: (r) => (
@@ -117,6 +117,11 @@ export function TasksTab(ctx: RunCtx) {
             {formatCount(r.instances_stored)}
             <span className="muted">/{formatCount(r.instances_processed)}</span>
             {r.instances_failed ? <span style={{ color: "var(--danger-fg)" }}>/{formatCount(r.instances_failed)}</span> : null}
+            {r.scoring_failures?.instances_unscored ? (
+              <span style={{ color: "var(--warn-fg)" }} title="Instances with no scored output, left out of the score">
+                {" "}+{formatCount(r.scoring_failures.instances_unscored)} unscored
+              </span>
+            ) : null}
           </span>
         ),
         csv: (r) => r.n,

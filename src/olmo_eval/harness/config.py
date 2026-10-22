@@ -52,10 +52,10 @@ class HarnessConfig:
     metrics: MetricsConfig | None = None
     batching: BatchConfig | None = None
     scorer_startup_timeout: float | None = None
-    # Fraction of a task's instances allowed to hard-fail before the task is marked
-    # failed and the run exits non-zero. None means the runner default (0.05). Set to
-    # 1.0 to never fail a run on partial instance failures; a task that saves zero
-    # instances still fails, since it produced no metrics.
+    # The failure budget: fraction of a task's instances allowed to have no output or no
+    # scored output before the task is marked failed and the run exits non-zero. None
+    # means the runner default (0.05). Set to 1.0 to never fail a run on partial
+    # failures; a task with nothing scored still fails, since it produced no metrics.
     max_hard_failure_rate: float | None = None
 
     # Cache for resolved tools
@@ -339,10 +339,10 @@ def harness_config(
         batching: Batching strategy configuration (None = sequential).
         scorer_startup_timeout: Timeout for scorer worker startup. If None, derived from
             sandbox configs (max startup_timeout + 60s buffer) or defaults to 60s.
-        max_hard_failure_rate: Fraction of a task's instances allowed to hard-fail
-            before the task is marked failed. If None, defaults to 0.05. Set to 1.0 to
-            never fail a run on partial instance failures; a task that saves zero
-            instances still fails.
+        max_hard_failure_rate: The failure budget: fraction of a task's instances
+            allowed to have no output or no scored output before the task is marked
+            failed. If None, defaults to 0.05. Set to 1.0 to never fail a run on partial
+            failures; a task with nothing scored still fails.
 
     Returns:
         A new HarnessConfig instance.

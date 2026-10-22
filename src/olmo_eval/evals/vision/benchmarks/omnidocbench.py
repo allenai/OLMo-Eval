@@ -56,6 +56,7 @@ from typing import TYPE_CHECKING, Literal
 
 from olmo_eval.common.metrics.base import Metric
 from olmo_eval.common.scorers.base import set_scorer_result
+from olmo_eval.common.scorers.execution import format_scoring_error
 from olmo_eval.common.types import Instance, Response, SamplingParams, Split
 from olmo_eval.evals.tasks.common import register
 from olmo_eval.evals.vision.scoring.omnidocbench import (
@@ -280,12 +281,8 @@ class OmniDocBenchTask(OcrTask):
             # each output's score as lost to infrastructure instead: the run then reports an
             # error, its predictions are still written for rescoring, and no metric is made up.
             logger.exception("OmniDocBench %s evaluation failed.", self.version)
-            error = {
-                "phase": "compute_metrics",
-                "type": type(exc).__qualname__,
-                "message": str(exc),
-                "infrastructure": "true",
-            }
+            error = format_scoring_error(exc, phase="compute_metrics")
+            error["infrastructure"] = "true"
             for response in responses:
                 for output in response.outputs:
                     if output.metadata is None:

@@ -625,8 +625,14 @@ class SandboxManager:
                             f"an infrastructure failure from {executor.name}: {exc}"
                         )
             except _NoSandboxAvailableError:
-                if last_infrastructure_error is None:
+                # A scoring call that finds its pool empty lost its sandbox to
+                # infrastructure, whether or not this call saw the failure itself.
+                if not failover_on_quarantine:
                     raise
+                if last_infrastructure_error is None:
+                    raise SandboxInfrastructureError(
+                        f"No running sandbox has capabilities {sorted(required_capabilities)}"
+                    ) from None
                 raise SandboxInfrastructureError(
                     f"No healthy sandbox remained for {sorted(required_capabilities)} "
                     f"after infrastructure failures: {last_infrastructure_error}"

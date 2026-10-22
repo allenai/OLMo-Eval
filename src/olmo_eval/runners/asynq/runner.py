@@ -27,7 +27,7 @@ from olmo_eval.runners.asynq.monitoring import (
 from olmo_eval.runners.asynq.preparation import prepare_task_items
 from olmo_eval.runners.asynq.results import (
     aggregate_results,
-    check_hard_failure_gate,
+    check_failure_budget,
     process_results,
     utc_iso,
 )
@@ -1147,7 +1147,7 @@ class AsyncEvalRunner(RunnerResultsMixin, BaseEvalRunner):
 
     @property
     def max_hard_failure_rate(self) -> float:
-        """Fraction of a task's instances allowed to hard-fail before it is failed."""
+        """The failure budget: fraction of a task's instances that may go unscored."""
         configured = self.harness_config.max_hard_failure_rate
         return DEFAULT_MAX_HARD_FAILURE_RATE if configured is None else configured
 
@@ -1213,7 +1213,7 @@ class AsyncEvalRunner(RunnerResultsMixin, BaseEvalRunner):
             experiment_duration_seconds=experiment_duration_seconds,
             provider_init_seconds=provider_init_seconds,
         )
-        check_hard_failure_gate(results)
+        check_failure_budget(results)
         return final_results
 
     def _finalize_and_save(

@@ -1046,6 +1046,17 @@ class RunSuitesResponse(_Response):
     unsuited_tasks: list[str]
 
 
+class ScoringFailures(_Response):
+    """A task's scoring failures. An unscored instance has no scored output and is left out of the metrics; with instances that produced no output it counts against the task's failure budget. A partially scored instance is scored from the outputs that were."""
+
+    by_type: dict[str, int]
+    first_error: str | None = Field(default=None)
+    infrastructure: int
+    instances_partially_scored: int
+    instances_unscored: int
+    outputs_unscored: int
+
+
 class TaskResultRow(_Response):
     base_task: str | None
     baseline: BaselineCell | None
@@ -1072,6 +1083,7 @@ class TaskResultRow(_Response):
     runtime: TaskRuntime
     score: float | None
     score_is_mean: bool
+    scoring_failures: ScoringFailures | None = Field(default=None)
     split: str | None
     stderr: float | None
     suites: list[str]

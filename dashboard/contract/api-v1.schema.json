@@ -5136,6 +5136,49 @@
       ],
       "type": "object"
     },
+    "ScoringFailures": {
+      "additionalProperties": false,
+      "description": "A task's scoring failures. An unscored instance has no scored output and is left out of the metrics; with instances that produced no output it counts against the task's failure budget. A partially scored instance is scored from the outputs that were.",
+      "properties": {
+        "by_type": {
+          "additionalProperties": {
+            "$ref": "#/definitions/Count"
+          },
+          "description": "Unscored outputs by exception type, from each output's first error.",
+          "type": "object"
+        },
+        "first_error": {
+          "description": "The first scoring error as \"Type: message\", capped at 500 characters.",
+          "maxLength": 500,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "infrastructure": {
+          "$ref": "#/definitions/Count",
+          "description": "Unscored outputs whose failure was flagged as infrastructure (judge, sandbox)."
+        },
+        "instances_partially_scored": {
+          "$ref": "#/definitions/Count"
+        },
+        "instances_unscored": {
+          "$ref": "#/definitions/Count"
+        },
+        "outputs_unscored": {
+          "$ref": "#/definitions/Count",
+          "description": "Outputs with a scoring error, across all instances."
+        }
+      },
+      "required": [
+        "instances_unscored",
+        "instances_partially_scored",
+        "outputs_unscored",
+        "infrastructure",
+        "by_type"
+      ],
+      "type": "object"
+    },
     "SearchGroup": {
       "additionalProperties": false,
       "properties": {
@@ -6017,6 +6060,17 @@
         "score_is_mean": {
           "description": "The corpus score equals the mean of per-instance values (times instance_scale).",
           "type": "boolean"
+        },
+        "scoring_failures": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ScoringFailures"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Outputs and instances whose scores could not be computed; null when none failed."
         },
         "split": {
           "type": [

@@ -13,18 +13,8 @@ from dataclasses import asdict, dataclass, is_dataclass
 from typing import Any
 
 from olmo_eval.common.scorers.base import ProcessScorer
+from olmo_eval.common.scorers.execution import format_scoring_error
 from olmo_eval.common.types import Instance, LMOutput
-
-
-def _format_process_error(exc: Exception) -> dict[str, str]:
-    error = {
-        "phase": "process",
-        "type": type(exc).__qualname__,
-    }
-    message = str(exc).strip()
-    if message:
-        error["message"] = message
-    return error
 
 
 def _resolve_attr(module_name: str, qualname: str) -> Any:
@@ -179,7 +169,9 @@ def _score_outputs_in_process(
             value = scorer.process_score(instance, output)
             scored.append(ProcessOutputScore(score=float(value)))
         except Exception as exc:
-            scored.append(ProcessOutputScore(score=0.0, error=_format_process_error(exc)))
+            scored.append(
+                ProcessOutputScore(score=0.0, error=format_scoring_error(exc, phase="process"))
+            )
     return scored
 
 

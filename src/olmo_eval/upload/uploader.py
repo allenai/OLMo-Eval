@@ -350,6 +350,8 @@ def _task_payload(
     }
     if row.get("generation_counts") is not None:
         payload["generation_counts"] = row["generation_counts"]
+    if row.get("scoring_failures") is not None:
+        payload["scoring_failures"] = row["scoring_failures"]
     return TaskUpload(spec, payload, predictions, requests)
 
 

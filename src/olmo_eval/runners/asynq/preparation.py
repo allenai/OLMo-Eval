@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import random
-from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any
 
 from olmo_eval.common.logging import get_logger
+from olmo_eval.common.scoring_failures import (
+    ScoringFailures,
+    count_scoring_failures,
+    measurable_responses,
+)
 from olmo_eval.common.types import Response, SamplingParams
 from olmo_eval.evals.tasks.common import Task, get_task
 from olmo_eval.runners.asynq.types import QueueItem, TaskTracker, summarize_failed_instances
@@ -94,16 +98,19 @@ def build_requests_from_items(items: list[QueueItem], task_name: str) -> list[di
     return build_requests(instances, requests, task_name, sampling_params)
 
 
-async def finalize_task(tracker: TaskTracker) -> TaskResult:
+async def finalize_task(
+    tracker: TaskTracker, max_hard_failure_rate: float = DEFAULT_MAX_HARD_FAILURE_RATE
+) -> TaskResult:
     """Finalize a task tracker into a TaskResult.
 
     Only the task-level error path is exercised by the async runner, which calls
     this for trackers that failed before any instance ran; every task that
-    actually dispatched instances goes through compute_task_metrics instead. The
-    hard-failure gate therefore lives in compute_task_metrics and not here.
+    actually dispatched instances goes through compute_task_metrics, which this
+    also uses once it has scored the tracker's responses.
 
     Args:
         tracker: Completed TaskTracker
+        max_hard_failure_rate: The failure budget, as for compute_task_metrics.
 
     Returns:
         TaskResult with metrics and predictions
@@ -155,44 +162,16 @@ async def finalize_task(tracker: TaskTracker) -> TaskResult:
     # Sort responses by index (only successful ones)
     responses = [tracker.responses[i] for i in sorted(tracker.responses.keys())]
 
-    # Score and compute metrics
     tracker.task.strip_thinking_traces(responses)
     scored = await tracker.task.score_responses(responses)
-    metrics = tracker.task.compute_metrics(scored)
-    infrastructure_failures = _count_infrastructure_scoring_errors(scored)
-
-    # Build predictions
-    predictions = build_predictions(scored, metrics=tracker.task.config.metrics)
-    requests = build_requests_from_responses(scored, tracker.task.config.name)
-
-    # Get task config for serialization
-    task_config = tracker.task.config
-
-    # Extract metric metadata (returns "metric:scorer" format)
-    primary_metric = get_metric_metadata(tracker.task)
-
-    # Add warning about failed instances if any
-    if error_summary:
-        # Log failed instances but still return partial results
-        logger.warning(
-            f"Task {tracker.spec} completed with failures: {error_summary}. "
-            f"Computed metrics on {len(responses)}/{tracker.total_instances} instances."
-        )
-
-    return TaskResult(
+    return compute_task_metrics(
         spec=tracker.spec,
-        config=task_config.to_dict(),
-        num_instances=len(responses),
-        metrics=metrics,
+        task=tracker.task,
+        scored_responses=list(scored),
+        failed_instances=tracker.failed_instances,
+        total_instances=tracker.total_instances,
         duration_seconds=duration,
-        predictions=predictions,
-        requests=requests,
-        primary_metric=primary_metric,
-        error=_infrastructure_error(infrastructure_failures),
-        error_summary=error_summary,
-        instances_processed=tracker.total_instances,
-        instances_failed=len(tracker.failed_instances),
-        generation_counts=count_generations(scored),
+        max_hard_failure_rate=max_hard_failure_rate,
     )
 
 
@@ -205,17 +184,23 @@ def compute_task_metrics(
     duration_seconds: float,
     max_hard_failure_rate: float = DEFAULT_MAX_HARD_FAILURE_RATE,
 ) -> TaskResult:
-    """Compute metrics from pre-scored responses.
+    """Compute metrics from pre-scored responses and apply the failure budget.
+
+    Unscored instances are left out of the metrics. Instances with no output
+    (``failed_instances``) and unscored instances both count against
+    ``max_hard_failure_rate``; a task over it, or with nothing scored, is failed and
+    its metrics are not published.
 
     Args:
         spec: Task specification string.
         task: Task instance for metric computation.
         scored_responses: List of already-scored responses.
-        failed_instances: Dict of instance_idx -> error message for failures.
+        failed_instances: Dict of instance_idx -> error message for instances that
+            came back with no output.
         total_instances: Total number of instances in the task.
         duration_seconds: Duration of the task.
-        max_hard_failure_rate: Fraction of instances allowed to hard-fail before the
-            task is marked failed.
+        max_hard_failure_rate: Fraction of instances allowed to have no output or no
+            scored output before the task is marked failed.
 
     Returns:
         TaskResult with metrics and predictions.
@@ -225,29 +210,36 @@ def compute_task_metrics(
 
     if not scored_responses:
         summary = error_summary or "No responses"
-        gate_error = hard_failure_gate_error(
-            instances_saved=0,
+        budget_error = failure_budget_error(
+            instances_measured=0,
             instances_failed=instances_failed,
+            instances_unscored=0,
             instances_processed=total_instances,
             first_error=_first_instance_error(failed_instances),
-            max_hard_failure_rate=max_hard_failure_rate,
+            max_failure_rate=max_hard_failure_rate,
         )
         return TaskResult(
             spec=spec,
             config=task.config.to_dict(),
             num_instances=0,
             metrics={},
-            error=gate_error or summary,
+            error=budget_error or summary,
             duration_seconds=duration_seconds,
             error_summary=summary,
             instances_processed=total_instances,
             instances_failed=instances_failed,
-            hard_failure_rate_exceeded=gate_error is not None,
+            failure_budget_exceeded=budget_error is not None,
         )
 
-    # Compute metrics from pre-scored responses
-    metrics = task.compute_metrics(scored_responses)
-    infrastructure_failures = _count_infrastructure_scoring_errors(scored_responses)
+    # Instances no scorer could score are left out rather than counted as zeros; the
+    # task's compute_metrics leaves out, per metric, those its own scorer could not.
+    scorers = tuple(task._get_scorers())
+    metrics = task.compute_metrics(measurable_responses(scored_responses, scorers=scorers))
+    # Counted after compute_metrics, which can itself record scoring errors (a task-level
+    # evaluator that failed, for example).
+    failures = count_scoring_failures(scored_responses, scorers)
+    # As for the budget, an instance counts as scored only if every scorer scored it.
+    instances_scored = len(scored_responses) - failures.instances_unscored
 
     # Build predictions
     predictions = build_predictions(scored_responses, metrics=task.config.metrics)
@@ -256,19 +248,24 @@ def compute_task_metrics(
     # Extract metric metadata
     primary_metric = get_metric_metadata(task)
 
-    # Add warning about failed instances if any
     if error_summary:
         logger.warning(
             f"Task {spec} completed with failures: {error_summary}. "
-            f"Computed metrics on {len(scored_responses)}/{total_instances} instances."
+            f"Computed metrics on {instances_scored}/{total_instances} instances."
+        )
+    if failures:
+        logger.warning(
+            f"Task {spec}: {_describe_scoring_failures(failures)} "
+            f"First scoring error: {failures.first_error}"
         )
 
-    gate_error = hard_failure_gate_error(
-        instances_saved=len(scored_responses),
+    budget_error = failure_budget_error(
+        instances_measured=instances_scored,
         instances_failed=instances_failed,
+        instances_unscored=failures.instances_unscored,
         instances_processed=total_instances,
-        first_error=_first_instance_error(failed_instances),
-        max_hard_failure_rate=max_hard_failure_rate,
+        first_error=_first_instance_error(failed_instances) or failures.first_error,
+        max_failure_rate=max_hard_failure_rate,
     )
 
     return TaskResult(
@@ -280,43 +277,63 @@ def compute_task_metrics(
         predictions=predictions,
         requests=requests,
         primary_metric=primary_metric,
-        error=_combine_errors(gate_error, _infrastructure_error(infrastructure_failures)),
+        error=budget_error,
         error_summary=error_summary,
         instances_processed=total_instances,
         instances_failed=instances_failed,
-        hard_failure_rate_exceeded=gate_error is not None,
+        instances_unscored=failures.instances_unscored,
+        failure_budget_exceeded=budget_error is not None,
+        scoring_failures=failures.to_dict() if failures else None,
         generation_counts=count_generations(scored_responses),
     )
 
 
-def hard_failure_gate_error(
+def _describe_scoring_failures(failures: ScoringFailures) -> str:
+    """One sentence on how many instances and outputs could not be scored."""
+    parts = []
+    if failures.instances_unscored:
+        parts.append(
+            f"{failures.instances_unscored} instance(s) could not be scored and are left "
+            "out of the metrics."
+        )
+    if failures.instances_partially_scored:
+        parts.append(
+            f"{failures.instances_partially_scored} instance(s) were scored from only some "
+            "of their outputs."
+        )
+    parts.append(f"{failures.outputs_unscored} output(s) failed scoring in all.")
+    return " ".join(parts)
+
+
+def failure_budget_error(
     *,
-    instances_saved: int,
+    instances_measured: int,
     instances_failed: int,
+    instances_unscored: int,
     instances_processed: int,
     first_error: str | None,
-    max_hard_failure_rate: float,
+    max_failure_rate: float,
 ) -> str | None:
-    """Describe a breach of the hard-failure-rate budget, if there is one.
+    """Describe a breach of the task's failure budget, if there is one.
 
-    A hard failure is an instance that came back with an error and no outputs at all,
-    so it contributes nothing to the metrics. Soft failures (an error alongside a
-    usable output, e.g. MaxTurnsExceeded with a fallback answer) are scored upstream
-    and never reach this function.
+    An instance counts against the budget when it came back with no output
+    (``instances_failed``) or when none of its outputs could be scored
+    (``instances_unscored``). Either way it contributes nothing to the metrics.
 
-    Two separate conditions fail a task. A task that saved no instances at all
-    produced no metrics, and there is no budget at which that is a result worth
-    publishing, so it fails even when the threshold has been opened all the way up
-    to 1.0. Otherwise the hard-failure rate is compared against the budget, and
-    that comparison is strict: a task sitting exactly on the threshold passes.
+    Two separate conditions fail a task. A task with nothing scored produced no
+    metrics, and there is no budget at which that is a result worth publishing, so
+    it fails even when the budget has been opened all the way up to 1.0. Otherwise
+    the failure rate is compared against the budget, and that comparison is strict:
+    a task sitting exactly on the budget passes.
 
     Args:
-        instances_saved: Instances that were scored and saved.
-        instances_failed: Instances that hard-failed.
-        instances_processed: Instances the runner saw (saved plus hard-failed).
-        first_error: First underlying instance error, quoted if present so the
-            message says why the instances failed and not just how many.
-        max_hard_failure_rate: Maximum tolerated fraction of hard failures.
+        instances_measured: Instances whose scores count toward the metrics.
+        instances_failed: Instances that came back with no output.
+        instances_unscored: Saved instances none of whose outputs could be scored.
+        instances_processed: Instances the runner saw.
+        first_error: First underlying error, quoted if present so the message says
+            why the instances failed and not just how many.
+        max_failure_rate: Maximum tolerated fraction of failed and unscored instances.
 
     Returns:
         An error string describing the breach, or None when within budget.
@@ -325,23 +342,25 @@ def hard_failure_gate_error(
         return None
 
     detail = f" First failure: {first_error}" if first_error else ""
+    breakdown = (
+        f"{instances_failed} produced no output and {instances_unscored} could not be scored"
+    )
 
-    if instances_saved <= 0:
+    if instances_measured <= 0:
         return (
-            f"No instances were saved out of {instances_processed}: the task produced "
-            f"no metrics ({instances_failed} hard-failed), which fails at any hard "
-            f"failure rate budget.{detail}"
+            f"No instance was scored out of {instances_processed} ({breakdown}). A task "
+            f"with nothing scored fails at any failure budget.{detail}"
         )
 
-    if instances_failed <= 0:
+    lost = instances_failed + instances_unscored
+    if lost <= 0:
         return None
-    rate = instances_failed / instances_processed
-    if rate <= max_hard_failure_rate:
+    rate = lost / instances_processed
+    if rate <= max_failure_rate:
         return None
     return (
-        f"Hard failure rate {rate:.1%} exceeds the maximum of {max_hard_failure_rate:.1%}: "
-        f"saved {instances_saved} of {instances_processed} instances, "
-        f"{instances_failed} hard-failed.{detail}"
+        f"{lost} of {instances_processed} instances ({rate:.1%}) failed, above the failure "
+        f"budget of {max_failure_rate:.1%}: {breakdown}.{detail}"
     )
 
 
@@ -350,42 +369,10 @@ def _first_instance_error(failed_instances: dict[int, str]) -> str | None:
     return next(iter(failed_instances.values()), None)
 
 
-def _infrastructure_error(infrastructure_failures: int) -> str | None:
-    """Describe output scores lost to sandbox infrastructure, if any."""
-    if not infrastructure_failures:
-        return None
-    return (
-        f"Incomplete: {infrastructure_failures} output score(s) failed due to "
-        "sandbox infrastructure"
-    )
-
-
-def _combine_errors(*errors: str | None) -> str | None:
-    """Join the task-level errors that are set, preserving order."""
-    present = [error for error in errors if error]
-    return " ".join(present) if present else None
-
-
-def _count_infrastructure_scoring_errors(responses: Sequence[Response]) -> int:
-    """Count output scores that failed specifically because of sandbox infrastructure."""
-    count = 0
-    for response in responses:
-        for output in response.outputs:
-            errors = output.metadata.get("scoring_errors")
-            if not isinstance(errors, dict):
-                continue
-            count += sum(
-                1
-                for error in errors.values()
-                if isinstance(error, dict) and error.get("infrastructure") == "true"
-            )
-    return count
-
-
 __all__ = [
     "prepare_task_items",
     "build_requests_from_items",
     "finalize_task",
     "compute_task_metrics",
-    "hard_failure_gate_error",
+    "failure_budget_error",
 ]

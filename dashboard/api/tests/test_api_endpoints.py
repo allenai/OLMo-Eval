@@ -247,6 +247,31 @@ async def test_generation_counts_are_readable_without_instance_rows(
     assert body["items"][0]["instances_stored"] == 0
 
 
+async def test_scoring_failures_are_readable_with_the_task_row(
+    client: httpx.AsyncClient, session: Any
+) -> None:
+    run_id = "unscored01"
+    await seed_run(client, run_id=run_id, tasks={"api_task": []})
+    failures = {
+        "instances_unscored": 1,
+        "instances_partially_scored": 2,
+        "outputs_unscored": 3,
+        "infrastructure": 2,
+        "by_type": {"JudgeParseError": 2, "KeyError": 1},
+        "first_error": "JudgeParseError: no parseable verdict after 3 judge attempts",
+    }
+    await session.execute(
+        text(
+            "UPDATE task_results SET scoring_failures = CAST(:failures AS jsonb) "
+            "WHERE run_id = :run"
+        ),
+        {"failures": json.dumps(failures), "run": run_id},
+    )
+    await session.commit()
+    body = await get(client, f"/api/runs/{run_id}/task-results", "RunTaskResultsResponse")
+    assert body["items"][0]["scoring_failures"] == failures
+
+
 async def test_suite_rows_report_member_generation_counts(
     client: httpx.AsyncClient, session: Any
 ) -> None:

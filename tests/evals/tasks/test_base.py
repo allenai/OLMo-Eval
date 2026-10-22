@@ -491,7 +491,7 @@ class TestProcessScoring:
         assert scored[0].outputs[0].metadata["score:echo_process"] == 1.0
         assert scored[0].outputs[1].metadata["score:echo_process"] == 0.0
 
-    async def test_process_scorer_failure_becomes_zero_with_diagnostics(self):
+    async def test_process_scorer_failure_records_the_error_and_no_score(self):
         metric = PassAtKMetric(k=1, scorer=FailingProcessScorer)
         task = ConcreteTask(TaskConfig(name="test", data_source="test/dataset", metrics=(metric,)))
         manager = ProcessPoolManager({"cpu": ProcessScoringPoolConfig(workers=1)})
@@ -518,7 +518,7 @@ class TestProcessScoring:
         assert "scoring_errors" not in scored[0].outputs[0].metadata
 
         failing_output = scored[0].outputs[1]
-        assert failing_output.metadata["score:failing_process"] == 0.0
+        assert "score:failing_process" not in failing_output.metadata
         assert failing_output.metadata["scoring_errors"] == {
             "failing_process": {
                 "phase": "process",
@@ -914,7 +914,7 @@ class TestExecutionConcurrency:
 class TestAsyncScoringFailures:
     """Tests that async scoring failures are recorded instead of dropping metrics."""
 
-    async def test_async_scorer_failure_becomes_zero_with_diagnostics(self):
+    async def test_async_scorer_failure_records_the_error_and_no_score(self):
         env = MockExecutionEnv(semaphore=asyncio.Semaphore(4))
         scorer = FailingExecutionScorer()
         metric = PassAtKMetric(k=1, scorer=lambda: scorer)
@@ -933,8 +933,8 @@ class TestAsyncScoringFailures:
         assert "scoring_errors" not in scored[0].outputs[0].metadata
 
         failing_output = scored[1].outputs[0]
-        assert scored[1].scores["failing_exec"] == 0.0
-        assert failing_output.metadata["score:failing_exec"] == 0.0
+        assert "failing_exec" not in scored[1].scores
+        assert "score:failing_exec" not in failing_output.metadata
         assert failing_output.metadata["scoring_errors"] == {
             "failing_exec": {
                 "phase": "execution",
@@ -943,7 +943,7 @@ class TestAsyncScoringFailures:
             }
         }
 
-    async def test_partial_async_failures_preserve_passing_outputs(self):
+    async def test_a_partly_failed_response_is_scored_from_its_scored_outputs(self):
         env = MockExecutionEnv(semaphore=asyncio.Semaphore(4))
         scorer = FailingExecutionScorer()
         metric = PassAtKMetric(k=1, scorer=lambda: scorer)
@@ -959,10 +959,12 @@ class TestAsyncScoringFailures:
 
         assert scored[0].scores["failing_exec"] == 1.0
         assert scored[0].outputs[0].metadata["score:failing_exec"] == 1.0
-        assert scored[0].outputs[1].metadata["score:failing_exec"] == 0.0
+        assert "score:failing_exec" not in scored[0].outputs[1].metadata
         assert scored[0].outputs[1].metadata["scoring_errors"]["failing_exec"]["type"] == (
             "RuntimeError"
         )
+        # pass@1 over the one scored sample, not over a failed sample counted as wrong.
+        assert task.compute_metrics(scored) == {"pass_at_1": {"failing_exec": 1.0}}
 
 
 @pytest.mark.anyio
@@ -1058,3 +1060,43 @@ class TestSamplingParamsInTaskHash:
         )
 
         assert config.to_dict()["sampling_params"]["fit_max_tokens_to_context"] is True
+
+
+@dataclass(frozen=True, slots=True)
+class _NamedScorer(ExactMatchScorer):
+    name: str = "first"
+
+
+@dataclass(frozen=True, slots=True)
+class _OtherScorer(ExactMatchScorer):
+    name: str = "second"
+
+
+def test_a_scorer_failure_leaves_the_instance_out_of_that_scorers_metric_only():
+    from olmo_eval.common.scoring_failures import ScoringState, task_scoring_state
+
+    config = TaskConfig(
+        name="test",
+        data_source="test/dataset",
+        metrics=(AccuracyMetric(scorer=_NamedScorer), AccuracyMetric(scorer=_OtherScorer)),
+    )
+    task = ConcreteTask(config)
+    request = LMRequest(request_type=RequestType.COMPLETION, prompt="q")
+    clean = Response(
+        instance=Instance(question="q", gold_answer="a"),
+        request=request,
+        outputs=[LMOutput(text="a")],
+        scores={"first": 0.0, "second": 0.0},
+    )
+    second_failed = Response(
+        instance=Instance(question="q", gold_answer="a"),
+        request=request,
+        outputs=[LMOutput(text="a", metadata={"scoring_errors": {"second": {"type": "KeyError"}}})],
+        scores={"first": 1.0},
+    )
+
+    metrics = task.compute_metrics([clean, second_failed])
+
+    # The first scorer scored both instances; the second only the clean one.
+    assert metrics["accuracy"] == {"first": 0.5, "second": 0.0}
+    assert task_scoring_state(second_failed, ("first", "second")) is ScoringState.UNSCORED
