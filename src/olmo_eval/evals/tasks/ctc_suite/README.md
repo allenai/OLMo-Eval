@@ -139,9 +139,9 @@ cap is documented on its RosterRow.
   task×rung, half of it duplication. Pass `--no-save-requests` on xlong runs unless you need the
   prompts on disk; predictions are unaffected.
 
-### Grading changed after the published grid — for six rows
+### Grading changed after the published grid — for seven rows
 
-The vendored graders are golden-fixture tested against the pre-migration implementation, but four
+The vendored graders are golden-fixture tested against the pre-migration implementation, but five
 fixes have landed *since* the reference grid was produced, and each one raises a correct answer's
 score. **Numbers for these rows are not comparable across the change**, and where an old number
 exists it came from the old grader:
@@ -152,11 +152,12 @@ exists it came from the old grader:
 | `ctc_oolong` | the parser and the stop rule both read the **last** of three templated markers (`Answer:`/`Label:`/`User:`) seen *so far*; previously the parser matched only `answer:` and the stop rule anchored on the earliest marker. The whole-string stop rule now replays the decode loop prefix by prefix, so a corpus line echoed after the answer (every oolong line carries `User:`) can no longer become the graded span | correct answers that were scored 0 now score correctly |
 | `ctc_grouping` | `pairwise_metrics` scored an all-singleton gold partition 0 even for an exact match | 48/500 r2k rows; the perfect-answer ceiling moves 0.904 → 1.0 |
 | `ctc_obliq` | decode budget 64 → 512 tokens | 27/126 r32k rows were truncated; the ceiling moves 0.953 → 1.0 |
+| `ctc_contradiction` r64k–r1m | gold pairs are sorted low-high at load. The published rungs from r64k up store most pairs high-low (r64k: 744 of 1,500 pairs, on 435 of 500 examples), and the vendored scorer raises on an unsorted gold pair instead of scoring it | those examples were left unscored, and the runner recorded 0 for them; they are now scored. The published grid stops at 32k, so the old numbers for these rungs are internal runs, not grid numbers. r2k–r32k have no high-low pairs and are unchanged |
 
 Everything else is unchanged in code — but **parity with the reference grid has not been measured
 for any row.** No per-row comparison of one model's scores through this harness against the
-reference grid's numbers exists yet, for the 16 rows whose graders did not change any more than
-for the six that did. Until that run happens (tracked in
+reference grid's numbers exists yet, for the 15 rows whose graders did not change any more than
+for the seven that did. Until that run happens (tracked in
 [#443](https://github.com/allenai/olmo-eval/issues/443)),
 treat numbers from this harness as internally consistent and comparable to each other, not as
 reproductions of the published grid.

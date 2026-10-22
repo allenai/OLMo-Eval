@@ -16,6 +16,20 @@ Add an entry in the PR that makes the change, newest first. Each entry states:
 - **Comparability**: which earlier results remain comparable and what replaces the old
   behavior, if anything.
 
+## 2026-10-16: `ctc_contradiction` scores its high-low gold pairs (#490)
+
+- **Affected**: `ctc_contradiction` at rungs `r64k`, `r128k`, `r256k`, `r512k` and `r1m`,
+  and the `ctc` suites that include them. Rungs `r2k` to `r32k` are unchanged.
+- **Change**: gold pairs are sorted low-high when the data loads. On the affected rungs,
+  87–91% of examples hold at least one high-low pair, and the vendored scorer raised on
+  them. The runner recorded those examples as 0 on every metric, so a model's score was
+  bounded by the few examples without such a pair. Those examples are now scored.
+- **Identity**: task hashes are unchanged. An earlier result can be told apart by its
+  predictions: the unscored examples carry a `ValueError` under `scoring_errors`, which the
+  dashboard stores as `has_scoring_error` on each instance.
+- **Comparability**: results for the affected rungs from before the change are not
+  measurements and should be discarded. Results for `r2k` to `r32k` remain comparable.
+
 ## 2026-10-02: Chat-style `ANSWER:` lines in multiple-choice extraction (#433)
 
 - **Affected**: generation variants that extract an answer letter with the shared MCQ

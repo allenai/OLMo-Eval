@@ -205,6 +205,40 @@ def test_round_trip(tmp_path, monkeypatch, task_name, example, gold_text, wrong_
     assert scorer.score(instances[0], LMOutput(text="no ids at all")) == 0.0
 
 
+def test_a_high_low_contradiction_gold_pair_is_scored(tmp_path, monkeypatch) -> None:
+    """The published r64k-r1m contradiction rungs store most gold pairs high-low, and the vendored
+    scorer raises on those rather than score them. Pairs are unordered, so either order matches."""
+    row = ROSTER["ctc_contradiction"]
+    _write_ladder(
+        tmp_path, row.subset, RUNG_TOKENS["r64k"], {**PAIR_EXAMPLE, "gold_doc_indices": [[3, 1]]}
+    )
+    monkeypatch.setenv("CTC_SUITE_DATA_ROOT", str(tmp_path))
+    task = get_task("ctc_contradiction:r64k")
+    instance = list(task.instances)[0]
+    scorer = task.config.metrics[0].scorer()
+
+    assert scorer.score(instance, LMOutput(text="[[1, 3]]")) == 1.0
+    assert scorer.score(instance, LMOutput(text="[[1, 2]]")) == 0.0
+
+
+def test_mixed_order_contradiction_gold_gives_partial_credit(tmp_path, monkeypatch) -> None:
+    row = ROSTER["ctc_contradiction"]
+    example = {
+        **PAIR_EXAMPLE,
+        "documents": [{"text": f"claim number {i}"} for i in range(1, 5)],
+        "gold_doc_indices": [[1, 2], [4, 3]],
+    }
+    _write_ladder(tmp_path, row.subset, RUNG_TOKENS["r64k"], example)
+    monkeypatch.setenv("CTC_SUITE_DATA_ROOT", str(tmp_path))
+    task = get_task("ctc_contradiction:r64k")
+    instance = list(task.instances)[0]
+    scorer = task.config.metrics[0].scorer()
+
+    assert scorer.score(instance, LMOutput(text="[[1, 2], [3, 4]]")) == 1.0
+    # One of the two gold pairs, the high-low one, found alone: precision 1, recall 1/2.
+    assert scorer.score(instance, LMOutput(text="[[3, 4]]")) == pytest.approx(2 / 3)
+
+
 def test_gold_index_base_is_the_graders(tmp_path, monkeypatch) -> None:
     """The 0-vs-1-based split is per-family and has produced silent zero-scores before:
     retrieval gold is stored 0-based and shifted by the grader; pair gold is stored 1-based."""
