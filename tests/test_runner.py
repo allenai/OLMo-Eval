@@ -171,6 +171,15 @@ class TestRequiredSandbox:
         assert trackers[self.SPEC].error is None
         assert loaded == [self.SPEC]
 
+    def test_the_check_sees_the_task_overrides(self, loaded):
+        runner = self._runner()
+        runner.task_overrides = {self.SPEC: {"metrics": [AccuracyMetric()]}}
+
+        _, trackers, _ = runner._prepare_tasks()
+
+        assert trackers[self.SPEC].error is None
+        assert loaded == [self.SPEC]
+
     def test_a_task_that_runs_no_code_needs_no_sandbox(self, loaded):
         runner = self._runner("mt_bench", scaffold="multi_turn_chat")
 
