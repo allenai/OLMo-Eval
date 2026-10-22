@@ -11,9 +11,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Dependencies are downloaded fresh in each job rather than restored with actions/cache.
+# The environment includes CUDA torch wheels (about 3.6 GB), which restore more slowly
+# than uv downloads them, and caches that large evict each other from the repository's
+# 10 GB cache allowance. setup-uv keeps its own small cache of wheels built from source.
 env:
   PYTHON_VERSION: "3.12"
-  UV_CACHE_DIR: /tmp/.uv-cache
 
 jobs:
   # ============================================================================
@@ -33,14 +36,6 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
-
-      - name: Restore uv cache
-        uses: actions/cache@v5
-        with:
-          path: ${{ env.UV_CACHE_DIR }}
-          key: uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
-          restore-keys: |
-            uv-${{ runner.os }}-
 
       - name: Run Ruff linter
         run: uv run --frozen --no-group vllm ruff check src/ tests/
@@ -62,14 +57,6 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
-
-      - name: Restore uv cache
-        uses: actions/cache@v5
-        with:
-          path: ${{ env.UV_CACHE_DIR }}
-          key: uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
-          restore-keys: |
-            uv-${{ runner.os }}-
 
       - name: Run type checker
         run: uv run --frozen --no-group vllm --extra clients --extra litellm --extra agents ty check src/
@@ -109,14 +96,6 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
-
-      - name: Restore uv cache
-        uses: actions/cache@v5
-        with:
-          path: ${{ env.UV_CACHE_DIR }}
-          key: uv-${{ runner.os }}-py${{ matrix.python-version }}-${{ hashFiles('uv.lock') }}
-          restore-keys: |
-            uv-${{ runner.os }}-py${{ matrix.python-version }}-
 
       - name: Run unit tests with coverage
         run: |
