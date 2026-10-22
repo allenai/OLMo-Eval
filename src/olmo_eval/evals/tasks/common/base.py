@@ -752,16 +752,13 @@ class Task(ABC):
         sync_scorers: dict[str, Scorer] = {}
         for name, scorer in scorers_by_name.items():
             if isinstance(scorer, ExecutionScorer):
-                # A sandbox bound to an agent session still counts: it frees up later.
-                serves_task = task_executor is not None and getattr(
-                    task_executor, "has_running_executor", True
-                )
-                if not serves_task:
-                    # Sandboxes were configured but none serving this task is running.
+                if task_executor is None or not task_executor.is_running:
+                    # Sandboxes were configured but none serving this task is running:
+                    # they failed, or none was configured with this capability.
                     if context.execution_env is not None:
                         raise SandboxInfrastructureError(
-                            f"No running sandbox serves {scorer.__class__.__name__} "
-                            f"(capability {capability!r})"
+                            f"No running sandbox has capability {capability!r} for "
+                            f"{scorer.__class__.__name__}"
                         )
                     raise SandboxRequiredError(
                         f"{scorer.__class__.__name__} requires a sandbox. "

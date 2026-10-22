@@ -112,15 +112,18 @@ def _record_scoring_failure(response: Response, *, error: dict[str, str]) -> Res
     """Leave a response unscored after its ``score_responses`` raised.
 
     The raise interrupted scoring, so no score the response may have received is
-    trusted: every output gets the error under ``__response__``. A response with no
-    outputs keeps the error on the response itself.
+    trusted: its scores are dropped, and every output gets the error under
+    ``__response__``. A response with no outputs keeps the error on the response itself.
     """
+    response.scores.clear()
     if not response.outputs:
         response.scoring_error = error
         return response
     for output in response.outputs:
         if output.metadata is None:
             output.metadata = {}
+        for key in [key for key in output.metadata if key.startswith("score:")]:
+            del output.metadata[key]
         existing = output.metadata.get("scoring_errors")
         if not isinstance(existing, dict):
             existing = {}

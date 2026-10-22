@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from olmo_eval.common.scoring_failures import (
     MAX_ERROR_DESCRIPTION_CHARS,
     ScoringState,
@@ -210,3 +212,62 @@ def test_a_failure_on_a_response_without_outputs_reaches_the_predictions() -> No
     record = result.predictions[1]
     assert record["scoring_error"] == ERROR
     assert build_instance_row(record, "1", None, 0, 0, None)["has_scoring_error"] is True
+
+
+class _TwoScorerTask(_RecordingTask):
+    def _get_scorers(self) -> dict[str, object]:
+        return {"code_exec": object(), "judge": object()}
+
+
+def test_a_scorer_that_scored_nothing_fails_the_task_at_any_budget() -> None:
+    judge_failed = {"judge": {"type": "JudgeParseError", "infrastructure": "true"}}
+    responses = [
+        _response(
+            LMOutput(
+                text="o", metadata={"score:code_exec": 1.0, "scoring_errors": dict(judge_failed)}
+            )
+        )
+        for _ in range(3)
+    ]
+
+    result = compute_task_metrics(
+        "test",
+        _TwoScorerTask(),  # type: ignore[arg-type]
+        responses,
+        {},
+        3,
+        0.0,
+        max_hard_failure_rate=1.0,
+    )
+
+    assert result.failure_budget_exceeded is True
+    assert result.error is not None and result.error.startswith("No instance was scored")
+
+
+class _ScoringTask(_RecordingTask):
+    """A task the tracker path can score: one output fails, as a raising scorer would."""
+
+    def strip_thinking_traces(self, responses: list[Response]) -> None:
+        pass
+
+    async def score_responses(self, responses: list[Response], context=None) -> list[Response]:
+        return responses
+
+
+@pytest.mark.anyio
+async def test_finalize_task_applies_the_configured_budget() -> None:
+    from olmo_eval.runners.asynq.preparation import finalize_task
+    from olmo_eval.runners.asynq.types import TaskTracker
+
+    def tracker() -> TaskTracker:
+        responses = [_response(_output()), _response(_output(failed=True))]
+        return TaskTracker(
+            model_name="m",
+            spec="test",
+            task=_ScoringTask(),  # type: ignore[arg-type]
+            total_instances=2,
+            responses=dict(enumerate(responses)),
+        )
+
+    assert (await finalize_task(tracker())).failure_budget_exceeded is True
+    assert (await finalize_task(tracker(), max_hard_failure_rate=0.5)).error is None

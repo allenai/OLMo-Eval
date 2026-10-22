@@ -80,11 +80,6 @@ class CapabilityExecutionEnvironment:
     def is_running(self) -> bool:
         return self.manager.has_executor(self.capabilities)
 
-    @property
-    def has_running_executor(self) -> bool:
-        """Whether a running executor serves these capabilities, even if it is bound now."""
-        return self.manager.has_running_executor(self.capabilities)
-
     async def execute(self, command: str, timeout: float | None = None) -> str:
         return await self.manager.execute(
             command,
@@ -404,13 +399,6 @@ class SandboxManager:
             for idx, executor in enumerate(self._executors)
         )
 
-    def has_running_executor(self, required_capabilities: frozenset[str]) -> bool:
-        """Return whether a running executor supports the capabilities, bound or not."""
-        return any(
-            required_capabilities <= executor.config.capabilities and executor.is_running
-            for executor in self._executors
-        )
-
     def for_capabilities(
         self, required_capabilities: frozenset[str]
     ) -> CapabilityExecutionEnvironment:
@@ -641,10 +629,13 @@ class SandboxManager:
                 # infrastructure, whether or not this call saw the failure itself.
                 if not failover_on_quarantine:
                     raise
+                if last_infrastructure_error is None:
+                    raise SandboxInfrastructureError(
+                        f"No running sandbox has capabilities {sorted(required_capabilities)}"
+                    ) from None
                 raise SandboxInfrastructureError(
                     f"No healthy sandbox remained for {sorted(required_capabilities)} "
-                    "after infrastructure failures: "
-                    f"{last_infrastructure_error or 'no compatible sandbox was available'}"
+                    f"after infrastructure failures: {last_infrastructure_error}"
                 ) from last_infrastructure_error
 
     async def acquire_binding(

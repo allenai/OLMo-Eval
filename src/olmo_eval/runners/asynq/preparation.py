@@ -238,7 +238,8 @@ def compute_task_metrics(
     # Counted after compute_metrics, which can itself record scoring errors (a task-level
     # evaluator that failed, for example).
     failures = count_scoring_failures(scored_responses, scorers)
-    measured = measurable_responses(scored_responses, scorers=scorers)
+    # As for the budget, an instance counts as scored only if every scorer scored it.
+    instances_scored = len(scored_responses) - failures.instances_unscored
 
     # Build predictions
     predictions = build_predictions(scored_responses, metrics=task.config.metrics)
@@ -250,7 +251,7 @@ def compute_task_metrics(
     if error_summary:
         logger.warning(
             f"Task {spec} completed with failures: {error_summary}. "
-            f"Computed metrics on {len(measured)}/{total_instances} instances."
+            f"Computed metrics on {instances_scored}/{total_instances} instances."
         )
     if failures:
         logger.warning(
@@ -259,7 +260,7 @@ def compute_task_metrics(
         )
 
     budget_error = failure_budget_error(
-        instances_measured=len(measured),
+        instances_measured=instances_scored,
         instances_failed=instances_failed,
         instances_unscored=failures.instances_unscored,
         instances_processed=total_instances,

@@ -199,12 +199,16 @@ def test_a_response_failure_leaves_every_output_unscored() -> None:
     response = _response({"type": "ScoringIncompleteError", "infrastructure": "true"})
     response.outputs.append(LMOutput(text="ungraded"))
     response.outputs.append(LMOutput(text="graded", metadata={"score:code_exec": 1.0}))
+    response.scores["code_exec"] = 1.0
 
     _record_scoring_failure(response, error={"type": "KeyError", "message": "'answer'"})
 
-    # The raise interrupted scoring, so even the output that had a score is not trusted.
+    # The raise interrupted scoring, so even the output that had a score is not trusted,
+    # and no score of it reaches the predictions.
     for output in response.outputs:
         assert output.metadata["scoring_errors"]["__response__"]["type"] == "KeyError"
+        assert not any(key.startswith("score:") for key in output.metadata)
+    assert response.scores == {}
     assert scoring_state(response) is ScoringState.UNSCORED
 
 
