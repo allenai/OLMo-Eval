@@ -293,3 +293,91 @@ async def test_background_process_survives_successful_command(sandbox):
     alive = await sandbox.execute_command("kill -0 $(cat /tmp/background.pid)")
     assert alive.success
     await sandbox.execute_command("kill $(cat /tmp/background.pid)")
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("interrupt", ["timeout", "cancel"])
+async def test_interruption_kills_double_forked_new_session(sandbox, interrupt):
+    code = (
+        "import os, signal, time\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        "if os.fork() == 0:\n"
+        "    os.setsid()\n"
+        "    if os.fork(): os._exit(0)\n"
+        "    open('/tmp/escaped-child.pid', 'w').write(str(os.getpid()))\n"
+        "time.sleep(60)\n"
+    )
+    running = asyncio.create_task(
+        sandbox.execute_with_files(
+            "python3 /tmp/escaped-probe.py",
+            {"/tmp/escaped-probe.py": code},
+            timeout=0.5 if interrupt == "timeout" else 90,
+        )
+    )
+    try:
+        for _ in range(40):
+            if (await sandbox.execute_command("test -s /tmp/escaped-child.pid", timeout=5)).success:
+                break
+            await asyncio.sleep(0.05)
+        else:
+            pytest.fail("The escaped child did not start")
+        if interrupt == "cancel":
+            running.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await running
+        else:
+            result = await asyncio.wait_for(running, timeout=15)
+            assert not result.success and result.error == "timeout"
+        probe = await sandbox.execute_command(
+            "pid=$(cat /tmp/escaped-child.pid); "
+            "[ ! -e /proc/$pid/stat ] || [ $(awk '{print $3}' /proc/$pid/stat) = Z ]",
+            timeout=5,
+        )
+        assert probe.success
+        assert (await sandbox.execute_command("echo usable", timeout=5)).output == "usable\n"
+    finally:
+        if not running.done():
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+
+@pytest.mark.anyio
+async def test_timeout_cleanup_preserves_concurrent_command_and_background(sandbox):
+    other = asyncio.create_task(
+        sandbox.execute_command(
+            "sleep 30 >/dev/null 2>&1 & echo $! >/tmp/other-background.pid; sleep 3; echo finished",
+            timeout=10,
+        )
+    )
+    try:
+        for _ in range(40):
+            if (
+                await sandbox.execute_command("test -s /tmp/other-background.pid", timeout=5)
+            ).success:
+                break
+            await asyncio.sleep(0.05)
+        else:
+            pytest.fail("The concurrent command did not start")
+        code = (
+            "import os,time\n"
+            "if os.fork() == 0:\n"
+            "    os.setsid()\n"
+            "    if os.fork(): os._exit(0)\n"
+            "time.sleep(60)\n"
+        )
+        result = await sandbox.execute_with_files(
+            "python3 /tmp/concurrent-timeout.py",
+            {"/tmp/concurrent-timeout.py": code},
+            timeout=0.2,
+        )
+        assert result.error == "timeout"
+        assert not other.done()
+        completed = await other
+        assert completed.success and completed.output == "finished\n"
+        alive = await sandbox.execute_command("kill -0 $(cat /tmp/other-background.pid)", timeout=5)
+        assert alive.success
+        await sandbox.execute_command("kill $(cat /tmp/other-background.pid)", timeout=5)
+    finally:
+        if not other.done():
+            other.cancel()
+            await asyncio.gather(other, return_exceptions=True)
