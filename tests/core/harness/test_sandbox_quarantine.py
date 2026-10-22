@@ -21,6 +21,9 @@ class _Runtime:
         self.transport_error = transport_error
         self.calls = 0
 
+    async def write_file(self, request: object) -> object:
+        return await self.execute(request)
+
     async def execute(self, command: object) -> object:
         self.calls += 1
         if self.calls <= self.failures:
@@ -83,9 +86,8 @@ async def test_single_transport_failure_recovers_without_quarantine(
         transport_error=transport_error,
     )
 
-    result = await executor.execute_command("true")
+    await executor.write_files({"/tmp/value": "value"})
 
-    assert result.success is True
     assert executor._runtime.calls == 2
     assert executor._deployment.calls == 0
     assert executor.is_running is True
@@ -96,7 +98,7 @@ async def test_healthy_probe_prevents_quarantine_after_retries() -> None:
     executor = _executor(runtime_failures=4, health=[True])
 
     with pytest.raises(SandboxTransportError):
-        await executor.execute_command("true")
+        await executor.write_files({"/tmp/value": "value"})
 
     assert executor._runtime.calls == 4
     assert executor._deployment.calls == 1
@@ -116,7 +118,7 @@ async def test_repeated_transport_and_health_failures_quarantine(
     executor = _executor(runtime_failures=4, health=[False, False, False, False])
 
     with pytest.raises(SandboxTransportError):
-        await executor.execute_command("true")
+        await executor.write_files({"/tmp/value": "value"})
 
     assert executor._runtime.calls == 4
     assert executor._deployment.calls == 4
@@ -145,9 +147,8 @@ async def test_transport_retry_uses_backoff_with_jitter(
     )
     executor = _executor(runtime_failures=1, health=[True])
 
-    result = await executor.execute_command("true")
+    await executor.write_files({"/tmp/value": "value"})
 
-    assert result.success is True
     assert executor._runtime.calls == 2
     assert delays == [0.375]
     assert jitter_ranges == [(0.0, 0.25)]
@@ -205,3 +206,28 @@ def test_modal_deployment_receives_configured_lifetime(
 
     assert captured["runtime_timeout"] == 120.0
     assert captured["deployment_timeout"] == 14_400.0
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("transport_error", [TimeoutError, ConnectionResetError])
+async def test_command_with_lost_response_is_not_replayed(transport_error) -> None:
+    executor = _executor(runtime_failures=1, health=[True], transport_error=transport_error)
+    with pytest.raises(SandboxTransportError):
+        await executor.execute_command("expensive-command")
+    assert executor._runtime.calls == 1
+    assert executor.is_running
+
+
+@pytest.mark.anyio
+async def test_command_can_retry_a_connection_that_was_never_established() -> None:
+    from types import SimpleNamespace
+
+    class ConnectorError(aiohttp.ClientConnectorError):
+        def __init__(self, message):
+            key = SimpleNamespace(host="sandbox", port=80, ssl=False)
+            super().__init__(key, OSError(111, message))
+
+    executor = _executor(runtime_failures=1, health=[True], transport_error=ConnectorError)
+    assert (await executor.execute_command("true")).success
+    assert executor._runtime.calls == 2
+    assert executor._deployment.calls == 0

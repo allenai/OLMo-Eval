@@ -2,7 +2,10 @@ import asyncio
 import sys
 import types
 import unittest
+from dataclasses import replace
 from unittest import mock
+
+import pytest
 
 from olmo_eval.harness.sandbox.config import SandboxConfig, SandboxMode
 from olmo_eval.harness.sandbox.executor import SandboxExecutor
@@ -13,19 +16,26 @@ class _FakeProcess:
         self.block = block
         self.returncode: int | None = None
         self.killed = False
-
-    async def communicate(self) -> tuple[bytes, bytes]:
-        if self.block:
-            await asyncio.Event().wait()
-        self.returncode = 0
-        return b"control output\n", b""
+        self.stdout = asyncio.StreamReader()
+        self.stderr = asyncio.StreamReader()
+        self.stopped = asyncio.Event()
+        self.stdout.feed_data(b"control output\n")
+        if not block:
+            self.stdout.feed_eof()
+            self.stderr.feed_eof()
 
     def kill(self) -> None:
         self.killed = True
         self.returncode = -9
+        self.stdout.feed_eof()
+        self.stderr.feed_eof()
+        self.stopped.set()
 
     async def wait(self) -> int:
-        return self.returncode or 0
+        if self.block:
+            await self.stopped.wait()
+        self.returncode = -9 if self.killed else 0
+        return self.returncode
 
 
 class TestStreamingControlCommand(unittest.IsolatedAsyncioTestCase):
@@ -51,6 +61,7 @@ class TestStreamingControlCommand(unittest.IsolatedAsyncioTestCase):
             "bash",
             "-c",
             "echo ok",
+            stdin=None,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -113,6 +124,266 @@ class TestStreamingControlCommand(unittest.IsolatedAsyncioTestCase):
         # The initial live poll exits 1 while the command is still running. It is
         # followed by three failed polls, then best-effort kill and cleanup commands.
         self.assertEqual(control.await_count, 6)
+
+    async def test_cancelled_control_command_kills_client(self) -> None:
+        process = _FakeProcess(block=True)
+        executor = self._executor()
+        with mock.patch("asyncio.create_subprocess_exec", return_value=process):
+            task = asyncio.create_task(executor._execute_stream_control("blocked", timeout=60))
+            await asyncio.sleep(0)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        self.assertTrue(process.killed)
+
+    async def test_local_deadline_kills_the_process_group(self) -> None:
+        executor = self._executor()
+        response = mock.Mock(stdout="", stderr="", exit_code=0)
+        control = mock.AsyncMock(side_effect=[TimeoutError(), response])
+        from olmo_eval.harness.sandbox.errors import SandboxTransportError
+
+        with (
+            mock.patch.object(executor, "_execute_stream_control", new=control),
+            mock.patch.object(
+                executor, "_quarantine_if_unresponsive", new=mock.AsyncMock()
+            ) as health,
+            self.assertRaises(SandboxTransportError),
+        ):
+            await executor.execute_command("blocked", timeout=0.01)
+        health.assert_awaited_once()
+        commands = [call.args[0] for call in control.await_args_list]
+        self.assertEqual(commands[0][:3], ["setsid", "--wait", "python3"])
+        self.assertIn("--kill-after=5s", commands[0][5])
+        self.assertIn("kill -USR1", commands[1][2])
+        executor._runtime.execute.assert_not_called()
+
+    async def test_local_cancellation_kills_the_process_group(self) -> None:
+        executor = self._executor()
+        started = asyncio.Event()
+        cleanup = []
+
+        async def control(command, timeout, *, input_data=None):
+            if isinstance(command, list) and command[0] == "setsid":
+                started.set()
+                await asyncio.Event().wait()
+            cleanup.append(command)
+            return mock.Mock(stdout="", stderr="", exit_code=0)
+
+        with mock.patch.object(executor, "_execute_stream_control", new=control):
+            task = asyncio.create_task(executor.execute_command("blocked", timeout=60))
+            await started.wait()
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        self.assertEqual(len(cleanup), 1)
+        self.assertIn("kill -USR1", cleanup[0][2])
+
+    async def test_local_health_probe_bypasses_blocked_http_server(self) -> None:
+        executor = self._executor()
+        executor._deployment.is_alive = mock.AsyncMock(return_value=True)
+        control = mock.AsyncMock(return_value=mock.Mock(exit_code=0))
+        with mock.patch.object(executor, "_execute_stream_control", new=control):
+            await executor._quarantine_if_unresponsive(TimeoutError())
+        self.assertTrue(executor.is_running)
+        executor._deployment.is_alive.assert_awaited_once_with(timeout=5.0)
+        control.assert_awaited_once_with("true", timeout=5.0)
+
+    async def test_dead_container_is_an_infrastructure_failure(self) -> None:
+        from olmo_eval.harness.sandbox.errors import SandboxTransportError
+
+        executor = self._executor()
+        control = mock.AsyncMock(
+            return_value=mock.Mock(stdout="", stderr="container stopped", exit_code=125)
+        )
+        with (
+            mock.patch.object(executor, "_execute_stream_control", new=control),
+            mock.patch("olmo_eval.harness.sandbox.executor._HEALTH_CHECK_RETRIES", 0),
+            self.assertRaises(SandboxTransportError),
+        ):
+            await executor.execute_command("true")
+        self.assertFalse(executor.is_running)
+
+    async def test_live_container_with_dead_server_is_quarantined(self) -> None:
+        executor = self._executor()
+        executor._deployment.is_alive = mock.AsyncMock(return_value=False)
+        control = mock.AsyncMock(return_value=mock.Mock(exit_code=0))
+        with (
+            mock.patch.object(executor, "_execute_stream_control", new=control),
+            mock.patch("olmo_eval.harness.sandbox.executor._HEALTH_CHECK_RETRIES", 0),
+        ):
+            await executor._quarantine_if_unresponsive(TimeoutError())
+        self.assertFalse(executor.is_running)
+
+    async def test_failed_cleanup_retires_a_responsive_sandbox(self) -> None:
+        executor = self._executor()
+        executor._deployment.is_alive = mock.AsyncMock(return_value=True)
+        from olmo_eval.harness.sandbox.errors import SandboxTransportError
+
+        control = mock.AsyncMock(
+            side_effect=[
+                TimeoutError(),
+                mock.Mock(exit_code=0),
+                TimeoutError(),
+                mock.Mock(exit_code=0),
+            ]
+        )
+        with (
+            mock.patch.object(executor, "_execute_stream_control", new=control),
+            self.assertRaises(SandboxTransportError),
+        ):
+            await executor.execute_command("blocked", timeout=0.01)
+        self.assertFalse(executor.is_running)
+        self.assertEqual(executor._deployment.is_alive.await_count, 1)
+
+    async def test_slow_record_removal_preserves_a_completed_result(self) -> None:
+        executor = self._executor()
+        executor._deployment.is_alive = mock.AsyncMock(return_value=True)
+        control = mock.AsyncMock(
+            side_effect=[
+                mock.Mock(
+                    stdout='__OLMO_STARTED_test__\ncompleted\n__OLMO_FINISHED_test__:{"exit_code":0,"timed_out":false}\n',
+                    stderr="",
+                    exit_code=0,
+                ),
+                TimeoutError(),
+                mock.Mock(exit_code=0),
+            ]
+        )
+        with (
+            mock.patch(
+                "olmo_eval.harness.sandbox.executor.uuid.uuid4", return_value=mock.Mock(hex="test")
+            ),
+            mock.patch.object(executor, "_execute_stream_control", control),
+        ):
+            result = await executor.execute_command("true", timeout=60)
+        self.assertTrue(result.success)
+        self.assertEqual(result.output, "completed")
+        self.assertTrue(executor.is_running)
+
+    async def test_repeated_cancellation_waits_for_cleanup(self) -> None:
+        for failed in (False, True):
+            executor = self._executor()
+            running = asyncio.Event()
+            cleaning = asyncio.Event()
+            release = asyncio.Event()
+
+            async def control(
+                command,
+                timeout,
+                running=running,
+                cleaning=cleaning,
+                release=release,
+                failed=failed,
+                input_data=None,
+            ):
+                if command[0] == "setsid":
+                    running.set()
+                    await asyncio.Event().wait()
+                cleaning.set()
+                await release.wait()
+                return mock.Mock(exit_code=75 if failed else 0, stderr="survivor")
+
+            with mock.patch.object(executor, "_execute_stream_control", control):
+                task = asyncio.create_task(executor.execute_command("blocked", timeout=60))
+                await running.wait()
+                task.cancel()
+                await cleaning.wait()
+                task.cancel()
+                await asyncio.sleep(0)
+                release.set()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+            self.assertEqual(executor.is_running, not failed)
+
+    async def test_local_execute_code_uses_the_bounded_command_path(self) -> None:
+        from olmo_eval.common.execution import ExecutionResult
+
+        executor = self._executor()
+        expected = ExecutionResult(True, "1")
+        execute = mock.AsyncMock(return_value=expected)
+        with mock.patch.object(executor, "_execute_local_command", new=execute):
+            result = await executor.execute_code("print(1)", timeout=2)
+        self.assertIs(result, expected)
+        execute.assert_awaited_once_with(["python3", "-c", "print(1)"], 2)
+        executor._runtime.execute.assert_not_called()
+
+    async def test_custom_exec_shell_preserves_the_initialized_http_environment(self) -> None:
+        from olmo_eval.common.execution import ExecutionResult
+
+        executor = self._executor()
+        executor.config = replace(executor.config, exec_shell=("bash", "-l", "-c"))
+        deployment = executor._deployment
+        deployment.start = mock.AsyncMock()
+        expected = ExecutionResult(True, "activated")
+        remote = mock.AsyncMock(return_value=expected)
+        with (
+            mock.patch.object(executor, "get_deployment", return_value=deployment),
+            mock.patch.object(executor, "_execute_stream_control") as control,
+            mock.patch.object(executor, "_execute_local_command") as local,
+            mock.patch.object(executor, "_execute_remote_command", new=remote),
+        ):
+            await executor.start()
+            self.assertIs(await executor.execute_command("tool", timeout=2), expected)
+            self.assertIs(await executor.execute_code("print(1)", timeout=2), expected)
+        self.assertFalse(executor._local_command_supported)
+        control.assert_not_called()
+        local.assert_not_called()
+        self.assertEqual(
+            remote.await_args_list,
+            [mock.call(["bash", "-c", "tool"], 2), mock.call(["python3", "-c", "print(1)"], 2)],
+        )
+
+    async def test_failed_capability_probe_does_not_silently_enable_http(self) -> None:
+        executor = self._executor()
+        deployment = executor._deployment
+        deployment.start = mock.AsyncMock()
+        stopped = mock.AsyncMock()
+        with (
+            mock.patch.object(executor, "get_deployment", return_value=deployment),
+            mock.patch.object(executor, "stop", new=stopped),
+            mock.patch.object(executor, "_execute_stream_control", side_effect=TimeoutError()),
+            self.assertRaises(TimeoutError),
+        ):
+            await executor.start()
+        self.assertIsNone(executor._local_command_supported)
+        stopped.assert_awaited_once()
+
+    async def test_runtime_probe_failure_does_not_enable_http(self) -> None:
+        from olmo_eval.harness.sandbox.errors import SandboxTransportError
+
+        executor = self._executor()
+        deployment = executor._deployment
+        deployment.start = mock.AsyncMock()
+        stopped = mock.AsyncMock()
+        with (
+            mock.patch.object(executor, "get_deployment", return_value=deployment),
+            mock.patch.object(executor, "stop", new=stopped),
+            mock.patch.object(
+                executor,
+                "_execute_stream_control",
+                return_value=mock.Mock(exit_code=125, stderr="OCI failed"),
+            ),
+            self.assertRaises(SandboxTransportError),
+        ):
+            await executor.start()
+        self.assertIsNone(executor._local_command_supported)
+        stopped.assert_awaited_once()
+
+    async def test_unsupported_tools_keep_the_healthy_http_route(self) -> None:
+        executor = self._executor()
+        deployment = executor._deployment
+        deployment.start = mock.AsyncMock()
+        deployment.is_alive = mock.AsyncMock(return_value=True)
+        with (
+            mock.patch.object(executor, "get_deployment", return_value=deployment),
+            mock.patch.object(
+                executor, "_execute_stream_control", return_value=mock.Mock(exit_code=1)
+            ),
+            self.assertLogs("olmo_eval.harness.sandbox.executor", level="WARNING"),
+        ):
+            await executor.start()
+        self.assertFalse(executor._local_command_supported)
+        deployment.is_alive.assert_awaited_once()
 
     async def test_modal_control_uses_swerex(self) -> None:
         executor = SandboxExecutor(SandboxConfig(image="test", mode=SandboxMode.MODAL))
@@ -215,3 +486,261 @@ class TestSessionTimeout(unittest.IsolatedAsyncioTestCase):
         await executor.interrupt_session()
 
         executor._runtime.run_in_session.assert_not_awaited()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("cancel_before_record", [False, True])
+@pytest.mark.parametrize("cleanup_mode", ["immediate", "delayed", "stubborn"])
+async def test_session_cleanup_waits_for_supervisor_confirmation(
+    monkeypatch, tmp_path, cancel_before_record, cleanup_mode
+):
+    import shlex
+    import subprocess
+    import threading
+    from types import SimpleNamespace
+
+    stubborn = cleanup_mode == "stubborn"
+    proc = tmp_path / "proc"
+    proc.mkdir()
+    record = tmp_path / "record"
+    kills = tmp_path / "kills"
+
+    def stat(pid, group, session, stamp):
+        fields = ["0"] * 20
+        fields[0], fields[2], fields[3], fields[19] = "S", str(group), str(session), str(stamp)
+        return f"{pid} (process (name)) " + " ".join(fields) + "\n"
+
+    if not cancel_before_record:
+        record.write_text(stat(100, 100, 100, 7))
+    for pid, group, session in [(100, 100, 100)]:
+        path = proc / str(pid)
+        path.mkdir()
+        (path / "stat").write_text(stat(pid, group, session, 7))
+
+    monkeypatch.setattr(
+        "olmo_eval.harness.sandbox.executor.uuid.uuid4", lambda: SimpleNamespace(hex="test")
+    )
+    executor = SandboxExecutor(SandboxConfig(image="test", mode=SandboxMode.DOCKER))
+    executor._deployment = SimpleNamespace(container_name="test")
+    executor._runtime = SimpleNamespace()
+
+    async def control(command, timeout, *, input_data=None):
+        if command[0] == "setsid":
+            if cancel_before_record:
+                raise asyncio.CancelledError
+            return SimpleNamespace(
+                stdout='__OLMO_STARTED_test__\n\n__OLMO_FINISHED_test__:{"exit_code":124,"timed_out":true}\n',
+                stderr="",
+                exit_code=124,
+            )
+        script = command[2].replace("/proc", shlex.quote(str(proc)))
+        # Intercept signals so the real cleanup script operates only on the fixture's process table.
+        remove = "" if stubborn else "touch " + shlex.quote(str(record) + ".clean") + "; "
+        if cleanup_mode == "delayed":
+            remove = "(sleep 0.3; " + remove + ") >/dev/null 2>&1 & "
+        script = (
+            'kill() { printf "%s\\n" "$3" >> '
+            + shlex.quote(str(kills))
+            + "; "
+            + remove
+            + "};\n"
+            + script
+        )
+        delayed_record = None
+        if cancel_before_record:
+            delayed_record = threading.Timer(0.1, record.write_text, args=(stat(100, 100, 100, 7),))
+            delayed_record.start()
+        result = subprocess.run(
+            ["bash", "-c", script, "_", str(record)], capture_output=True, text=True, check=False
+        )
+        if delayed_record is not None:
+            delayed_record.join()
+        return SimpleNamespace(
+            stdout=result.stdout, stderr=result.stderr, exit_code=result.returncode
+        )
+
+    monkeypatch.setattr(executor, "_execute_stream_control", control)
+    if cancel_before_record:
+        with pytest.raises(asyncio.CancelledError):
+            await executor.execute_command("true")
+    elif stubborn:
+        from olmo_eval.harness.sandbox.errors import SandboxTransportError
+
+        with pytest.raises(SandboxTransportError, match="cleanup not confirmed"):
+            await executor.execute_command("true", timeout=0)
+    else:
+        result = await executor.execute_command("true", timeout=0)
+        assert result.error == "timeout"
+    assert {int(pid) for pid in kills.read_text().splitlines()} == {100}
+    assert record.exists() is stubborn
+    assert executor.is_running is (not stubborn)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "exit_code,timed_out",
+    [(124, False), (137, False), (124, True), (137, True), (9, True), (0, False)],
+)
+async def test_command_timeout_label_uses_supervisor_result(monkeypatch, exit_code, timed_out):
+    import json
+    from types import SimpleNamespace
+
+    executor = SandboxExecutor(SandboxConfig(image="test", mode=SandboxMode.DOCKER))
+    executor._deployment = SimpleNamespace(container_name="test")
+    executor._runtime = SimpleNamespace()
+    monkeypatch.setattr(
+        "olmo_eval.harness.sandbox.executor.uuid.uuid4", lambda: SimpleNamespace(hex="test")
+    )
+    commands = []
+
+    async def control(command, timeout, *, input_data=None):
+        commands.append(command)
+        report = json.dumps({"exit_code": exit_code, "timed_out": timed_out})
+        return SimpleNamespace(
+            stdout="__OLMO_STARTED_test__\noutput\n__OLMO_FINISHED_test__:" + report + "\n",
+            stderr="",
+            exit_code=exit_code if command[0] == "setsid" else 0,
+        )
+
+    monkeypatch.setattr(executor, "_execute_stream_control", control)
+    result = await executor.execute_command("true", timeout=3)
+    assert result.error == ("timeout" if timed_out else None)
+    assert result.output == "output"
+    assert (commands[1][0] == "bash") == timed_out
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("completion", ["", "invalid", '{"exit_code":0,"timed_out":false}'])
+async def test_missing_or_failed_supervisor_completion_quarantines(monkeypatch, completion):
+    from types import SimpleNamespace
+
+    from olmo_eval.harness.sandbox.errors import SandboxTransportError
+
+    executor = SandboxExecutor(SandboxConfig(image="test", mode=SandboxMode.DOCKER))
+    executor._deployment = SimpleNamespace(container_name="test")
+    executor._runtime = SimpleNamespace()
+    monkeypatch.setattr(
+        "olmo_eval.harness.sandbox.executor.uuid.uuid4", lambda: SimpleNamespace(hex="test")
+    )
+
+    async def control(command, timeout, *, input_data=None):
+        if command[0] == "setsid":
+            output = "__OLMO_STARTED_test__\n"
+            if completion:
+                output += "\n__OLMO_FINISHED_test__:" + completion + "\n"
+            return SimpleNamespace(stdout=output, stderr="cleanup failed", exit_code=1)
+        return SimpleNamespace(stdout="", stderr="", exit_code=0)
+
+    monkeypatch.setattr(executor, "_execute_stream_control", control)
+    with pytest.raises(SandboxTransportError, match="confirm completion"):
+        await executor.execute_command("true", timeout=3)
+    assert not executor.is_running
+
+
+@pytest.mark.anyio
+async def test_local_capture_bounds_both_streams_and_keeps_the_verdict(monkeypatch):
+    from types import SimpleNamespace
+
+    original_create = asyncio.create_subprocess_exec
+    code = (
+        "import sys; "
+        "sys.stdout.write('START' + 'x' * (10*1024*1024) + 'VERDICT'); "
+        "sys.stderr.write('ERROR' + 'y' * (10*1024*1024) + 'END')"
+    )
+
+    async def create(*args, **kwargs):
+        return await original_create(sys.executable, "-c", code, **kwargs)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create)
+    executor = SandboxExecutor(SandboxConfig(image="test", mode=SandboxMode.DOCKER))
+    executor._deployment = SimpleNamespace(container_name="test")
+    result = await executor._execute_stream_control("synthetic-output-fixture", timeout=10)
+    assert result.exit_code == 0
+    for output, prefix, suffix in (
+        (result.stdout, "START", "VERDICT"),
+        (result.stderr, "ERROR", "END"),
+    ):
+        assert output.startswith(prefix) and output.endswith(suffix)
+        assert len(output) <= 5 * 1024 * 1024 + 128
+        assert "[Output truncated]" in output
+
+
+@pytest.mark.anyio
+async def test_background_output_after_completion_is_preserved(monkeypatch):
+    from types import SimpleNamespace
+
+    executor = SandboxExecutor(SandboxConfig(image="test", mode=SandboxMode.DOCKER))
+    executor._deployment = SimpleNamespace(container_name="test")
+    executor._runtime = SimpleNamespace()
+    monkeypatch.setattr(
+        "olmo_eval.harness.sandbox.executor.uuid.uuid4", lambda: SimpleNamespace(hex="test")
+    )
+
+    async def control(command, timeout, *, input_data=None):
+        return SimpleNamespace(
+            stdout='__OLMO_STARTED_test__\nforeground\n__OLMO_FINISHED_test__:{"exit_code":0,"timed_out":false}\nbackground\n',
+            stderr="",
+            exit_code=0,
+        )
+
+    monkeypatch.setattr(executor, "_execute_stream_control", control)
+    result = await executor.execute_command("trusted-probe", timeout=3)
+    assert result.success and result.output == "foregroundbackground\n"
+    assert executor.is_running
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("blocked", [False, True])
+async def test_control_stdin_streams_large_payload_and_respects_deadline(monkeypatch, blocked):
+    from types import SimpleNamespace
+
+    original_create = asyncio.create_subprocess_exec
+    processes = []
+
+    async def create(*args, **kwargs):
+        assert args[:3] == ("podman", "exec", "-i")
+        assert max(map(len, args)) < 4096
+        code = (
+            "import time; time.sleep(60)"
+            if blocked
+            else "import sys; print(len(sys.stdin.buffer.read()))"
+        )
+        process = await original_create(sys.executable, "-c", code, **kwargs)
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create)
+    executor = SandboxExecutor(SandboxConfig(image="test", mode=SandboxMode.DOCKER))
+    executor._deployment = SimpleNamespace(container_name="test")
+    payload = b"x" * (4 * 1024 * 1024)
+    if blocked:
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(
+                executor._execute_stream_control("probe", timeout=0.1, input_data=payload),
+                timeout=5,
+            )
+        assert processes[0].returncode == -9
+    else:
+        result = await executor._execute_stream_control("probe", timeout=5, input_data=payload)
+        assert result.exit_code == 0 and int(result.stdout.strip()) == len(payload)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("source", ["\ud800", "\udcff", "\0"])
+@pytest.mark.parametrize("method", ["execute_code", "execute_command"])
+async def test_invalid_source_does_not_quarantine_or_start_a_command(monkeypatch, source, method):
+    from types import SimpleNamespace
+
+    executor = SandboxExecutor(SandboxConfig(image="test", mode=SandboxMode.DOCKER))
+    executor._deployment = SimpleNamespace(container_name="test")
+    executor._runtime = SimpleNamespace()
+    control = mock.AsyncMock()
+    monkeypatch.setattr(executor, "_execute_stream_control", control)
+    if method == "execute_code":
+        result = await executor.execute_code(source, timeout=3)
+        assert not result.success and result.error
+    else:
+        with pytest.raises(ValueError):
+            await executor.execute_command(source, timeout=3)
+    assert executor.is_running
+    control.assert_not_called()

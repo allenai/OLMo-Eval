@@ -414,7 +414,7 @@ class TestLiveCodeBenchScorer:
         await scorer.ascore(_instance(), output, env)
 
         command = env.commands[0]
-        assert "timeout 120 python3 grade.py" in command
+        assert "timeout --kill-after=5s 120 python3 grade.py" in command
         # Directories left by runs the sandbox had to kill are swept, but
         # only ones too old to belong to a run still in flight.
         assert command.index("find /tmp") < command.index("python3 grade.py")

@@ -304,7 +304,7 @@ class LiveCodeBenchScorer(ExecutionScorer):
         return (
             f"find /tmp -maxdepth 1 -name 'lcb-*' -mmin +{stale_minutes} "
             "-exec rm -rf {} + 2>/dev/null; "
-            f"cd {quoted} && timeout {ceiling} python3 grade.py; "
+            f"cd {quoted} && timeout --kill-after=5s {ceiling} python3 grade.py; "
             f"status=$?; rm -rf {quoted}; exit $status"
         )
 
