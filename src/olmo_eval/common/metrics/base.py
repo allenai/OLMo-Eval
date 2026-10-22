@@ -389,6 +389,25 @@ class MeanPerplexityMetric(Metric):
         return False
 
 
+def _sample_scores(response: Response, scorer_name: str) -> list[float]:
+    """Each scored sample's value for ``scorer_name``.
+
+    Samples whose scoring failed have no value and are left out. A single-sample
+    response without per-output values falls back to its response-level score.
+    """
+    score_key = f"score:{scorer_name}"
+    scores = [
+        float(value)
+        for output in response.outputs
+        if isinstance(value := (output.metadata or {}).get(score_key), (int, float))
+    ]
+    if not scores and len(response.outputs) <= 1:
+        value = response.scores.get(scorer_name)
+        if isinstance(value, (int, float)):
+            scores.append(float(value))
+    return scores
+
+
 @dataclass(frozen=True, slots=True)
 class PassAtKMetric(Metric):
     """Compute pass@k metric across multiple samples per task.
@@ -410,7 +429,6 @@ class PassAtKMetric(Metric):
             return 0.0
 
         scorer_name = self.scorer().name
-        score_key = f"score:{scorer_name}"
 
         # Group per-output scores by task ID
         task_results: dict[str, list[float]] = {}
@@ -418,18 +436,13 @@ class PassAtKMetric(Metric):
             task_id = r.instance.metadata.get("id", "unknown")
             if task_id not in task_results:
                 task_results[task_id] = []
-            # Use per-output scores stored during scoring (one score per sample)
-            for output in r.outputs:
-                if output.metadata and score_key in output.metadata:
-                    task_results[task_id].append(output.metadata[score_key])
-                else:
-                    # Fallback: single-sample response, use response-level score
-                    task_results[task_id].append(r.scores.get(scorer_name, 0.0))
-                    break
+            task_results[task_id].extend(_sample_scores(r, scorer_name))
 
-        # Compute pass@k for each task
+        # Compute pass@k for each task. A task with no scored sample is left out.
         pass_at_k_values = []
         for scores in task_results.values():
+            if not scores:
+                continue
             n = len(scores)
             c = sum(1 for s in scores if s > 0.5)  # Count passing
             pass_at_k_values.append(compute_pass_at_k(n, c, min(self.k, n)))
@@ -437,19 +450,7 @@ class PassAtKMetric(Metric):
         return sum(pass_at_k_values) / len(pass_at_k_values) if pass_at_k_values else 0.0
 
     def compute_instance(self, response: Response) -> float | None:
-        scorer_name = self.scorer().name
-        score_key = f"score:{scorer_name}"
-        sample_scores: list[float] = []
-        for output in response.outputs:
-            score = (output.metadata or {}).get(score_key)
-            if isinstance(score, (int, float)):
-                sample_scores.append(float(score))
-
-        if not sample_scores:
-            scorer_score = response.scores.get(scorer_name)
-            if isinstance(scorer_score, (int, float)) and len(response.outputs) <= 1:
-                sample_scores.append(float(scorer_score))
-
+        sample_scores = _sample_scores(response, self.scorer().name)
         if not sample_scores:
             return None
 
@@ -482,7 +483,6 @@ class PassPowKMetric(Metric):
             return 0.0
 
         scorer_name = self.scorer().name
-        score_key = f"score:{scorer_name}"
 
         # Group per-output scores by task ID
         task_results: dict[str, list[float]] = {}
@@ -490,18 +490,13 @@ class PassPowKMetric(Metric):
             task_id = r.instance.metadata.get("id", "unknown")
             if task_id not in task_results:
                 task_results[task_id] = []
-            # Use per-output scores stored during scoring (one score per sample)
-            for output in r.outputs:
-                if output.metadata and score_key in output.metadata:
-                    task_results[task_id].append(output.metadata[score_key])
-                else:
-                    # Fallback: single-sample response, use response-level score
-                    task_results[task_id].append(r.scores.get(scorer_name, 0.0))
-                    break
+            task_results[task_id].extend(_sample_scores(r, scorer_name))
 
-        # Compute pass^k for each task
+        # Compute pass^k for each task. A task with no scored sample is left out.
         pass_pow_k_values = []
         for scores in task_results.values():
+            if not scores:
+                continue
             n = len(scores)
             c = sum(1 for s in scores if s > 0.5)  # Count passing
             pass_pow_k_values.append(compute_pass_pow_k(n, c, self.k))
@@ -509,19 +504,7 @@ class PassPowKMetric(Metric):
         return sum(pass_pow_k_values) / len(pass_pow_k_values) if pass_pow_k_values else 0.0
 
     def compute_instance(self, response: Response) -> float | None:
-        scorer_name = self.scorer().name
-        score_key = f"score:{scorer_name}"
-        sample_scores: list[float] = []
-        for output in response.outputs:
-            score = (output.metadata or {}).get(score_key)
-            if isinstance(score, (int, float)):
-                sample_scores.append(float(score))
-
-        if not sample_scores:
-            scorer_score = response.scores.get(scorer_name)
-            if isinstance(scorer_score, (int, float)) and len(response.outputs) <= 1:
-                sample_scores.append(float(scorer_score))
-
+        sample_scores = _sample_scores(response, self.scorer().name)
         if not sample_scores:
             return None
 

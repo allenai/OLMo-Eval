@@ -32,11 +32,12 @@ from olmo_eval.common.metrics import Metric
 from olmo_eval.common.multi_turn import turn_count, turn_replies
 from olmo_eval.common.scorers import ScoringIncompleteError
 from olmo_eval.common.scorers.base import Scorer
+from olmo_eval.common.scorers.execution import format_scoring_error
 from olmo_eval.common.scorers.llm_judge import JudgeFn, build_openai_judge_fn, parse_judge_spec
 from olmo_eval.common.types import Instance, LMOutput, Response
 from olmo_eval.inference.retry import retry_with_backoff
 
-from .base import Task, TaskConfig, _format_scoring_error, _store_output_score
+from .base import Task, TaskConfig, _store_output_score
 
 logger = logging.getLogger(__name__)
 
@@ -443,19 +444,17 @@ class JudgedTask(Task):
 
         scores_by_response: list[dict[int, float]] = [{} for _ in responses]
         judge_errors: list[Exception] = []
-        failed_by_response = [0] * len(responses)
         for (response_index, output_index), score in zip(jobs, results, strict=True):
             if isinstance(score, BaseException):
                 # Cancellation is control flow, not data about a sample.
                 if not isinstance(score, Exception):
                     raise score
                 judge_errors.append(score)
-                failed_by_response[response_index] += 1
                 _store_output_score(
                     responses[response_index].outputs[output_index],
                     scorer_name=self.judge_scorer_name,
-                    score=0.0,
-                    scoring_error=_format_scoring_error(score, phase="judge"),
+                    score=None,
+                    scoring_error=format_scoring_error(score, phase="judge"),
                 )
                 continue
             scores_by_response[response_index][output_index] = score
@@ -463,25 +462,22 @@ class JudgedTask(Task):
         if judge_errors:
             logger.warning(
                 "%s judging failed on %d/%d output(s) (API errors or no parseable verdict); "
-                "they are recorded as scoring errors and excluded from their instance average. "
+                "they are recorded as scoring errors and left out of their instance's score. "
                 "First error: %s",
                 self.config.name,
                 len(judge_errors),
                 len(jobs),
                 judge_errors[0],
             )
-        for response_index, response in enumerate(responses):
-            if response.outputs and failed_by_response[response_index] == len(response.outputs):
-                raise ScoringIncompleteError(
-                    f"{self.config.name} judging failed for every sample of instance "
-                    f"{response.instance.metadata.get('id', response_index)}: {judge_errors[0]}"
-                ) from judge_errors[0]
-
         for response, output_scores in zip(responses, scores_by_response, strict=True):
             if not response.outputs:
                 for key in (self.judge_score_key, *self.judge_extra_score_keys):
                     response.scores[key] = self.unanswered_score
                 response.scores["truncation_rate"] = 1.0
+                continue
+            if not output_scores:
+                # Every sample failed judging. The instance has no score; its outputs
+                # carry the errors, and the runner counts it as unscored.
                 continue
             response.scores[self.judge_score_key] = self._aggregate_output_scores(output_scores)
             for key in self.judge_extra_score_keys:

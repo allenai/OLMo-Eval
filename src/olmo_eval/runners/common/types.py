@@ -9,12 +9,13 @@ from typing import Any
 PREDICTIONS_SUFFIX = "-predictions.jsonl"
 REQUESTS_SUFFIX = "-requests.jsonl"
 
-# Fraction of a task's instances allowed to hard-fail before the task is marked failed.
-# A hard failure is an instance that came back with an error and no outputs at all, so it
-# contributes nothing to the metrics. Soft failures (an error alongside a usable output,
-# e.g. MaxTurnsExceeded with a fallback answer) are still scored and do not count here.
-# Independently of this budget, a task that saves zero instances always fails: it
-# produced no metrics, so there is nothing to publish at any rate.
+# The failure budget: fraction of a task's instances allowed to contribute nothing to the
+# metrics before the task is marked failed. Two kinds of instance count against it: a
+# hard failure, which came back with an error and no outputs at all, and an unscored
+# instance, none of whose outputs could be scored. Soft failures (an error alongside a
+# usable output, e.g. MaxTurnsExceeded with a fallback answer) are still scored and do
+# not count here. Independently of this budget, a task with nothing scored always fails:
+# it produced no metrics, so there is nothing to publish at any rate.
 DEFAULT_MAX_HARD_FAILURE_RATE = 0.05
 
 # Per-task cost keys written to each metrics.json task entry. Tasks share inference
@@ -61,10 +62,15 @@ class TaskResult:
     # Failure accounting. `instances_processed` counts every instance the runner saw
     # (saved plus hard-failed), so `num_instances` vs `instances_processed` is the
     # saved-vs-processed gap that a partially failed run would otherwise hide.
+    # `instances_failed` came back with no output; `instances_unscored` were saved but
+    # no output could be scored. Both count against the failure budget.
     error_summary: str | None = None
     instances_processed: int = 0
     instances_failed: int = 0
-    hard_failure_rate_exceeded: bool = False
+    instances_unscored: int = 0
+    failure_budget_exceeded: bool = False
+    # See olmo_eval.common.scoring_failures; None when nothing failed scoring.
+    scoring_failures: dict[str, Any] | None = None
     # See olmo_eval.runners.processing.generation_counts.
     generation_counts: dict[str, int] | None = None
     # Per-task cost (see TASK_COST_KEYS). Timestamps are ISO 8601 UTC. None when the
@@ -76,11 +82,11 @@ class TaskResult:
     attributed_inference_seconds: float | None = None
 
     @property
-    def hard_failure_rate(self) -> float:
-        """Fraction of processed instances that hard-failed."""
+    def failure_rate(self) -> float:
+        """Fraction of processed instances with no output or no scored output."""
         if self.instances_processed <= 0:
             return 0.0
-        return self.instances_failed / self.instances_processed
+        return (self.instances_failed + self.instances_unscored) / self.instances_processed
 
     def to_dict(self, include_predictions: bool = False) -> dict[str, Any]:
         """Serialize to dictionary for JSON output.
@@ -109,6 +115,8 @@ class TaskResult:
             result["error_summary"] = self.error_summary
         if self.generation_counts is not None:
             result["generation_counts"] = self.generation_counts
+        if self.scoring_failures is not None:
+            result["scoring_failures"] = self.scoring_failures
         if include_predictions and self.predictions:
             result["predictions"] = self.predictions
         return result

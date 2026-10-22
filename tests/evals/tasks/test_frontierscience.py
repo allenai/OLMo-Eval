@@ -748,11 +748,14 @@ class TestRunnerShapedScoring:
         assert "invalid request" in errors["message"]
 
     @pytest.mark.anyio
-    async def test_total_judge_failure_raises_and_the_runner_scores_it_zero(
+    async def test_an_instance_whose_every_judge_call_failed_is_unscored(
         self, olympiad, monkeypatch
     ):
-        """Raising cannot exclude the instance; document what the runner actually does."""
-        from olmo_eval.runners.asynq.results import _record_scoring_failure
+        from olmo_eval.common.scoring_failures import (
+            ScoringState,
+            measurable_responses,
+            scoring_state,
+        )
 
         response = _response(olympiad)
         calls = 0
@@ -764,19 +767,15 @@ class TestRunnerShapedScoring:
 
         monkeypatch.setattr(frontierscience, "build_frontierscience_judge_fn", lambda **_: judge)
 
-        with pytest.raises(RuntimeError, match="failed for every sample"):
-            await olympiad.score_responses([response])
-        assert calls == 4
+        await olympiad.score_responses([response])
 
-        # The runner catches, annotates, and keeps the response, so the instance lands
-        # in the metric as 0.0 rather than being dropped from the denominator.
-        _record_scoring_failure(
-            response,
-            scorer_names=list(olympiad._get_scorers()),
-            error={"phase": "response", "type": "RuntimeError"},
-        )
-        assert response.outputs[0].metadata["scoring_errors"]["__response__"]["phase"] == "response"
-        assert olympiad.config.get_primary_metric().compute([response]) == 0.0
+        assert calls == 4
+        assert "accuracy" not in response.scores
+        error = response.outputs[0].metadata["scoring_errors"]["frontierscience_judge"]
+        assert error["phase"] == "judge"
+        assert "rate limit exceeded" in error["message"]
+        assert scoring_state(response) is ScoringState.UNSCORED
+        assert measurable_responses([response]) == []
 
 
 class TestComputeMetrics:

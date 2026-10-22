@@ -91,8 +91,10 @@ for an open PR. Those results can be uploaded after merge with
 - **Pins.** Pin a new dataset's `revision=` and judge models to dated snapshots when the
   task is introduced.
 - **Failures aren't scores.** No broad `except` around provider, judge, or scoring calls
-  that substitutes a score; no sentinel scores; missing logprobs are not zero; a task
-  with no scored responses fails. Diagnostics must reach saved predictions.
+  that substitutes a score; no sentinel scores; missing logprobs are not zero. A scorer
+  that cannot decide raises; the runner leaves that output unscored and counts it against
+  the failure budget, and a task with no scored responses fails. Diagnostics must reach
+  saved predictions.
 - **Per-instance metrics.** Override `Metric.compute_instance()` when the metric differs
   from the scorer value, and return `None` for out-of-scope instances.
 - **Parity.** Match the cited reference exactly; keep reference bugs under the parity name

@@ -123,6 +123,11 @@ results and hashed to identify it.
 - Don't catch broad exceptions around provider, judge, or scoring calls and substitute a
   score. Exhausted retries and judge parse failures need explicit failure accounting and
   the raw response preserved. Catch narrowly when the recovery is defined.
+- A scorer returns 0 for a wrong or unparseable answer and raises when it cannot decide.
+  The runner records the error on the output, leaves it unscored, and counts instances
+  with no scored output against the task's failure budget (`max_hard_failure_rate`).
+  Raise `ScoringIncompleteError` for a judge or grader that gave no verdict, and let
+  sandbox failures raise `SandboxInfrastructureError`, so the counts say why.
 - Missing logprobs are never logprob zero. Don't use sentinel scores such as `-1` or NaN
   without an explicit error. A task with no scored responses must fail the run.
 - Diagnostics such as format correctness, judge results, and raw output must reach saved

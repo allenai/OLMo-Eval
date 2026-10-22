@@ -1,9 +1,10 @@
 """Sandbox infrastructure exception types."""
 
-
-class SandboxInfrastructureError(RuntimeError):
-    """A sandbox operation could not be completed because infrastructure failed."""
+from olmo_eval.common.scorers.execution import SandboxInfrastructureError
 
 
 class SandboxTransportError(SandboxInfrastructureError):
     """A logical sandbox request exhausted all transport retries."""
+
+
+__all__ = ["SandboxInfrastructureError", "SandboxTransportError"]

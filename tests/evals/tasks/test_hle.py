@@ -6,7 +6,6 @@ import math
 
 import pytest
 
-from olmo_eval.common.scorers import ScoringIncompleteError
 from olmo_eval.common.types import LMOutput, RequestType, Response
 from olmo_eval.evals.tasks import hle
 from olmo_eval.evals.tasks.common import OutputScoreAggregation, get_task, task_exists
@@ -319,13 +318,12 @@ class TestScoring:
         assert "failed on 1/2 output(s)" in caplog.text
 
     @pytest.mark.anyio
-    async def test_a_batch_of_malformed_replies_fails_instead_of_scoring(self, task, monkeypatch):
+    async def test_a_batch_of_malformed_replies_is_unscored_not_wrong(self, task, monkeypatch):
         responses = [_response(task), _response(task)]
         judge, _ = scripted_judge(*["garbage"] * (2 * judge_module.JUDGE_ATTEMPTS))
         use_judge(monkeypatch, judge)
 
-        with pytest.raises(ScoringIncompleteError, match="failed for every sample"):
-            await task.score_responses(responses)
+        await task.score_responses(responses)
 
         for response in responses:
             output = response.outputs[0]
@@ -421,7 +419,7 @@ class TestRunnerFinalization:
         result = compute_task_metrics("hle:text", task, scored, {}, len(scored), 0.0)
 
         assert result.error is not None
-        assert result.error.startswith("Incomplete: 2 output score(s)")
+        assert "could not be scored" in result.error and result.instances_unscored >= 1
         assert result.metrics["calibration_error_all_bins"] == {"hle_judge": 0.0}
 
     @pytest.mark.anyio
@@ -436,7 +434,11 @@ class TestRunnerFinalization:
         scored.append(await score_like_the_runner(task, failed))
         result = compute_task_metrics("hle:text", task, scored, {}, len(scored), 0.0)
 
-        assert result.error is not None and result.error.startswith("Incomplete:")
+        assert (
+            result.error is not None
+            and "could not be scored" in result.error
+            and result.instances_unscored >= 1
+        )
         assert result.metrics["accuracy"] == {"hle_judge": 1.0}
         assert result.metrics["accuracy_physics"] == {"hle_judge": 1.0}
         judged_prediction, failed_prediction = result.predictions
@@ -455,7 +457,7 @@ class TestRunnerFinalization:
         result = compute_task_metrics("hle:text", task, scored, {}, 1, 0.0)
 
         assert result.error is not None
-        assert result.error.startswith("Incomplete: 1 output score(s)")
+        assert "could not be scored" in result.error and result.instances_unscored >= 1
         error = scored[0].outputs[0].metadata["scoring_errors"]["hle_judge"]
         assert "ValueError: judge unavailable" in error["message"]
 

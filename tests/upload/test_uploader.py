@@ -120,6 +120,36 @@ def test_non_finite_task_values_are_uploaded_as_null(
     assert task["error_summary"] == {"rate": None}
 
 
+def test_scoring_failures_are_uploaded_only_when_present(
+    tmp_path: Path, server: FakeIngest, client
+) -> None:
+    out = make_arc_run(tmp_path / "run")
+    metrics_path = out / "metrics.json"
+    data = json.loads(metrics_path.read_text())
+    failures = {
+        "instances_unscored": 1,
+        "instances_partially_scored": 0,
+        "outputs_unscored": 1,
+        "infrastructure": 1,
+        "by_type": {"SandboxInfrastructureError": 1},
+        "first_error": "SandboxInfrastructureError: no healthy sandbox",
+    }
+    data["tasks"][0]["scoring_failures"] = failures
+    metrics_path.write_text(json.dumps(data))
+
+    result = upload_results_dir(out, CONFIG, client=client)
+
+    assert result.ok, result.error
+    assert server.schema_errors == []
+    uploaded = {t["task_name"]: t for t in server.task_results.values()}
+    assert uploaded[data["tasks"][0]["task"]]["scoring_failures"] == failures
+    assert all(
+        "scoring_failures" not in task
+        for name, task in uploaded.items()
+        if name != data["tasks"][0]["task"]
+    )
+
+
 def test_every_request_carries_the_run_secret(tmp_path: Path, server: FakeIngest, client) -> None:
     out = make_arc_run(tmp_path / "run")
 

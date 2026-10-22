@@ -378,6 +378,26 @@ function HealthPanel({ ctx }: { ctx: RunCtx }) {
           </>
         ),
         detail: t.error_summary ? Object.entries(t.error_summary).map(([k, v]) => `${k} ×${v}`).join(", ") : undefined,
+        // These instances produced no output, so they have no instance rows to list.
+        href: buildHref(`/runs/${ctx.run.run_id}`, { tab: "tasks", task: t.task_name }),
+      });
+    }
+    const sf = t.scoring_failures;
+    if (sf && (sf.instances_unscored || sf.instances_partially_scored)) {
+      const processed = Math.max(1, t.instances_processed ?? t.n);
+      const parts: string[] = [];
+      if (sf.instances_unscored) parts.push(`${formatCount(sf.instances_unscored)}/${formatCount(t.instances_processed ?? t.n)} instances could not be scored (${formatRate(sf.instances_unscored / processed, 1)})`);
+      if (sf.instances_partially_scored) parts.push(`${formatCount(sf.instances_partially_scored)} scored from part of their outputs`);
+      const types = Object.entries(sf.by_type).map(([k, v]) => `${k} ×${v}`).join(", ");
+      items.push({
+        icon: <AlertTriangle />,
+        tone: s.warn,
+        text: (
+          <>
+            <strong>{t.task_name}</strong>: {parts.join("; ")}
+          </>
+        ),
+        detail: [types, sf.first_error].filter(Boolean).join(" · ") || undefined,
         href: buildHref(`/runs/${ctx.run.run_id}`, { tab: "instances", task: t.task_name, has: "scoring_error" }),
       });
     }

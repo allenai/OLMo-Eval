@@ -90,6 +90,9 @@ class _StubTask:
     async def score_responses(self, responses: list[Response]) -> list[Response]:
         return responses
 
+    def _get_scorers(self) -> dict[str, object]:
+        return {"code_exec": object()}
+
     def compute_metrics(self, responses: list[Response]) -> dict[str, dict[str, float]]:
         return CLEAN_METRICS
 

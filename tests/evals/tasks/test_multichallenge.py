@@ -280,7 +280,11 @@ async def test_an_unjudged_conversation_is_incomplete_not_failed(task, monkeypat
     scored.append(await score_like_the_runner(task, unjudged))
     result = compute_task_metrics("multichallenge", task, scored, {}, len(scored), 0.0)
 
-    assert result.error is not None and result.error.startswith("Incomplete: 1 output score(s)")
+    assert (
+        result.error is not None
+        and "could not be scored" in result.error
+        and result.instances_unscored >= 1
+    )
     assert result.metrics["macro_accuracy"] == {"multichallenge_judge": 1.0}
     assert result.metrics["accuracy"] == {"multichallenge_judge": 1.0}
     judged_prediction, unjudged_prediction = result.predictions

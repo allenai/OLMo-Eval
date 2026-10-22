@@ -147,6 +147,10 @@ def build_predictions(scored: Sequence[Any], metrics: Sequence[Metric] = ()) -> 
         if resp.trajectory is not None:
             prediction["trajectory"] = resp.trajectory.to_dict()
 
+        # Why scoring failed for a response with no outputs to record it on.
+        if resp.scoring_error is not None:
+            prediction["scoring_error"] = resp.scoring_error
+
         if metrics:
             augment_prediction_instance_metrics(prediction, metrics, response=resp)
 

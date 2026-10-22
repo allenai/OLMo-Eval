@@ -44,12 +44,12 @@ from olmo_eval.runners.asynq.processing import process_batch, process_chat_reque
 from olmo_eval.runners.asynq.results import (
     _report_task_completion,
     aggregate_results,
-    check_hard_failure_gate,
+    check_failure_budget,
     is_hard_failure,
 )
 from olmo_eval.runners.asynq.runner import AsyncEvalRunner
 from olmo_eval.runners.asynq.types import QueueItem, ResultItem, TaskTracker
-from olmo_eval.runners.common.constants import HardFailureRateExceeded
+from olmo_eval.runners.common.constants import FailureBudgetExceeded
 from olmo_eval.runners.common.types import DEFAULT_MAX_HARD_FAILURE_RATE, TaskResult
 from olmo_eval.runners.processing.aggregation import compute_suite_aggregations
 from olmo_eval.runners.processing.metrics import build_single_model_metrics, log_summary
@@ -134,6 +134,9 @@ class _StubTask:
         data_source="test/data",
         metrics=(AccuracyMetric(),),
     )
+
+    def _get_scorers(self) -> dict[str, object]:
+        return {"code_exec": object()}
 
     def compute_metrics(self, responses: list[Response]) -> dict[str, dict[str, float]]:
         return CLEAN_METRICS
@@ -258,9 +261,9 @@ def test_partial_hard_failure_marks_task_failed() -> None:
     )
     result = _task_result_from(items)
 
-    assert result.hard_failure_rate_exceeded is True
+    assert result.failure_budget_exceeded is True
     assert result.error is not None
-    assert "Hard failure rate" in result.error
+    assert "failed, above the failure budget" in result.error
     # The summary compute_task_metrics used to drop is now attached.
     assert result.error_summary is not None
     assert "47 instances failed" in result.error_summary
@@ -269,7 +272,7 @@ def test_partial_hard_failure_marks_task_failed() -> None:
     assert result.num_instances == SAVED_INSTANCES
     assert result.instances_processed == TOTAL_INSTANCES
     assert result.instances_failed == HARD_FAILURES
-    assert result.hard_failure_rate == pytest.approx(HARD_FAILURES / TOTAL_INSTANCES)
+    assert result.failure_rate == pytest.approx(HARD_FAILURES / TOTAL_INSTANCES)
 
 
 def test_partial_hard_failure_fails_the_run() -> None:
@@ -278,8 +281,8 @@ def test_partial_hard_failure_fails_the_run() -> None:
     )
     result = _task_result_from(items)
 
-    with pytest.raises(HardFailureRateExceeded) as excinfo:
-        check_hard_failure_gate({SPEC: result})
+    with pytest.raises(FailureBudgetExceeded) as excinfo:
+        check_failure_budget({SPEC: result})
     assert SPEC in str(excinfo.value)
 
 
@@ -327,18 +330,18 @@ def test_total_failure_marks_task_failed_and_fails_the_run() -> None:
     items = _run_inference(TOTAL_INSTANCES, hard_failing=set(range(TOTAL_INSTANCES)))
     result = _task_result_from(items)
 
-    assert result.hard_failure_rate_exceeded is True
+    assert result.failure_budget_exceeded is True
     assert result.error is not None
-    assert "No instances were saved" in result.error
+    assert "No instance was scored" in result.error
     assert result.error_summary is not None
     assert "63 instances failed" in result.error_summary
     assert result.num_instances == 0
     assert result.instances_processed == TOTAL_INSTANCES
     assert result.instances_failed == TOTAL_INSTANCES
-    assert result.hard_failure_rate == pytest.approx(1.0)
+    assert result.failure_rate == pytest.approx(1.0)
 
-    with pytest.raises(HardFailureRateExceeded):
-        check_hard_failure_gate({SPEC: result})
+    with pytest.raises(FailureBudgetExceeded):
+        check_failure_budget({SPEC: result})
 
 
 _MAX_TOKENS_400 = (
@@ -406,9 +409,9 @@ def test_batched_total_failure_fails_the_run() -> None:
     assert result.num_instances == 0
     assert result.instances_failed == TOTAL_INSTANCES
     assert result.error is not None
-    assert "No instances were saved" in result.error
-    with pytest.raises(HardFailureRateExceeded):
-        check_hard_failure_gate({SPEC: result})
+    assert "No instance was scored" in result.error
+    with pytest.raises(FailureBudgetExceeded):
+        check_failure_budget({SPEC: result})
 
 
 def test_batched_partial_failure_fails_the_run() -> None:
@@ -419,9 +422,9 @@ def test_batched_partial_failure_fails_the_run() -> None:
 
     assert result.num_instances == SAVED_INSTANCES
     assert result.instances_failed == HARD_FAILURES
-    assert result.hard_failure_rate_exceeded is True
-    with pytest.raises(HardFailureRateExceeded):
-        check_hard_failure_gate({SPEC: result})
+    assert result.failure_budget_exceeded is True
+    with pytest.raises(FailureBudgetExceeded):
+        check_failure_budget({SPEC: result})
 
 
 def test_batched_clean_run_stays_green() -> None:
@@ -431,7 +434,7 @@ def test_batched_clean_run_stays_green() -> None:
     assert not any(is_hard_failure(item) for item in items)
     assert result.num_instances == TOTAL_INSTANCES
     assert result.error is None
-    check_hard_failure_gate({SPEC: result})
+    check_failure_budget({SPEC: result})
 
 
 def _run_empty_loglikelihood(continuations: tuple[str, ...]) -> ResultItem:
@@ -478,15 +481,15 @@ def test_clean_run_stays_green() -> None:
     items = _run_inference(TOTAL_INSTANCES, hard_failing=set())
     result = _task_result_from(items)
 
-    assert result.hard_failure_rate_exceeded is False
+    assert result.failure_budget_exceeded is False
     assert result.error is None
     assert result.error_summary is None
     assert result.num_instances == TOTAL_INSTANCES
     assert result.instances_processed == TOTAL_INSTANCES
     assert result.instances_failed == 0
-    assert result.hard_failure_rate == pytest.approx(0.0)
+    assert result.failure_rate == pytest.approx(0.0)
 
-    check_hard_failure_gate({SPEC: result})  # must not raise
+    check_failure_budget({SPEC: result})  # must not raise
 
     results = _aggregate(result)
     assert results["errors"] == []
@@ -502,9 +505,9 @@ def test_soft_failures_alone_keep_the_task_green() -> None:
 
     assert result.instances_failed == 0
     assert result.num_instances == TOTAL_INSTANCES
-    assert result.hard_failure_rate_exceeded is False
+    assert result.failure_budget_exceeded is False
     assert result.error is None
-    check_hard_failure_gate({SPEC: result})
+    check_failure_budget({SPEC: result})
 
 
 # ---------------------------------------------------------------------------
@@ -519,43 +522,43 @@ def test_default_threshold_is_five_percent() -> None:
 def test_rate_exactly_at_threshold_passes() -> None:
     result = _synthetic_result(total=20, failures=1)  # exactly 0.05
 
-    assert result.hard_failure_rate == pytest.approx(0.05)
-    assert result.hard_failure_rate_exceeded is False
+    assert result.failure_rate == pytest.approx(0.05)
+    assert result.failure_budget_exceeded is False
     assert result.error is None
     # The summary is still attached even though the task passes.
     assert result.error_summary == "Instance 19 failed: boom"
-    check_hard_failure_gate({SPEC: result})
+    check_failure_budget({SPEC: result})
 
 
 def test_rate_just_under_threshold_passes() -> None:
     result = _synthetic_result(total=63, failures=3)  # 0.0476
 
-    assert result.hard_failure_rate == pytest.approx(3 / 63)
-    assert result.hard_failure_rate_exceeded is False
+    assert result.failure_rate == pytest.approx(3 / 63)
+    assert result.failure_budget_exceeded is False
     assert result.error is None
     assert result.error_summary is not None
-    check_hard_failure_gate({SPEC: result})
+    check_failure_budget({SPEC: result})
 
 
 def test_rate_just_over_threshold_fails() -> None:
     result = _synthetic_result(total=63, failures=4)  # 0.0635
 
-    assert result.hard_failure_rate_exceeded is True
+    assert result.failure_budget_exceeded is True
     assert result.error is not None
-    with pytest.raises(HardFailureRateExceeded):
-        check_hard_failure_gate({SPEC: result})
+    with pytest.raises(FailureBudgetExceeded):
+        check_failure_budget({SPEC: result})
 
 
 def test_threshold_can_be_raised_to_tolerate_failures() -> None:
     result = _synthetic_result(total=63, failures=47, max_hard_failure_rate=0.9)
 
-    assert result.hard_failure_rate_exceeded is False
+    assert result.failure_budget_exceeded is False
     assert result.error is None
     # Tolerated, but never silent: the summary and the accounting survive.
     assert result.error_summary is not None
     assert result.instances_failed == 47
     assert result.instances_processed == 63
-    check_hard_failure_gate({SPEC: result})
+    check_failure_budget({SPEC: result})
 
 
 def test_all_failed_task_fails_even_at_the_maximum_threshold() -> None:
@@ -563,12 +566,12 @@ def test_all_failed_task_fails_even_at_the_maximum_threshold() -> None:
     result = _synthetic_result(total=63, failures=63, max_hard_failure_rate=1.0)
 
     assert result.num_instances == 0
-    assert result.hard_failure_rate_exceeded is True
+    assert result.failure_budget_exceeded is True
     assert result.error is not None
-    assert "No instances were saved" in result.error
-    assert "any hard failure rate budget" in result.error
-    with pytest.raises(HardFailureRateExceeded):
-        check_hard_failure_gate({SPEC: result})
+    assert "No instance was scored" in result.error
+    assert "fails at any failure budget" in result.error
+    with pytest.raises(FailureBudgetExceeded):
+        check_failure_budget({SPEC: result})
 
 
 def test_partial_failure_stays_quiet_at_the_maximum_threshold() -> None:
@@ -576,19 +579,19 @@ def test_partial_failure_stays_quiet_at_the_maximum_threshold() -> None:
     result = _synthetic_result(total=63, failures=62, max_hard_failure_rate=1.0)
 
     assert result.num_instances == 1
-    assert result.hard_failure_rate_exceeded is False
+    assert result.failure_budget_exceeded is False
     assert result.error is None
     assert result.error_summary is not None
-    check_hard_failure_gate({SPEC: result})
+    check_failure_budget({SPEC: result})
 
 
 def test_threshold_can_be_lowered_to_zero_tolerance() -> None:
     result = _synthetic_result(total=63, failures=1, max_hard_failure_rate=0.0)
 
-    assert result.hard_failure_rate_exceeded is True
+    assert result.failure_budget_exceeded is True
     assert result.error is not None
-    with pytest.raises(HardFailureRateExceeded):
-        check_hard_failure_gate({SPEC: result})
+    with pytest.raises(FailureBudgetExceeded):
+        check_failure_budget({SPEC: result})
 
 
 # ---------------------------------------------------------------------------
@@ -675,7 +678,7 @@ def test_gate_runs_after_results_are_saved() -> None:
     runner = _runner_with_recorded_finalize(calls)
     gated = _synthetic_result(total=63, failures=47)
 
-    with pytest.raises(HardFailureRateExceeded):
+    with pytest.raises(FailureBudgetExceeded):
         runner._finalize_and_gate({SPEC: gated}, {"tasks": {}}, experiment_id="exp")
 
     assert calls == ["finalize_and_save"], "results must be written before the gate fires"
@@ -717,7 +720,7 @@ def test_task_level_error_carries_its_summary() -> None:
     assert result.num_instances == 0
     assert result.instances_processed == 0
     assert result.instances_failed == 0
-    assert result.hard_failure_rate_exceeded is False
+    assert result.failure_budget_exceeded is False
 
 
 # ---------------------------------------------------------------------------
@@ -819,7 +822,7 @@ def test_uploaded_task_row_explains_a_gated_task(tmp_path) -> None:
     assert row["num_instances"] == 16
     assert row["instances_processed"] == 63
     assert row["instances_failed"] == 47
-    assert row["error"].startswith("Hard failure rate")
+    assert row["error"].startswith("47 of 63 instances (74.6%) failed, above the failure budget")
     assert "47 instances failed" in row["error_summary"]["summary"]
 
 
@@ -848,7 +851,7 @@ def test_suite_average_names_the_task_it_excluded(caplog) -> None:
     }
     failed_task = expanded[0]
     task_results[failed_task] = {
-        "error": "Hard failure rate 74.6% exceeds the maximum of 5.0%",
+        "error": "47 of 63 instances (74.6%) failed, above the failure budget of 5.0%",
         "instances_saved": 16,
         "instances_processed": 63,
         "instances_failed": 47,
@@ -859,7 +862,7 @@ def test_suite_average_names_the_task_it_excluded(caplog) -> None:
     logged = " ".join(record.getMessage() for record in caplog.records)
     assert suite_name in logged
     assert failed_task in logged
-    assert "Hard failure rate" in logged
+    assert "failed, above the failure budget" in logged
     # And the average genuinely excludes it.
     assert aggregations[suite_name]["num_tasks"] == len(expanded) - 1
     assert failed_task not in aggregations[suite_name]["tasks"]

@@ -434,7 +434,7 @@ class TestMetrics:
         result = compute_task_metrics("arena_hard_v2:hard_prompt", task, scored, {}, 2, 0.0)
 
         assert result.error is not None
-        assert result.error.startswith("Incomplete: 1 output score(s)")
+        assert "could not be scored" in result.error and result.instances_unscored >= 1
         assert result.metrics["win_rate"] == {"arena_hard_judge": 1.0}
 
     @pytest.mark.anyio

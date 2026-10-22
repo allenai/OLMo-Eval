@@ -43,6 +43,27 @@ export type DateTime = string;
 export type JsonObject = { [key: string]: unknown };
 
 /**
+ * A task's scoring failures. An unscored instance has no scored output and is left out
+ * of the metrics; with instances that produced no output it counts against the task's
+ * failure budget. A partially scored instance is scored from the outputs that were.
+ */
+export interface ScoringFailures {
+    instances_unscored: NonNegativeInt32;
+    instances_partially_scored: NonNegativeInt32;
+    /** Outputs with a scoring error, across all instances. */
+    outputs_unscored: NonNegativeInt32;
+    /** Unscored outputs whose failure was flagged as infrastructure (judge, sandbox). */
+    infrastructure: NonNegativeInt32;
+    /** Unscored outputs by exception type, from each output's first error. */
+    by_type: { [type: string]: NonNegativeInt32 };
+    /**
+     * The first scoring error as "Type: message", capped at 500 characters.
+     * @maxLength 500
+     */
+    first_error?: string | null;
+}
+
+/**
  * Run ID. olmo-eval uses its experiment_id (12 lowercase hex characters).
  * @pattern ^[a-z0-9]{6,32}$
  */
@@ -346,6 +367,8 @@ export interface TaskResultIn {
     instances_failed: NonNegativeInt32 | null;
     /** Per-generation diagnostic counts; absent for older clients and loglikelihood tasks. */
     generation_counts?: { [count: string]: NonNegativeInteger } | null;
+    /** Outputs and instances whose scores could not be computed; absent when none failed. */
+    scoring_failures?: ScoringFailures | null;
     error: string | null;
     error_summary: JsonObject | null;
     /**

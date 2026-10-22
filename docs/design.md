@@ -108,9 +108,17 @@ rules. A provider outage, an exhausted judge retry, or a failed scoring process 
 remain an explicit failure. An eval that quietly scores a crashed instance as zero
 produces a believable wrong number, which is worse than a failed run.
 
-The runner tracks hard failures and applies `max_hard_failure_rate`, a task with no scored
-responses fails the run, and requests and predictions are saved by default so prompts,
-extracted answers, and per-instance scores can be checked before an aggregate is trusted.
+When a scorer cannot reach a verdict for an output, the output records the error and gets
+no score from that scorer. An instance the scorer could not score at all is left out of
+that scorer's metrics, and one it scored from only some of its outputs is scored from
+those. Instances left out this way
+and instances that produced no output share one failure budget, `max_hard_failure_rate`
+(5% by default). A task within it publishes its metrics with the counts beside them; a
+task over it, or with nothing scored, fails and publishes none. Leaving failures out can
+bias a score, because they tend to cluster on unusual outputs, and the budget bounds that
+bias while the published counts make it visible. Requests and predictions are saved by
+default so prompts, extracted answers, per-instance scores and scoring errors can be
+checked before an aggregate is trusted.
 Progress reporting and telemetry are the exception: they must never terminate an
 evaluation, so their errors are caught and logged.
 

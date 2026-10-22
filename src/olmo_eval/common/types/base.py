@@ -306,3 +306,6 @@ class Response:
     scores: dict[str, float] = field(default_factory=dict)
     trajectory: AgentTrajectory | None = None
     request_trace: dict[str, Any] | None = None
+    # Why scoring failed for a response with no outputs to record it on; an output's
+    # own failures are under its metadata's ``scoring_errors``.
+    scoring_error: dict[str, str] | None = None
