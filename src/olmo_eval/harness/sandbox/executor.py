@@ -1,4 +1,4 @@
-"""Sandbox executor for isolated command execution via SWE-ReX."""
+"""Sandbox executor for isolated command execution."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ import os
 import random
 import time
 import uuid
+from collections import deque
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, TypeVar
@@ -33,6 +34,33 @@ _HEALTH_CHECK_RETRY_INITIAL_DELAY = 0.5
 _HEALTH_CHECK_TIMEOUT = 5.0
 
 
+async def _read_bounded_output(stream: asyncio.StreamReader) -> bytes:
+    """Drain a stream while preserving a bounded prefix and suffix."""
+    prefix_limit = 4 * 1024 * 1024
+    suffix_limit = 1024 * 1024
+    prefix = bytearray()
+    suffix: deque[bytes] = deque()
+    suffix_size = 0
+    truncated = False
+    while chunk := await stream.read(64 * 1024):
+        take = min(len(chunk), prefix_limit - len(prefix))
+        prefix.extend(chunk[:take])
+        chunk = chunk[take:]
+        if not chunk:
+            continue
+        suffix.append(chunk)
+        suffix_size += len(chunk)
+        while suffix_size > suffix_limit:
+            first = suffix.popleft()
+            discard = min(len(first), suffix_size - suffix_limit)
+            suffix_size -= discard
+            if discard < len(first):
+                suffix.appendleft(first[discard:])
+            truncated = True
+    marker = b"\n[Output truncated]\n" if truncated else b""
+    return bytes(prefix) + marker + b"".join(suffix)
+
+
 def _exponential_backoff(initial_delay: float, retry: int) -> float:
     """Return an exponential backoff delay with additive jitter."""
     base_delay = initial_delay * (2 ** (retry - 1))
@@ -41,7 +69,7 @@ def _exponential_backoff(initial_delay: float, retry: int) -> float:
 
 @dataclass
 class _ControlCommandResult:
-    """Result from a short command used to control a streaming execution."""
+    """Captured output and exit status from a sandbox command."""
 
     stdout: str
     stderr: str
@@ -980,13 +1008,7 @@ rm -f "$1"
     async def _execute_stream_control(
         self, command: str | Sequence[str], timeout: float
     ) -> _ControlCommandResult:
-        """Run a short streaming-control command with a real client timeout.
-
-        DockerDeployment exposes the container name, so local container modes can
-        invoke the runtime CLI directly. This keeps polling independent of the
-        in-container swe-rex HTTP server and makes a stuck poll individually
-        cancellable. Modal has no local container CLI and keeps using swe-rex.
-        """
+        """Run a sandbox command with bounded captured output and a client deadline."""
         argv = ["bash", "-c", command] if isinstance(command, str) else list(command)
         container_name = getattr(self._deployment, "container_name", None)
         if self.config.mode == SandboxMode.DOCKER and container_name:
@@ -998,14 +1020,26 @@ rm -f "$1"
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
+            assert process.stdout is not None and process.stderr is not None
+            readers = (
+                asyncio.create_task(_read_bounded_output(process.stdout)),
+                asyncio.create_task(_read_bounded_output(process.stderr)),
+                asyncio.create_task(process.wait()),
+            )
             try:
-                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
+                stdout, stderr, _ = await asyncio.wait_for(
+                    asyncio.gather(*readers), timeout=timeout
+                )
             finally:
+                for reader in readers:
+                    if not reader.done():
+                        reader.cancel()
                 if process.returncode is None:
                     with contextlib.suppress(ProcessLookupError):
                         process.kill()
                     with contextlib.suppress(TimeoutError):
                         await asyncio.shield(asyncio.wait_for(process.wait(), timeout=5.0))
+                await asyncio.gather(*readers, return_exceptions=True)
             return _ControlCommandResult(
                 stdout=stdout.decode(errors="backslashreplace"),
                 stderr=stderr.decode(errors="backslashreplace"),

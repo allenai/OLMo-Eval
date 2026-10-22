@@ -16,19 +16,26 @@ class _FakeProcess:
         self.block = block
         self.returncode: int | None = None
         self.killed = False
-
-    async def communicate(self) -> tuple[bytes, bytes]:
-        if self.block:
-            await asyncio.Event().wait()
-        self.returncode = 0
-        return b"control output\n", b""
+        self.stdout = asyncio.StreamReader()
+        self.stderr = asyncio.StreamReader()
+        self.stopped = asyncio.Event()
+        self.stdout.feed_data(b"control output\n")
+        if not block:
+            self.stdout.feed_eof()
+            self.stderr.feed_eof()
 
     def kill(self) -> None:
         self.killed = True
         self.returncode = -9
+        self.stdout.feed_eof()
+        self.stderr.feed_eof()
+        self.stopped.set()
 
     async def wait(self) -> int:
-        return self.returncode or 0
+        if self.block:
+            await self.stopped.wait()
+        self.returncode = -9 if self.killed else 0
+        return self.returncode
 
 
 class TestStreamingControlCommand(unittest.IsolatedAsyncioTestCase):
@@ -404,7 +411,7 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class _CommandTimeoutError(TimeoutError):
+class _CommandTimeoutError(Exception):
     """Named like swe-rex's timeout so the executor recognizes it."""
 
 
@@ -420,7 +427,6 @@ class TestSessionTimeout(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_timed_out_command_is_interrupted_and_reported(self) -> None:
         executor = self._executor()
-        executor.config = replace(executor.config, mode=SandboxMode.LOCAL)
         interrupted = mock.Mock(output="^C", exit_code=0)
         executor._runtime.run_in_session = mock.AsyncMock(
             side_effect=[_CommandTimeoutError("timed out after 5s"), interrupted]
@@ -596,6 +602,34 @@ async def test_command_timeout_label_respects_exit_and_elapsed_time(
     result = await executor.execute_command("true", timeout=3)
     assert result.error == label
     assert (commands[1][0] == "bash") == (label == "timeout")
+
+
+@pytest.mark.anyio
+async def test_local_capture_bounds_both_streams_and_keeps_the_verdict(monkeypatch):
+    from types import SimpleNamespace
+
+    original_create = asyncio.create_subprocess_exec
+    code = (
+        "import sys; "
+        "sys.stdout.write('START' + 'x' * (10*1024*1024) + 'VERDICT'); "
+        "sys.stderr.write('ERROR' + 'y' * (10*1024*1024) + 'END')"
+    )
+
+    async def create(*args, **kwargs):
+        return await original_create(sys.executable, "-c", code, **kwargs)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create)
+    executor = SandboxExecutor(SandboxConfig(image="test", mode=SandboxMode.DOCKER))
+    executor._deployment = SimpleNamespace(container_name="test")
+    result = await executor._execute_stream_control("synthetic-output-fixture", timeout=10)
+    assert result.exit_code == 0
+    for output, prefix, suffix in (
+        (result.stdout, "START", "VERDICT"),
+        (result.stderr, "ERROR", "END"),
+    ):
+        assert output.startswith(prefix) and output.endswith(suffix)
+        assert len(output) <= 5 * 1024 * 1024 + 128
+        assert "[Output truncated]" in output
 
 
 @pytest.mark.anyio
