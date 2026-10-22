@@ -9,10 +9,11 @@ them also apply the ``judge_test_env`` fixture from this package's conftest.
 
 from __future__ import annotations
 
+from olmo_eval.common.scorers.execution import format_scoring_error
 from olmo_eval.common.scorers.llm_judge import JudgeFn
 from olmo_eval.common.types import Response
 from olmo_eval.evals.tasks.common import judge as judge_module
-from olmo_eval.runners.asynq.results import _format_scoring_error, _record_scoring_failure
+from olmo_eval.runners.asynq.results import _record_scoring_failure
 
 
 def scripted_judge(*replies: str) -> tuple[JudgeFn, list[str]]:
@@ -40,5 +41,5 @@ async def score_like_the_runner(task, response: Response) -> Response:
         return _record_scoring_failure(
             response,
             scorer_names=list(task._get_scorers()),
-            error=_format_scoring_error(exc, phase="response"),
+            error=format_scoring_error(exc, phase="response"),
         )

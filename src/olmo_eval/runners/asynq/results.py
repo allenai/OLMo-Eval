@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from olmo_eval.common.beaker_status import BeakerStatusReporter
 from olmo_eval.common.logging import get_logger
 from olmo_eval.common.progress import ProgressLogger
+from olmo_eval.common.scorers.execution import format_scoring_error
 from olmo_eval.common.types import Response
 from olmo_eval.common.types.trajectory import AgentTrajectory
 from olmo_eval.runners.asynq.monitoring import check_workers_alive
@@ -106,25 +107,19 @@ def _format_worker_failure(error: object, pending_instances: set[InstanceKey]) -
     return f"Worker process crashed with {_format_pending_instances(pending_instances)}: {error}"
 
 
-def _format_scoring_error(exc: Exception, *, phase: str) -> dict[str, str]:
-    """Build a JSON-serializable scoring error payload."""
-    error = {
-        "phase": phase,
-        "type": type(exc).__qualname__,
-    }
-    message = str(exc).strip()
-    if message:
-        error["message"] = message
-    return error
-
-
 def _record_scoring_failure(
     response: Response,
     *,
     scorer_names: list[str],
     error: dict[str, str],
 ) -> Response:
-    """Annotate a response when scoring aborts before per-output results exist."""
+    """Annotate a response whose ``score_responses`` raised.
+
+    Every output gets the error under ``__response__``. The infrastructure flag is
+    kept only for outputs that lost their score to it: an output that already
+    records an infrastructure error, or that already has every scorer's verdict,
+    is not counted a second time.
+    """
     for scorer_name in scorer_names:
         response.scores.setdefault(scorer_name, 0.0)
 
@@ -135,7 +130,17 @@ def _record_scoring_failure(
         if not isinstance(existing, dict):
             existing = {}
             output.metadata["scoring_errors"] = existing
-        existing["__response__"] = error
+        response_error = dict(error)
+        already_counted = any(
+            isinstance(detail, dict) and detail.get("infrastructure") == "true"
+            for detail in existing.values()
+        )
+        has_verdict = bool(scorer_names) and all(
+            f"score:{name}" in output.metadata for name in scorer_names
+        )
+        if already_counted or has_verdict:
+            response_error.pop("infrastructure", None)
+        existing["__response__"] = response_error
         for scorer_name in scorer_names:
             output.metadata.setdefault(f"score:{scorer_name}", 0.0)
 
@@ -251,7 +256,7 @@ async def process_results(
                 scored_list = await task.score_responses([response], context=scoring_context)
                 scored = scored_list[0] if scored_list else response
             except Exception as e:
-                error = _format_scoring_error(e, phase="response")
+                error = format_scoring_error(e, phase="response")
                 logger.warning(
                     "Failed to score %s[%s]: %s",
                     spec,

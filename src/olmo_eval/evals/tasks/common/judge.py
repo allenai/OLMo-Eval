@@ -32,11 +32,12 @@ from olmo_eval.common.metrics import Metric
 from olmo_eval.common.multi_turn import turn_count, turn_replies
 from olmo_eval.common.scorers import ScoringIncompleteError
 from olmo_eval.common.scorers.base import Scorer
+from olmo_eval.common.scorers.execution import format_scoring_error
 from olmo_eval.common.scorers.llm_judge import JudgeFn, build_openai_judge_fn, parse_judge_spec
 from olmo_eval.common.types import Instance, LMOutput, Response
 from olmo_eval.inference.retry import retry_with_backoff
 
-from .base import Task, TaskConfig, _format_scoring_error, _store_output_score
+from .base import Task, TaskConfig, _store_output_score
 
 logger = logging.getLogger(__name__)
 
@@ -455,7 +456,7 @@ class JudgedTask(Task):
                     responses[response_index].outputs[output_index],
                     scorer_name=self.judge_scorer_name,
                     score=0.0,
-                    scoring_error=_format_scoring_error(score, phase="judge"),
+                    scoring_error=format_scoring_error(score, phase="judge"),
                 )
                 continue
             scores_by_response[response_index][output_index] = score

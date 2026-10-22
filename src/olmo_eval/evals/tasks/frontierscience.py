@@ -71,6 +71,7 @@ from typing import Any
 
 from olmo_eval.common.metrics import Metric
 from olmo_eval.common.scorers.base import LogprobScorer, Scorer
+from olmo_eval.common.scorers.execution import format_scoring_error
 from olmo_eval.common.scorers.llm_judge import JudgeFn, build_openai_judge_fn, parse_judge_spec
 from olmo_eval.common.types import (
     Instance,
@@ -89,7 +90,7 @@ from olmo_eval.evals.tasks.common import (
     register,
     register_variant,
 )
-from olmo_eval.evals.tasks.common.base import _format_scoring_error, _store_output_score
+from olmo_eval.evals.tasks.common.base import _store_output_score
 from olmo_eval.inference.retry import retry_with_backoff
 
 logger = logging.getLogger(__name__)
@@ -619,7 +620,7 @@ class _FrontierScience(Task, ABC):
                     responses[response_index].outputs[output_index],
                     scorer_name=FRONTIERSCIENCE_SCORER_NAME,
                     score=0.0,
-                    scoring_error=_format_scoring_error(scores, phase="judge"),
+                    scoring_error=format_scoring_error(scores, phase="judge"),
                 )
                 continue
             for key, value in scores.items():
