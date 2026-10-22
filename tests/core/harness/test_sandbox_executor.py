@@ -61,6 +61,7 @@ class TestStreamingControlCommand(unittest.IsolatedAsyncioTestCase):
             "bash",
             "-c",
             "echo ok",
+            stdin=None,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -161,7 +162,7 @@ class TestStreamingControlCommand(unittest.IsolatedAsyncioTestCase):
         started = asyncio.Event()
         cleanup = []
 
-        async def control(command, timeout):
+        async def control(command, timeout, *, input_data=None):
             if isinstance(command, list) and command[0] == "setsid":
                 started.set()
                 await asyncio.Event().wait()
@@ -267,7 +268,13 @@ class TestStreamingControlCommand(unittest.IsolatedAsyncioTestCase):
             release = asyncio.Event()
 
             async def control(
-                command, timeout, running=running, cleaning=cleaning, release=release, failed=failed
+                command,
+                timeout,
+                running=running,
+                cleaning=cleaning,
+                release=release,
+                failed=failed,
+                input_data=None,
             ):
                 if command[0] == "setsid":
                     running.set()
@@ -517,7 +524,7 @@ async def test_session_cleanup_waits_for_supervisor_confirmation(
     executor._deployment = SimpleNamespace(container_name="test")
     executor._runtime = SimpleNamespace()
 
-    async def control(command, timeout):
+    async def control(command, timeout, *, input_data=None):
         if command[0] == "setsid":
             if cancel_before_record:
                 raise asyncio.CancelledError
@@ -586,7 +593,7 @@ async def test_command_timeout_label_uses_supervisor_result(monkeypatch, exit_co
     )
     commands = []
 
-    async def control(command, timeout):
+    async def control(command, timeout, *, input_data=None):
         commands.append(command)
         report = json.dumps({"exit_code": exit_code, "timed_out": timed_out})
         return SimpleNamespace(
@@ -616,7 +623,7 @@ async def test_missing_or_failed_supervisor_completion_quarantines(monkeypatch, 
         "olmo_eval.harness.sandbox.executor.uuid.uuid4", lambda: SimpleNamespace(hex="test")
     )
 
-    async def control(command, timeout):
+    async def control(command, timeout, *, input_data=None):
         if command[0] == "setsid":
             output = "__OLMO_STARTED_test__\n"
             if completion:
@@ -697,7 +704,7 @@ async def test_background_output_after_completion_is_preserved(monkeypatch):
         "olmo_eval.harness.sandbox.executor.uuid.uuid4", lambda: SimpleNamespace(hex="test")
     )
 
-    async def control(command, timeout):
+    async def control(command, timeout, *, input_data=None):
         return SimpleNamespace(
             stdout='__OLMO_STARTED_test__\nforeground\n__OLMO_FINISHED_test__:{"exit_code":0,"timed_out":false}\nbackground\n',
             stderr="",
@@ -708,3 +715,60 @@ async def test_background_output_after_completion_is_preserved(monkeypatch):
     result = await executor.execute_command("trusted-probe", timeout=3)
     assert result.success and result.output == "foregroundbackground\n"
     assert executor.is_running
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("blocked", [False, True])
+async def test_control_stdin_streams_large_payload_and_respects_deadline(monkeypatch, blocked):
+    from types import SimpleNamespace
+
+    original_create = asyncio.create_subprocess_exec
+    processes = []
+
+    async def create(*args, **kwargs):
+        assert args[:3] == ("podman", "exec", "-i")
+        assert max(map(len, args)) < 4096
+        code = (
+            "import time; time.sleep(60)"
+            if blocked
+            else "import sys; print(len(sys.stdin.buffer.read()))"
+        )
+        process = await original_create(sys.executable, "-c", code, **kwargs)
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create)
+    executor = SandboxExecutor(SandboxConfig(image="test", mode=SandboxMode.DOCKER))
+    executor._deployment = SimpleNamespace(container_name="test")
+    payload = b"x" * (4 * 1024 * 1024)
+    if blocked:
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(
+                executor._execute_stream_control("probe", timeout=0.1, input_data=payload),
+                timeout=5,
+            )
+        assert processes[0].returncode == -9
+    else:
+        result = await executor._execute_stream_control("probe", timeout=5, input_data=payload)
+        assert result.exit_code == 0 and int(result.stdout.strip()) == len(payload)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("source", ["\ud800", "\udcff", "\0"])
+@pytest.mark.parametrize("method", ["execute_code", "execute_command"])
+async def test_invalid_source_does_not_quarantine_or_start_a_command(monkeypatch, source, method):
+    from types import SimpleNamespace
+
+    executor = SandboxExecutor(SandboxConfig(image="test", mode=SandboxMode.DOCKER))
+    executor._deployment = SimpleNamespace(container_name="test")
+    executor._runtime = SimpleNamespace()
+    control = mock.AsyncMock()
+    monkeypatch.setattr(executor, "_execute_stream_control", control)
+    if method == "execute_code":
+        result = await executor.execute_code(source, timeout=3)
+        assert not result.success and result.error
+    else:
+        with pytest.raises(ValueError):
+            await executor.execute_command(source, timeout=3)
+    assert executor.is_running
+    control.assert_not_called()

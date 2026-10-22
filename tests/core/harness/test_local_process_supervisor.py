@@ -45,14 +45,15 @@ def test_supervisor_reaps_escaped_descendants(tmp_path, interrupt):
             str(record),
             "__OLMO_STARTED_test__",
             "0.2" if interrupt == "timeout" else "60",
-            sys.executable,
-            "-c",
-            code,
         ],
+        stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
     )
+    process.stdin.write(json.dumps(["python3", "-c", code]))
+    process.stdin.close()
+    process.stdin = None
     try:
         _wait_for(child_file)
         pid = int(child_file.read_text())
@@ -86,10 +87,8 @@ def test_supervisor_isolates_imports_and_reports_ordinary_exit(tmp_path):
             str(record),
             "__OLMO_STARTED_test__",
             "5",
-            sys.executable,
-            "-c",
-            "print('ok'); raise SystemExit(124)",
         ],
+        input=json.dumps(["python3", "-c", "print('ok'); raise SystemExit(124)"]),
         cwd=tmp_path,
         env={**os.environ, "PYTHONPATH": str(tmp_path)},
         capture_output=True,
