@@ -5,24 +5,26 @@ import ctypes
 import json
 import os
 import signal
+import shlex
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
-record, marker, duration, *command = sys.argv[1:]
+record, marker, duration = sys.argv[1:]
 if ctypes.CDLL(None, use_errno=True).prctl(36, 1, 0, 0, 0) != 0:
     raise OSError(ctypes.get_errno(), "Could not become a child subreaper")
 interrupted = False
+reading_payload = False
 
 def interrupt(signum, frame):
     global interrupted
     interrupted = True
+    if reading_payload:
+        raise InterruptedError("Command cancelled while receiving its payload")
 
 signal.signal(signal.SIGUSR1, interrupt)
-Path(record).write_text(Path("/proc/self/stat").read_text())
-print(marker, flush=True)
-started = time.monotonic()
 cleanup_started = False
 
 def clean_children():
@@ -45,25 +47,48 @@ def clean_children():
         time.sleep(0.025)
 
 try:
-    child = subprocess.Popen(["timeout", "--kill-after=5s", duration + "s", *command])
-    while child.poll() is None and not interrupted:
-        time.sleep(0.025)
-    code = child.poll()
-    timed_out = code in (-9, 124, 137) and time.monotonic() - started >= float(duration)
-    if interrupted or timed_out:
-        cleanup_started = True
-        clean_children()
-    else:
-        try:
-            while os.waitpid(-1, os.WNOHANG)[0]:
-                pass
-        except ChildProcessError:
-            Path(record + ".clean").touch()
-    code = 124 if interrupted else code
-    code = 128 - code if code < 0 else code
-    finished = marker.replace("__OLMO_STARTED_", "__OLMO_FINISHED_", 1)
-    report = json.dumps({"exit_code": code, "timed_out": timed_out})
-    print("\n" + finished + ":" + report, flush=True)
+    Path(record).write_text(Path("/proc/self/stat").read_text())
+    print(marker, flush=True)
+    reading_payload = True
+    if interrupted:
+        raise InterruptedError("Command cancelled before receiving its payload")
+    command = json.load(sys.stdin)
+    reading_payload = False
+    if len(command) != 3 or command[1] != "-c" or command[0] not in ("python3", "bash", "sh"):
+        raise ValueError("Unsupported local command payload")
+    with tempfile.TemporaryDirectory(prefix="_sandbox_command_") as directory:
+        source = Path(directory) / "source"
+        source.write_text(command[2], encoding="utf-8")
+        if command[0] == "python3":
+            wrapper = (
+                f"exec(compile(open({str(source)!r}, encoding='utf-8').read(), "
+                "'<string>', 'exec'))"
+            )
+        else:
+            wrapper = f'eval "$(cat {shlex.quote(str(source))})"'
+        started = time.monotonic()
+        child = subprocess.Popen(
+            ["timeout", "--kill-after=5s", duration + "s", command[0], "-c", wrapper],
+            stdin=subprocess.DEVNULL,
+        )
+        while child.poll() is None and not interrupted:
+            time.sleep(0.025)
+        code = child.poll()
+        timed_out = code in (-9, 124, 137) and time.monotonic() - started >= float(duration)
+        if interrupted or timed_out:
+            cleanup_started = True
+            clean_children()
+        else:
+            try:
+                while os.waitpid(-1, os.WNOHANG)[0]:
+                    pass
+            except ChildProcessError:
+                Path(record + ".clean").touch()
+        code = 124 if interrupted else code
+        code = 128 - code if code < 0 else code
+        finished = marker.replace("__OLMO_STARTED_", "__OLMO_FINISHED_", 1)
+        report = json.dumps({"exit_code": code, "timed_out": timed_out})
+        print("\n" + finished + ":" + report, flush=True)
 except BaseException:
     if not cleanup_started:
         clean_children()

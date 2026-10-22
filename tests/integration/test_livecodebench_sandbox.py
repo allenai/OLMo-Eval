@@ -381,3 +381,14 @@ async def test_timeout_cleanup_preserves_concurrent_command_and_background(sandb
         if not other.done():
             other.cancel()
             await asyncio.gather(other, return_exceptions=True)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("kind", ["code", "command"])
+async def test_large_payload_does_not_use_runtime_argv(sandbox, kind):
+    payload = ("🙂" if kind == "code" else "x") * (300 * 1024)
+    if kind == "code":
+        result = await sandbox.execute_code(f"print(len({payload!r}))", timeout=10)
+    else:
+        result = await sandbox.execute_command(f"printf '%s' '{payload}' | wc -c", timeout=10)
+    assert result.success and int(result.output.strip()) == len(payload)

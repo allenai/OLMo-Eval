@@ -618,6 +618,9 @@ class SandboxExecutor:
         marker = f"__OLMO_STARTED_{command_id}__\n"
         cleanup = ["bash", "-c", COMMAND_CLEANUP, "_", pid_file]
         argv = ["bash", "-c", command] if isinstance(command, str) else list(command)
+        if any("\0" in argument for argument in argv):
+            raise ValueError("embedded null byte")
+        input_data = json.dumps(argv, ensure_ascii=False).encode("utf-8")
         cleanup_session = True
         command_cancelled = False
         try:
@@ -633,9 +636,9 @@ class SandboxExecutor:
                         pid_file,
                         marker.rstrip(),
                         str(timeout),
-                        *argv,
                     ],
                     timeout + 10.0,
+                    input_data=input_data,
                 )
             except TimeoutError as exc:
                 await self._quarantine_if_unresponsive(exc)
@@ -976,7 +979,7 @@ class SandboxExecutor:
         return ExecutionResult(exit_code == 0, full_output, exit_code)
 
     async def _execute_stream_control(
-        self, command: str | Sequence[str], timeout: float
+        self, command: str | Sequence[str], timeout: float, *, input_data: bytes | None = None
     ) -> _ControlCommandResult:
         """Run a sandbox command with bounded captured output and a client deadline."""
         argv = ["bash", "-c", command] if isinstance(command, str) else list(command)
@@ -985,19 +988,35 @@ class SandboxExecutor:
             process = await asyncio.create_subprocess_exec(
                 self.config.container_runtime,
                 "exec",
+                *(["-i"] if input_data is not None else []),
                 container_name,
                 *argv,
+                stdin=asyncio.subprocess.PIPE if input_data is not None else None,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
             assert process.stdout is not None and process.stderr is not None
+
+            async def send_input() -> None:
+                if input_data is not None:
+                    assert process.stdin is not None
+                    try:
+                        for offset in range(0, len(input_data), 64 * 1024):
+                            process.stdin.write(input_data[offset : offset + 64 * 1024])
+                            await process.stdin.drain()
+                    except (BrokenPipeError, ConnectionResetError):
+                        pass
+                    finally:
+                        process.stdin.close()
+
             readers = (
                 asyncio.create_task(_read_bounded_output(process.stdout)),
                 asyncio.create_task(_read_bounded_output(process.stderr)),
                 asyncio.create_task(process.wait()),
+                asyncio.create_task(send_input()),
             )
             try:
-                stdout, stderr, _ = await asyncio.wait_for(
+                stdout, stderr, _, _ = await asyncio.wait_for(
                     asyncio.gather(*readers), timeout=timeout
                 )
             finally:
@@ -1015,6 +1034,9 @@ class SandboxExecutor:
                 stderr=stderr.decode(errors="backslashreplace"),
                 exit_code=process.returncode or 0,
             )
+
+        if input_data is not None:
+            raise ValueError("Command stdin requires a local container runtime")
 
         from swerex.runtime.abstract import Command
 
