@@ -81,6 +81,28 @@ async def test_generation_counts_survive_task_result_upserts(
         assert stored.scalar_one() == counts
 
 
+async def test_scoring_failures_are_stored_with_the_task_result(
+    client: httpx.AsyncClient, session: Any
+) -> None:
+    await seed_contract_example_run(client)
+    payload = load_example("ingest/task-result.request.json")
+    payload["scoring_failures"] = {
+        "instances_unscored": 1,
+        "instances_partially_scored": 2,
+        "outputs_unscored": 3,
+        "infrastructure": 2,
+        "by_type": {"JudgeParseError": 2, "KeyError": 1},
+        "first_error": "JudgeParseError: no parseable verdict after 3 judge attempts",
+    }
+    response = await client.post(f"/v1/runs/{RUN_ID}/task-results", json=payload)
+    assert response.status_code == 200, response.text
+    stored = await session.execute(
+        text("SELECT scoring_failures FROM task_results WHERE id = :id"),
+        {"id": response.json()["task_result_id"]},
+    )
+    assert stored.scalar_one() == payload["scoring_failures"]
+
+
 async def test_request_id_passthrough(client: httpx.AsyncClient) -> None:
     response = await client.get("/health", headers={"X-Request-Id": "abcdef12-3456"})
     assert response.headers["x-request-id"] == "abcdef12-3456"
@@ -346,7 +368,9 @@ async def test_identical_task_result_reupload_keeps_instances(
     if legacy_hash:
         request = s.TaskResultIn.model_validate(payload)
         legacy_body = {
-            "request": request.model_dump(mode="json", exclude={"generation_counts"}),
+            "request": request.model_dump(
+                mode="json", exclude={"generation_counts", "scoring_failures"}
+            ),
             "files": {
                 path: None for path in (request.predictions_path, request.requests_path) if path
             },

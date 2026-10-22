@@ -92,6 +92,31 @@ describe("pages", () => {
     await waitFor(() => expect(screen.getAllByText("gsm8k:cot:olmo3").length).toBeGreaterThan(0), { timeout: 5000 });
   });
 
+  it("Run overview reports instances that could not be scored", async () => {
+    const failures = {
+      instances_unscored: 3,
+      instances_partially_scored: 2,
+      outputs_unscored: 7,
+      infrastructure: 5,
+      by_type: { JudgeParseError: 5, KeyError: 2 },
+      first_error: "JudgeParseError: no parseable verdict after 3 judge attempts",
+    };
+    const task = runTaskResults(runId, new URLSearchParams()).items.find((row) => !row.error)!;
+    server.use(
+      http.get(`/api/runs/${runId}/task-results`, ({ request }) => {
+        const result = runTaskResults(runId, new URL(request.url).searchParams);
+        return HttpResponse.json({
+          ...result,
+          items: result.items.map((row) => (row.task_result_id === task.task_result_id ? { ...row, scoring_failures: failures } : row)),
+        });
+      }),
+    );
+    renderAt(`/runs/${runId}`);
+    const line = await screen.findByText(/instances could not be scored/, {}, { timeout: 8000 });
+    expect(line.textContent).toContain("scored from part of their outputs");
+    expect(await screen.findByText(/JudgeParseError ×5, KeyError ×2/)).toBeInTheDocument();
+  });
+
   it.each(["tasks", "overview"])("%s keeps baseline generation diagnostics beside its score", async (tab) => {
     const baseline = world.runs.find((r) => r.summary.run_id !== runId && r.model.series === run.model.series)!;
     const counts = { generations: 123, cap_hit: 47, empty: 9 };
