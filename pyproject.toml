@@ -320,6 +320,9 @@ allowed-unresolved-imports = [
     "swerex.**",
     "olmocr.**",
     "pymupdf.**",
+    # Imported by the AA-Briefcase-Lite submission parser inside its sandbox image.
+    "pptx.**",
+    "openpyxl.**",
 ]
 
 [tool.gantry]

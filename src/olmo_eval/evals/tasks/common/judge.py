@@ -33,9 +33,13 @@ from olmo_eval.common.multi_turn import turn_count, turn_replies
 from olmo_eval.common.scorers import ScoringIncompleteError
 from olmo_eval.common.scorers.base import Scorer
 from olmo_eval.common.scorers.execution import format_scoring_error
-from olmo_eval.common.scorers.llm_judge import JudgeFn, build_openai_judge_fn, parse_judge_spec
+from olmo_eval.common.scorers.llm_judge import (
+    JudgeFn,
+    build_openai_judge_fn,
+    judge_with_retries,
+    parse_judge_spec,
+)
 from olmo_eval.common.types import Instance, LMOutput, Response
-from olmo_eval.inference.retry import retry_with_backoff
 
 from .base import Task, TaskConfig, _store_output_score
 
@@ -301,22 +305,15 @@ class JudgedTask(Task):
 
         Returns the parsed verdict, or None if no attempt parsed, with the last raw reply.
         """
-        limiter = self._judge_limiter or self._get_judge_semaphore(None)
-
-        async def call() -> str:
-            # Held for the call only, so backoff waits leave the slot to others.
-            async with limiter:
-                return await judge_fn(prompt, system_prompt=system_prompt)
-
-        raw = ""
-        for attempt in range(JUDGE_ATTEMPTS):
-            raw = await retry_with_backoff(call, context=f"{self.config.name} judge")
-            verdict = parse(raw)
-            if verdict is not None:
-                return verdict, raw
-            if attempt < JUDGE_ATTEMPTS - 1:
-                await asyncio.sleep(2**attempt)
-        return None, raw
+        return await judge_with_retries(
+            judge_fn,
+            prompt,
+            parse,
+            limiter=self._judge_limiter or self._get_judge_semaphore(None),
+            system_prompt=system_prompt,
+            attempts=JUDGE_ATTEMPTS,
+            context=f"{self.config.name} judge",
+        )
 
     async def _judge_output(
         self,

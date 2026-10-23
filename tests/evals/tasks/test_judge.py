@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from olmo_eval.common.multi_turn import scripted_chat_request
+from olmo_eval.common.scorers import llm_judge
 from olmo_eval.common.scorers.llm_judge import parse_judge_spec
 from olmo_eval.common.scoring_failures import ScoringState, scoring_state
 from olmo_eval.common.types import (
@@ -436,7 +437,7 @@ class TestJudgeCalls:
 
     @pytest.mark.anyio
     async def test_a_transient_api_error_is_retried(self, monkeypatch):
-        monkeypatch.setattr(judge_module, "retry_with_backoff", retry_with_backoff)
+        monkeypatch.setattr(llm_judge, "retry_with_backoff", retry_with_backoff)
         replies: list[str | Exception] = [TimeoutError("request timed out"), "PASS"]
 
         async def judge(prompt: str, *, system_prompt: str | None = None) -> str:
