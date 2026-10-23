@@ -4,6 +4,7 @@ This module provides scorers that use language models to evaluate
 responses, following patterns from benchmarks like SimpleQA.
 """
 
+import asyncio
 import logging
 import math
 import re
@@ -19,11 +20,68 @@ from olmo_eval.common.openai_credentials import (
 )
 from olmo_eval.common.scorers.execution import ContextScorer
 from olmo_eval.common.types import Instance, LMOutput, LMRequest, RequestType, SamplingParams
+from olmo_eval.inference.retry import retry_with_backoff
 
 logger = logging.getLogger(__name__)
 
 # Type for judge function: async callable that takes a prompt and returns judge response
 JudgeFn = Callable[..., Coroutine[Any, Any, str]]
+
+#: A judge prompt: plain text, or OpenAI chat content parts such as text and images.
+JudgeContent = str | list[dict[str, Any]]
+
+
+async def judge_with_retries[V](
+    judge_fn: JudgeFn,
+    prompt: JudgeContent,
+    parse: Callable[[str], V | None],
+    *,
+    limiter: asyncio.Semaphore,
+    system_prompt: str | None = None,
+    attempts: int = 3,
+    max_retries: int = 3,
+    retry_delay: float = 1.0,
+    context: str = "",
+) -> tuple[V | None, str]:
+    """Call a judge, retrying failed calls with backoff and unparseable replies.
+
+    The limiter is held for each call only, so backoff waits leave the slot to
+    other calls. A reply that does not parse is asked for again, up to
+    ``attempts`` calls, with a growing wait between them.
+
+    Args:
+        judge_fn: The judge to call.
+        prompt: The judge's user message.
+        parse: Reads a verdict from a reply, or returns None if it holds none.
+        limiter: Bounds the judge calls in flight.
+        system_prompt: The judge's system message, if any.
+        attempts: Calls before an unparseable reply is given up on.
+        max_retries: Retries of a call that fails, as ``retry_with_backoff`` makes them.
+        retry_delay: Base wait in seconds between those retries.
+        context: Label for retry logs.
+
+    Returns:
+        The parsed verdict, or None if no attempt parsed, with the last raw reply.
+
+    Raises:
+        Exception: The last error of a call that failed on every retry.
+    """
+
+    async def call() -> str:
+        async with limiter:
+            return await judge_fn(prompt, system_prompt=system_prompt)
+
+    raw = ""
+    for attempt in range(attempts):
+        raw = await retry_with_backoff(
+            call, max_retries=max_retries, retry_delay=retry_delay, context=context
+        )
+        verdict = parse(raw)
+        if verdict is not None:
+            return verdict, raw
+        if attempt < attempts - 1:
+            await asyncio.sleep(2**attempt)
+    return None, raw
 
 
 @runtime_checkable
@@ -33,7 +91,7 @@ class ConfiguredJudgeFn(Protocol):
     judge_config: dict[str, Any]
 
     def __call__(
-        self, prompt: str, *, system_prompt: str | None = None
+        self, prompt: JudgeContent, *, system_prompt: str | None = None
     ) -> Coroutine[Any, Any, str]: ...
 
 
@@ -161,6 +219,7 @@ def build_openai_judge_fn(
     max_tokens: int = 10,
     temperature: float = 0.0,
     reasoning_effort: str | None = None,
+    response_format: dict[str, Any] | None = None,
 ) -> ConfiguredJudgeFn:
     """Build a lazy async judge function using OpenAI API.
 
@@ -176,9 +235,12 @@ def build_openai_judge_fn(
         temperature: Sampling temperature for the judge.
         reasoning_effort: Optional reasoning effort ("minimal"/"low"/"medium"/"high")
             for reasoning models; dropped automatically if the model rejects it.
+        response_format: Optional ``response_format`` request field, such as a JSON
+            schema the reply must follow.
 
     Returns:
-        An async judge function that validates and calls OpenAI.
+        An async judge function that validates and calls OpenAI. Its prompt is text
+        or a list of chat content parts, such as images beside text.
     """
     _client: list = []  # Mutable container for lazy initialization
     # Adaptive request shape, resolved on first use and cached. Newer models
@@ -188,7 +250,7 @@ def build_openai_judge_fn(
     _send_temperature = True
     _send_reasoning_effort = reasoning_effort is not None
 
-    async def judge(prompt: str, *, system_prompt: str | None = None) -> str:
+    async def judge(prompt: JudgeContent, *, system_prompt: str | None = None) -> str:
         nonlocal _token_param, _send_temperature, _send_reasoning_effort
 
         if not _client:
@@ -203,7 +265,7 @@ def build_openai_judge_fn(
             _client.append((client, credentials.model_name(model)))
         client, request_model = _client[0]
 
-        messages: list[dict[str, str]] = []
+        messages: list[dict[str, Any]] = []
         if system_prompt is not None:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
@@ -226,6 +288,8 @@ def build_openai_judge_fn(
                 kwargs["temperature"] = temperature
             if send_reasoning_effort:
                 kwargs["reasoning_effort"] = reasoning_effort
+            if response_format is not None:
+                kwargs["response_format"] = response_format
             try:
                 response = await client.chat.completions.create(**kwargs)
                 return response.choices[0].message.content or ""
@@ -259,6 +323,8 @@ def build_openai_judge_fn(
         "temperature": temperature,
         "reasoning_effort": reasoning_effort,
     }
+    if response_format is not None:
+        configured.judge_config["response_format"] = response_format
     return configured
 
 

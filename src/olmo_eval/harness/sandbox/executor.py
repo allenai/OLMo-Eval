@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import random
+import shlex
 import time
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
@@ -46,6 +47,36 @@ class _ControlCommandResult:
     stdout: str
     stderr: str
     exit_code: int
+
+
+#: Where detached commands keep their script, output and exit status.
+DETACHED_RUN_ROOT = "/tmp/.detached"
+#: Seconds between checks on a detached command; the last one repeats.
+DETACHED_POLL_INTERVALS = (0.1, 0.2, 0.5, 1.0)
+_DETACHED_CONTROL_TIMEOUT = 30.0
+_DETACHED_MAX_POLL_FAILURES = 3
+
+
+@dataclass(frozen=True)
+class DetachedRun:
+    """How a detached command ended, and where its output is.
+
+    ``exit_code`` is None when the command ran out of time (``timed_out``) or its
+    runner was killed before it could record a status. The caller reads the
+    output files and removes ``run_dir``.
+    """
+
+    run_dir: str
+    exit_code: int | None
+    timed_out: bool = False
+
+    @property
+    def stdout_path(self) -> str:
+        return f"{self.run_dir}/stdout"
+
+    @property
+    def stderr_path(self) -> str:
+        return f"{self.run_dir}/stderr"
 
 
 def _is_bash_syntax_error(exc: BaseException) -> bool:
@@ -824,6 +855,85 @@ class SandboxExecutor:
             stderr=response.stderr or "",
             exit_code=response.exit_code,
         )
+
+    async def run_detached(self, script: str, timeout: float) -> DetachedRun:
+        """Run a bash script detached from the request that starts it, and wait for it.
+
+        A request to the sandbox server is cut off after a few minutes, so a script
+        that may run longer is started in its own session and polled until it exits.
+        Polls go through the container runtime where it is available, as streamed
+        commands' polls do. The script's stdout and stderr go to separate files.
+        A script still running at ``timeout`` is killed with its process group, and
+        a runner that disappears without recording a status ends the wait at once.
+
+        Args:
+            script: The bash script to run.
+            timeout: Seconds to wait for it.
+
+        Returns:
+            How the script ended, with the directory holding its output.
+
+        Raises:
+            RuntimeError: If the sandbox is not started, the script cannot be
+                started, or the sandbox stops answering polls.
+        """
+        if self._runtime is None:
+            raise RuntimeError("Sandbox not started. Call start() first or use async context.")
+        run_dir = f"{DETACHED_RUN_ROOT}/{uuid.uuid4().hex}"
+        # The script travels in the request body, so its size is not bounded by the
+        # operating system's argument limit.
+        await self.write_files({f"{run_dir}/script.sh": script})
+        inner = (
+            f"bash {run_dir}/script.sh > {run_dir}/stdout 2> {run_dir}/stderr < /dev/null; "
+            f"echo $? > {run_dir}/exit"
+        )
+        # The marker keeps a start that a transport retry repeats from running twice.
+        start = await self.execute_command(
+            f"if mkdir {run_dir}/started 2>/dev/null; then "
+            f"setsid nohup bash -c {shlex.quote(inner)} > /dev/null 2>&1 < /dev/null & "
+            f"echo $! > {run_dir}/pid; fi; cat {run_dir}/pid",
+            timeout=_DETACHED_CONTROL_TIMEOUT,
+        )
+        pid = start.output.strip().splitlines()[-1] if start.output.strip() else ""
+        if not start.success or not pid.isdigit():
+            raise RuntimeError(f"Could not start a detached command: {start.output[-2000:]}")
+
+        # A finished script prints its exit code; a live one "running"; a runner
+        # that died without recording one, "gone". The exit file is read again
+        # after the liveness check, in case the script finished in between.
+        status_cmd = (
+            f"cat {run_dir}/exit 2>/dev/null || "
+            f"{{ kill -0 -- -{pid} 2>/dev/null && echo running; }} || "
+            f"cat {run_dir}/exit 2>/dev/null || echo gone"
+        )
+        deadline = time.monotonic() + timeout
+        delays = iter(DETACHED_POLL_INTERVALS)
+        failures = 0
+        while time.monotonic() < deadline:
+            delay = next(delays, DETACHED_POLL_INTERVALS[-1])
+            await asyncio.sleep(max(0.0, min(delay, deadline - time.monotonic())))
+            try:
+                check = await self._execute_stream_control(
+                    status_cmd, timeout=_DETACHED_CONTROL_TIMEOUT
+                )
+            except Exception as e:
+                failures += 1
+                self._log(logging.WARNING, f"Detached command poll failed ({failures}): {e}")
+                if failures >= _DETACHED_MAX_POLL_FAILURES:
+                    raise RuntimeError("The sandbox stopped answering polls") from e
+                continue
+            failures = 0
+            status = check.stdout.strip()
+            if status.lstrip("-").isdigit():
+                return DetachedRun(run_dir, int(status))
+            if status == "gone":
+                return DetachedRun(run_dir, None)
+
+        await self._execute_stream_control(
+            f"kill -TERM -- -{pid} 2>/dev/null; sleep 0.5; kill -KILL -- -{pid} 2>/dev/null; true",
+            timeout=_DETACHED_CONTROL_TIMEOUT,
+        )
+        return DetachedRun(run_dir, None, timed_out=True)
 
     async def write_files(self, files: Mapping[str, str], timeout: float | None = None) -> None:
         """Write files into the sandbox filesystem.

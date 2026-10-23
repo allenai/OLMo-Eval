@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from olmo_eval.common.types import LMRequest, RequestType, SamplingParams
 from olmo_eval.common.types.trajectory import AgentTrajectory
+from olmo_eval.evals.external.args import as_bool, as_list, as_optional_int
 from olmo_eval.evals.external.base import ExternalEval
 from olmo_eval.evals.external.network import get_docker_network_args
 from olmo_eval.evals.external.result import ExternalEvalResult
@@ -117,26 +118,6 @@ def _swebench_version() -> str | None:
         return None
 
 
-def _as_bool(value: Any) -> bool:
-    return value in (True, "true", "True", "1", 1)
-
-
-def _as_optional_int(value: Any) -> int | None:
-    if value in (None, "", "none", "None"):
-        return None
-    return int(value)
-
-
-def _as_list(value: Any) -> list[str] | None:
-    if value is None:
-        return None
-    if isinstance(value, str):
-        items = [v.strip() for v in value.split(",") if v.strip()]
-    else:
-        items = [str(v) for v in value]
-    return items or None
-
-
 @dataclass
 class SWEBenchArgs:
     """Arguments for SWE-bench evaluation."""
@@ -171,9 +152,9 @@ class SWEBenchArgs:
     def from_dict(cls, data: dict[str, Any]) -> SWEBenchArgs:
         scaffold = str(data.get("scaffold", DEFAULT_SCAFFOLD))
         return cls(
-            instance_ids=_as_list(data.get("instance_ids")),
-            repos=_as_list(data.get("repos")),
-            limit=_as_optional_int(data.get("limit")),
+            instance_ids=as_list(data.get("instance_ids")),
+            repos=as_list(data.get("repos")),
+            limit=as_optional_int(data.get("limit")),
             dataset=data.get("dataset", DATASET_PATH),
             # The pinned revision belongs to the default dataset only.
             revision=data.get(
@@ -185,17 +166,17 @@ class SWEBenchArgs:
             max_turns=int(data.get("max_turns", DEFAULT_MAX_TURNS.get(scaffold, 64))),
             command_timeout=float(data.get("command_timeout", 120.0)),
             agent_timeout=float(data.get("agent_timeout", 3600.0)),
-            max_tool_output_chars=_as_optional_int(data.get("max_tool_output_chars", 10000)),
+            max_tool_output_chars=as_optional_int(data.get("max_tool_output_chars", 10000)),
             eval_timeout=float(data.get("eval_timeout", 1800.0)),
             image_timeout=float(data.get("image_timeout", 900.0)),
-            stop_on_submit=_as_bool(data.get("stop_on_submit", True)),
+            stop_on_submit=as_bool(data.get("stop_on_submit", True)),
             resume_from=data.get("resume_from") or None,
             image_source=str(data.get("image_source", "ghcr")),
-            cleanup_images=_as_bool(data.get("cleanup_images", True)),
-            include_hints=_as_bool(data.get("include_hints", False)),
-            oracle=_as_bool(data.get("oracle", False)),
+            cleanup_images=as_bool(data.get("cleanup_images", True)),
+            include_hints=as_bool(data.get("include_hints", False)),
+            oracle=as_bool(data.get("oracle", False)),
             sandbox_mode=data.get("sandbox_mode", "docker"),
-            enable_compaction=_as_bool(data.get("enable_compaction", False)),
+            enable_compaction=as_bool(data.get("enable_compaction", False)),
             scaffold=scaffold,
             max_format_errors=int(data.get("max_format_errors", 64)),
             temperature=float(data.get("temperature", 0.7)),

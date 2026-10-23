@@ -385,14 +385,6 @@ class VanilluxScaffold(Scaffold):
         )
 
     @staticmethod
-    def _accumulate_usage(output: LMOutput, usage: dict[str, int]) -> None:
-        metadata = output.metadata or {}
-        for key in usage:
-            value = metadata.get(key)
-            if isinstance(value, int | float):
-                usage[key] += int(value)
-
-    @staticmethod
     def _record_format_error(
         messages: list[dict[str, Any]],
         turns: list[AgentTurn],
