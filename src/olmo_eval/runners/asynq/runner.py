@@ -956,7 +956,9 @@ class AsyncEvalRunner(RunnerResultsMixin, BaseEvalRunner):
             try:
                 overrides, sampling_overrides = self._build_task_overrides(spec)
                 # Before prepare_task_items, which loads the data.
-                self._check_scaffold(spec, get_task(spec))
+                configured = get_task(spec, overrides or None)
+                self._check_scaffold(spec, configured)
+                self._check_sandbox(spec, configured)
                 task, task_items = prepare_task_items(
                     spec,
                     self.model_name,
@@ -1059,6 +1061,20 @@ class AsyncEvalRunner(RunnerResultsMixin, BaseEvalRunner):
                 f"`--harness {required}`; harness {self.harness_config.name!r} has "
                 f"{f'scaffold={scaffold}' if scaffold else 'no scaffold'}."
             )
+
+    def _check_sandbox(self, spec: str, task: Task) -> None:
+        """Fail before generation if the task runs code and this run's harness has no sandbox.
+
+        Without a sandbox the runner starts no executor, and every execution scorer raises
+        ``SandboxRequiredError`` once generation is done.
+        """
+        if self.harness_config.sandboxes or not _count_execution_scorers(task):
+            return
+        raise ValueError(
+            f"{spec} scores by running code, so it has to run under a harness with sandboxes, "
+            f"for example `--harness codex_universal`; harness {self.harness_config.name!r} "
+            "has none."
+        )
 
     def _build_task_overrides(self, spec: str) -> tuple[dict[str, Any], dict[str, Any]]:
         """Build task and sampling overrides for a given task spec.

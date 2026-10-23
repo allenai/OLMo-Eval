@@ -125,6 +125,69 @@ class TestRequiredScaffold:
         assert len(items) == 2
 
 
+class TestRequiredSandbox:
+    """A task that scores by running code fails before its data loads without a sandbox."""
+
+    SPEC = "humaneval:olmo3base"
+    SANDBOX = SandboxConfig(mode=SandboxMode.LOCAL, image="python:3.12")
+
+    @pytest.fixture
+    def loaded(self, monkeypatch) -> list[str]:
+        """Stand in for prepare_task_items, recording each spec whose data it would load."""
+        loaded: list[str] = []
+
+        def prepare(spec, model_name, overrides, sampling_overrides=None):
+            loaded.append(spec)
+            return get_task(spec, overrides), []
+
+        monkeypatch.setattr("olmo_eval.runners.asynq.runner.prepare_task_items", prepare)
+        return loaded
+
+    def _runner(self, spec: str = SPEC, **harness_fields) -> AsyncEvalRunner:
+        harness = replace(make_harness_config(), **harness_fields)
+        return AsyncEvalRunner(harness_config=harness, task_specs=[spec])
+
+    def test_a_harness_without_sandboxes_is_refused_before_the_data_loads(self, loaded):
+        with pytest.raises(RuntimeError, match=f"{self.SPEC} scores by running code") as exc:
+            self._runner()._prepare_tasks()
+
+        assert "--harness codex_universal" in str(exc.value)
+        assert "harness 'test' has none" in str(exc.value)
+        assert loaded == []
+
+    def test_only_the_task_that_runs_code_is_named(self, loaded):
+        runner = self._runner()
+        runner.task_specs = [self.SPEC, "gsm8k"]
+
+        with pytest.raises(RuntimeError, match="Failed to prepare 1 task") as exc:
+            runner._prepare_tasks()
+
+        assert self.SPEC in str(exc.value)
+        assert "gsm8k" not in str(exc.value)
+
+    def test_a_harness_with_a_sandbox_is_accepted(self, loaded):
+        _, trackers, _ = self._runner(sandboxes=(self.SANDBOX,))._prepare_tasks()
+
+        assert trackers[self.SPEC].error is None
+        assert loaded == [self.SPEC]
+
+    def test_the_check_sees_the_task_overrides(self, loaded):
+        runner = self._runner()
+        runner.task_overrides = {self.SPEC: {"metrics": [AccuracyMetric()]}}
+
+        _, trackers, _ = runner._prepare_tasks()
+
+        assert trackers[self.SPEC].error is None
+        assert loaded == [self.SPEC]
+
+    def test_a_task_that_runs_no_code_needs_no_sandbox(self, loaded):
+        runner = self._runner("mt_bench", scaffold="multi_turn_chat")
+
+        _, trackers, _ = runner._prepare_tasks()
+
+        assert trackers["mt_bench"].error is None
+
+
 class TestAsyncEvalRunnerValidation:
     """Tests for AsyncEvalRunner.validate method."""
 
