@@ -25,14 +25,13 @@ SciEval                    21  multiple choice; 11 name a molecule (SMILES)
 Tasks
 -----
 ``scireas_pro``
-    All 1,356 items, in dataset order (grouped by source, so ``-o limit=N`` on this
-    task does not give a representative subset).
+    All 1,356 items, in dataset order (grouped by source). ``-o limit=N`` draws a
+    seeded random sample, which is not stratified.
 
 ``scireas_pro:fast500``
     A fixed 500-item sample, stratified by source task (proportional allocation,
     largest remainder, seed 20261022), listed in ``scireas_pro_fast500_ids.json``
-    in a seeded random order. Every model sees the same items, and ``-o limit=N``
-    takes a random subset of them.
+    in a seeded random order. Every model sees the same items.
 
 Scoring
 -------
