@@ -16,7 +16,12 @@ from olmo_eval.common.types import (
     SamplingParams,
 )
 from olmo_eval.inference.base import InferenceProvider
-from olmo_eval.inference.request_utils import chat_messages_for_request
+from olmo_eval.inference.request_utils import (
+    chat_messages_for_request,
+    chat_with_images,
+    drop_system_turns,
+    template_has_system_role,
+)
 from olmo_eval.inference.tokenizer_utils import encode_context_and_continuation
 
 logger = get_logger(__name__)
@@ -449,26 +454,18 @@ class HuggingFaceProvider(InferenceProvider):
         """Build processor chat messages, injecting images into the user turn.
 
         Mirrors the released Molmo2 HF eval: a single user turn whose content is
-        the image(s) followed by the question text. A system message (if present)
-        is preserved as a text-only turn; images attach to the first user turn.
+        the image(s) followed by the question text, unless the request places its
+        images with ``{"type": "image"}`` parts. A system message (if present) is
+        preserved as a text-only turn, or dropped when the chat template has no
+        system role.
         """
         image_parts = [{"type": "image", "image": img} for img in (images or ())]
-        messages = chat_messages_for_request(request)
-
-        chat: list[dict[str, Any]] = []
-        attached = False
-        for msg in messages:
-            role = msg.get("role", "user")
-            text = msg.get("content", "") or ""
-            if role == "user" and not attached and image_parts:
-                chat.append(
-                    {"role": role, "content": [*image_parts, {"type": "text", "text": text}]}
-                )
-                attached = True
-            else:
-                chat.append({"role": role, "content": [{"type": "text", "text": text}]})
-        if not attached and image_parts:
-            chat.insert(0, {"role": "user", "content": image_parts})
+        chat = chat_with_images(chat_messages_for_request(request), image_parts)
+        template = getattr(self.processor, "chat_template", None) or getattr(
+            self.tokenizer, "chat_template", None
+        )
+        if not template_has_system_role(template):
+            chat = drop_system_turns(chat)
         return chat
 
     def _generate_multimodal(

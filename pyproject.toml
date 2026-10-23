@@ -256,6 +256,9 @@ select = [
 # CharXiv grading prompts are vendored byte-for-byte from the official repo; their trailing
 # whitespace is part of the official prompt bytes and must not be stripped.
 "src/olmo_eval/evals/vision/scoring/charxiv.py" = ["E501", "W291", "W293"]
+# PixelRAG judge prompts are vendored byte-for-byte from the official repo, trailing
+# whitespace included.
+"src/olmo_eval/evals/vision/scoring/pixelrag.py" = ["E501", "W291", "W293"]
 "tests/evals/vision/test_image_qa_scorers.py" = ["E501"]
 [tool.ruff.format]
 docstring-code-format = true

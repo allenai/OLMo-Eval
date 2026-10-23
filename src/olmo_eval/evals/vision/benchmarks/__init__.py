@@ -21,6 +21,7 @@ from olmo_eval.evals.vision.benchmarks import mmmu_pro as _mmmu_pro  # noqa: F40
 from olmo_eval.evals.vision.benchmarks import muir_bench as _muir_bench  # noqa: F401
 from olmo_eval.evals.vision.benchmarks import olmocr_bench as _olmocr_bench  # noqa: F401
 from olmo_eval.evals.vision.benchmarks import omnidocbench as _omnidocbench  # noqa: F401
+from olmo_eval.evals.vision.benchmarks import pixelrag as _pixelrag  # noqa: F401
 from olmo_eval.evals.vision.benchmarks import pixmo_count as _pixmo_count  # noqa: F401
 from olmo_eval.evals.vision.benchmarks import pixmo_points_eval as _pixmo_points_eval  # noqa: F401
 from olmo_eval.evals.vision.benchmarks import real_world_qa as _real_world_qa  # noqa: F401

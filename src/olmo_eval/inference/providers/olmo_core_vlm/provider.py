@@ -41,7 +41,12 @@ from olmo_eval.common.types import LMOutput, LMRequest, RequestType, SamplingPar
 from olmo_eval.inference.base import InferenceProvider
 from olmo_eval.inference.errors import REQUEST_ERROR_KEY
 from olmo_eval.inference.providers.olmo_core_vlm import cache, checkpoint, preprocessing
-from olmo_eval.inference.request_utils import chat_messages_for_request
+from olmo_eval.inference.request_utils import (
+    chat_messages_for_request,
+    chat_with_images,
+    drop_system_turns,
+    template_has_system_role,
+)
 
 if TYPE_CHECKING:
     import torch
@@ -260,23 +265,13 @@ class OlmoCoreVLMProvider(InferenceProvider):
         Passes structured content parts so the Molmo2 chat template itself
         hoists the image markers in front of the conversation (with ``Image N``
         prefixes for multi-image requests), exactly like the released
-        processor's ``apply_chat_template``.
+        processor's ``apply_chat_template``. A system message is dropped, since the
+        Molmo2 template has no system role.
         """
-        messages = list(chat_messages_for_request(request))
-        chat: list[dict[str, Any]] = []
-        attached = False
-        for msg in messages:
-            role = msg.get("role", "user")
-            text = msg.get("content", "") or ""
-            content: Any = [{"type": "text", "text": text}]
-            if role == "user" and not attached and num_images:
-                content = [{"type": "image"} for _ in range(num_images)] + content
-                attached = True
-            chat.append({"role": role, "content": content})
-        if not attached and num_images:
-            chat.insert(
-                0, {"role": "user", "content": [{"type": "image"} for _ in range(num_images)]}
-            )
+        image_parts = [{"type": "image"} for _ in range(num_images)]
+        chat = chat_with_images(chat_messages_for_request(request), image_parts)
+        if not template_has_system_role(getattr(self.tokenizer, "chat_template", None)):
+            chat = drop_system_turns(chat)
         return self.tokenizer.apply_chat_template(chat, tokenize=False, add_generation_prompt=True)
 
     def _preprocess_images(
