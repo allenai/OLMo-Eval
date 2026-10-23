@@ -33,6 +33,8 @@ from .ngram_copying import (
     NGRAM_COPYING_K_VALUES,
     NGramCopyingBPBMetricByteAvg,
 )
+from .retrieval import NDCGMetric
+from .rouge import RougeLF1Metric, RougeLRecallMetric
 
 __all__ = [
     "AccuracyMetric",
@@ -50,6 +52,7 @@ __all__ = [
     "LogprobPerTokenMCAccuracyMetric",
     "LogprobUncondMCAccuracyMetric",
     "MeanPerplexityMetric",
+    "NDCGMetric",
     "Metric",
     "MultiIFAccuracy",
     "NGRAM_COPYING_K_VALUES",
@@ -57,6 +60,8 @@ __all__ = [
     "PassAtKMetric",
     "PassPowKMetric",
     "RecallMetric",
+    "RougeLF1Metric",
+    "RougeLRecallMetric",
     "SQuADF1Metric",
     "ToolAccuracyMetric",
     "SubsetAccuracyMetric",

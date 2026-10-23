@@ -43,6 +43,7 @@ dependencies = [
     # syllapy (transitive via ifbench) imports pkg_resources, which setuptools>=81 removes.
     "setuptools<81",
     "bm25s>=0.3.9",
+    "rouge-score>=0.1.2",
     # ruler_loader uses huggingface_hub.utils.silent_tqdm, added in 1.10.0. Without a
     # floor, an unlocked resolve can drop to transformers 4.x and hub 0.x.
     "huggingface-hub>=1.10.0",

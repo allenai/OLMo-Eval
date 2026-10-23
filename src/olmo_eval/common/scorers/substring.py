@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 from ..types import Instance, LMOutput
-from .base import Scorer
+from .base import Scorer, _squad_normalize_answer
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,3 +55,39 @@ class SubstringRecallScorer(Scorer):
         )
 
         return matches / len(gold_answers)
+
+
+@dataclass(frozen=True, slots=True)
+class SubstringExactMatchScorer(Scorer):
+    """Substring exact match: 1.0 if *any* gold answer appears in the prediction.
+
+    Distinct from `SubstringRecallScorer`, which returns the *fraction* of gold
+    answers found. That difference matters whenever the gold answers are
+    aliases for one another rather than facts to be jointly recalled: an
+    open-domain QA answer like Natural Questions' carries several surface forms
+    of a single answer, and producing one of them is fully correct, not 1/N
+    correct.
+
+    Normalization (lowercase, strip punctuation, drop articles, collapse
+    whitespace) matches HELMET's `normalize_answer`, so this reproduces its
+    `substring_exact_match` metric for the RAG tasks.
+    """
+
+    name: str = "substring_exact_match"
+
+    def score(self, instance: Instance, output: LMOutput) -> float:
+        if output.text is None:
+            return 0.0
+
+        metadata = instance.metadata or {}
+        golds = metadata.get("all_gold_answers")
+        if not golds:
+            gold = instance.gold_answer
+            if gold is None:
+                return 0.0
+            golds = gold if isinstance(gold, (list, tuple)) else [gold]
+        if not golds:
+            return 0.0
+
+        prediction = _squad_normalize_answer(str(output.text))
+        return float(any(_squad_normalize_answer(str(gold)) in prediction for gold in golds))

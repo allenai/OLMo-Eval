@@ -180,6 +180,11 @@ class TaskConfig:
     prompt_templates: str | None = None
     system_prompt_style: str | None = None
 
+    #: Task-specific settings that shape the data or prompts but have no field of
+    #: their own, such as shot counts, token budgets or source revisions. Set them
+    #: here so that changing one changes the task hash.
+    task_settings: dict[str, Any] | None = None
+
     def __post_init__(self) -> None:
         """Validate scheduler-only sandbox allocation hints."""
         if isinstance(self.output_score_aggregation, str):
@@ -316,6 +321,8 @@ class TaskConfig:
             serialized["system_prompt_style"] = self.system_prompt_style
         if self.strip_thinking:
             serialized["strip_thinking"] = True
+        if self.task_settings is not None:
+            serialized["task_settings"] = self.task_settings
         if any(
             value is not None
             for value in (

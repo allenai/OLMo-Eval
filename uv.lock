@@ -5279,6 +5279,7 @@ dependencies = [
     { name = "prometheus-client" },
     { name = "rich", version = "13.9.4", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-9-olmo-eval-agents' or extra == 'extra-9-olmo-eval-clients' or extra == 'extra-9-olmo-eval-olmo-core' or extra == 'extra-9-olmo-eval-olmo-core-vlm' or extra != 'extra-9-olmo-eval-openhands' or (extra == 'extra-9-olmo-eval-openhands' and extra == 'extra-9-olmo-eval-vllm')" },
     { name = "rich", version = "14.3.4", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-9-olmo-eval-olmo-core' and extra == 'extra-9-olmo-eval-olmo-core-vlm') or (extra != 'extra-9-olmo-eval-olmo-core-vlm' and extra == 'extra-9-olmo-eval-openhands') or (extra != 'extra-9-olmo-eval-olmo-core' and extra == 'extra-9-olmo-eval-openhands')" },
+    { name = "rouge-score" },
     { name = "setuptools" },
     { name = "sympy" },
     { name = "tiktoken" },
@@ -5394,6 +5395,7 @@ requires-dist = [
     { name = "prometheus-client", specifier = ">=0.21.0" },
     { name = "pycocotools", marker = "extra == 'vision'" },
     { name = "rich", specifier = ">=13.7,<15" },
+    { name = "rouge-score", specifier = ">=0.1.2" },
     { name = "scipy", marker = "extra == 'vision'", specifier = "~=1.17.1" },
     { name = "setuptools", specifier = "<81" },
     { name = "smart-open", extras = ["s3"], marker = "extra == 's3'", specifier = ">=7.0.0" },
@@ -10746,6 +10748,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/3e/87/033eebfbee3ec7d92b3bb1717d8f68c88e6fc7de54537040f3b3a405726f/rignore-0.7.6-cp314-cp314t-win_amd64.whl", hash = "sha256:ca36e59408bec81de75d307c568c2d0d410fb880b1769be43611472c61e85c96", size = 725647, upload-time = "2025-11-05T21:41:44.449Z" },
     { url = "https://files.pythonhosted.org/packages/79/62/b88e5879512c55b8ee979c666ee6902adc4ed05007226de266410ae27965/rignore-0.7.6-cp314-cp314t-win_arm64.whl", hash = "sha256:b83adabeb3e8cf662cabe1931b83e165b88c526fa6af6b3aa90429686e474896", size = 656035, upload-time = "2025-11-05T21:41:31.13Z" },
 ]
+
+[[package]]
+name = "rouge-score"
+version = "0.1.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "absl-py" },
+    { name = "nltk" },
+    { name = "numpy" },
+    { name = "six" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e2/c5/9136736c37022a6ad27fea38f3111eb8f02fe75d067f9a985cc358653102/rouge_score-0.1.2.tar.gz", hash = "sha256:c7d4da2683e68c9abf0135ef915d63a46643666f848e558a1b9f7ead17ff0f04", size = 17400, upload-time = "2022-07-22T22:46:22.909Z" }
 
 [[package]]
 name = "rpds-py"
