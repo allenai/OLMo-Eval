@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Any, TypeVar
 
-from olmo_eval.common.types import LMRequest, SamplingParams
+from olmo_eval.common.types import LMOutput, LMRequest, SamplingParams
 from olmo_eval.harness.config import HarnessConfig
 from olmo_eval.harness.result import HarnessResult
 from olmo_eval.inference.base import InferenceProvider
@@ -92,6 +92,15 @@ class Scaffold:
         sandbox managers, connections, etc.
         """
         pass
+
+    @staticmethod
+    def _accumulate_usage(output: LMOutput, usage: dict[str, int]) -> None:
+        """Add a reply's token counts to ``usage``, for each key it already holds."""
+        metadata = output.metadata or {}
+        for key in usage:
+            value = metadata.get(key)
+            if isinstance(value, int | float):
+                usage[key] += int(value)
 
 
 # -----------------------------------------------------------------------------
@@ -213,6 +222,7 @@ from .bfcl_multi_turn import BFCLMultiTurnScaffold  # noqa: E402
 from .multi_turn_chat import MultiTurnChatScaffold  # noqa: E402
 from .openai_agents import OpenAIAgentsScaffold  # noqa: E402
 from .openhands import OpenHandsScaffold  # noqa: E402
+from .stirrup import StirrupScaffold  # noqa: E402
 from .vanillux import VanilluxScaffold  # noqa: E402
 
 __all__ = [
@@ -222,6 +232,7 @@ __all__ = [
     "MultiTurnChatScaffold",
     "OpenAIAgentsScaffold",
     "OpenHandsScaffold",
+    "StirrupScaffold",
     "VanilluxScaffold",
     "get_scaffold",
     "get_scaffold_extras",

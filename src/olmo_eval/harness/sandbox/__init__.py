@@ -3,7 +3,7 @@
 from .config import Capability, SandboxConfig, SandboxMode
 from .diagnostics import start_internal_monitor
 from .errors import SandboxInfrastructureError, SandboxTransportError
-from .executor import SandboxExecutor
+from .executor import DetachedRun, SandboxExecutor
 from .manager import (
     CapabilityExecutionEnvironment,
     ExecutorBinding,
@@ -13,6 +13,7 @@ from .manager import (
 __all__ = [
     "Capability",
     "CapabilityExecutionEnvironment",
+    "DetachedRun",
     "ExecutorBinding",
     "SandboxConfig",
     "SandboxExecutor",
