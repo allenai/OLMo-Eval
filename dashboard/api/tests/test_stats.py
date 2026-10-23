@@ -349,7 +349,9 @@ def test_matrix_scale_performance() -> None:
             higher_is_better=True,
         )
     elapsed = time.perf_counter() - start
-    assert elapsed < 5, f"took {elapsed:.2f}s"
+    # About 1s on a recent laptop and 5s on a GitHub runner; the bound catches an
+    # order-of-magnitude slowdown without failing on a slow runner.
+    assert elapsed < 30, f"took {elapsed:.2f}s"
 
 
 async def test_cache_key_changes_on_reupload(client: httpx.AsyncClient, session: Any) -> None:
