@@ -125,6 +125,32 @@ class TestTaskConfig:
         assert judged["judge_reasoning_effort"] == "high"
         assert judged["judge_max_tokens"] == 8192
 
+    def test_named_primary_metric_resolves_to_its_metric(self):
+        exact = AccuracyMetric(name="exact_match", scorer=ExactMatchScorer)
+        other = AccuracyMetric(name="other", scorer=ExactMatchScorer)
+        config = TaskConfig(name="named", metrics=(other, exact), primary_metric="exact_match")
+
+        assert config.get_primary_metric() is exact
+        assert config.to_dict()["primary_metric"] == exact.to_dict()
+
+    def test_unknown_primary_metric_name_resolves_to_none(self):
+        metric = AccuracyMetric(name="exact_match", scorer=ExactMatchScorer)
+        config = TaskConfig(name="named", metrics=(metric,), primary_metric="missing")
+
+        assert config.get_primary_metric() is None
+
+    def test_ruler_tasks_resolve_their_named_primary_metric(self):
+        """RULER names its primary metric "recall"; before the fix it serialized as None."""
+        import olmo_eval.evals.tasks.ruler  # noqa: F401 - triggers registration
+        from olmo_eval.evals.tasks.common.registry import get_task
+
+        config = get_task("ruler_niah_s_1__4096").config
+        primary = config.get_primary_metric()
+
+        assert primary is not None
+        assert primary.name == "recall"
+        assert config.to_dict()["primary_metric"] == primary.to_dict()
+
 
 class TestTask:
     """Tests for Task base class."""

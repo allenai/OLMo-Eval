@@ -348,7 +348,14 @@ class TaskConfig:
             # If it's a Metric instance, return it directly
             if isinstance(self.primary_metric, Metric):
                 return self.primary_metric
-            # If it's a MetricName enum, we can't resolve it to an instance here
+            # A MetricName (or bare str) names one of this task's own metrics.
+            # Resolving it matters beyond display: a task whose primary metric
+            # stays unresolved contributes nothing to the average-of-averages a
+            # parent suite computes, so the suite silently falls back to
+            # averaging whichever metric name its children happen to share.
+            for metric in self.metrics:
+                if metric.name == self.primary_metric:
+                    return metric
             return None
         # Default to single metric if only one is defined
         if len(self.metrics) == 1:
