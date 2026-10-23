@@ -2,14 +2,22 @@
 
 from __future__ import annotations
 
+import os
+import sys
+from importlib.metadata import PackageNotFoundError
+from pathlib import Path
+
 import pytest
 
+from olmo_eval.upload import provenance
 from olmo_eval.upload.provenance import (
     beaker_info,
     cluster_from_hostname,
     environment_info,
     get_author,
     git_info,
+    interpreter_package_versions,
+    package_versions,
     parse_github_repo,
     resolve_cluster,
 )
@@ -135,3 +143,108 @@ def test_environment_info_shape() -> None:
         "gpu_type",
         "gpu_count",
     }
+
+
+ISOLATED_OUTPUT = '{"vllm": "0.19.0", "torch": "2.10.0", "transformers": "5.9.0"}\n'
+
+
+@pytest.fixture
+def fake_vllm_python(tmp_path: Path) -> str:
+    """A stand-in for /opt/vllm-venv/bin/python in a venv other than the running one.
+
+    Like a real venv interpreter, it is a symlink to the same base Python as the running
+    interpreter, so only the venv directory tells the two apart.
+    """
+    path = tmp_path / "vllm-venv" / "bin" / "python"
+    path.parent.mkdir(parents=True)
+    path.symlink_to(os.path.realpath(sys.executable))
+    return str(path)
+
+
+@pytest.fixture(autouse=True)
+def _clear_interpreter_cache():
+    interpreter_package_versions.cache_clear()
+    yield
+    interpreter_package_versions.cache_clear()
+
+
+def _main_env(monkeypatch, installed: dict[str, str]) -> None:
+    def fake_version(name: str) -> str:
+        if name not in installed:
+            raise PackageNotFoundError(name)
+        return installed[name]
+
+    monkeypatch.setattr(provenance, "version", fake_version)
+
+
+def test_package_versions_records_the_separate_vllm_venv(monkeypatch, fake_vllm_python) -> None:
+    calls = []
+
+    def fake_run(args, cwd=None, timeout=5.0):
+        calls.append(args)
+        return ISOLATED_OUTPUT
+
+    monkeypatch.setattr(provenance, "_run", fake_run)
+    _main_env(monkeypatch, {"olmo-eval": "0.1.0", "transformers": "5.8.0"})
+
+    versions = package_versions({"VLLM_PYTHON": fake_vllm_python})
+
+    assert calls[0][:2] == [fake_vllm_python, "-I"]
+    assert calls[0][-3:] == ["vllm", "torch", "transformers"]
+    assert versions == {
+        "olmo-eval": "0.1.0",
+        "transformers": "5.8.0",
+        "vllm": "0.19.0",
+        "vllm-venv/vllm": "0.19.0",
+        "vllm-venv/torch": "2.10.0",
+        "vllm-venv/transformers": "5.9.0",
+    }
+
+
+def test_package_versions_records_the_serving_vllm(monkeypatch, fake_vllm_python) -> None:
+    monkeypatch.setattr(provenance, "_run", lambda *a, **k: ISOLATED_OUTPUT)
+    _main_env(monkeypatch, {"vllm": "0.18.0"})
+
+    versions = package_versions({"VLLM_PYTHON": fake_vllm_python})
+
+    assert versions["vllm"] == "0.19.0"
+    assert versions["vllm-venv/vllm"] == "0.19.0"
+
+
+def test_package_versions_without_vllm_python(monkeypatch) -> None:
+    def fail_run(*args, **kwargs):
+        raise AssertionError("no interpreter should be spawned")
+
+    monkeypatch.setattr(provenance, "_run", fail_run)
+    _main_env(monkeypatch, {"olmo-eval": "0.1.0"})
+    assert package_versions({}) == {"olmo-eval": "0.1.0"}
+
+
+def test_package_versions_ignores_vllm_python_that_is_this_interpreter(monkeypatch) -> None:
+    def fail_run(*args, **kwargs):
+        raise AssertionError("must not spawn the current interpreter")
+
+    monkeypatch.setattr(provenance, "_run", fail_run)
+    versions = package_versions({"VLLM_PYTHON": sys.executable})
+    assert not any(key.startswith("vllm-venv/") for key in versions)
+
+
+def test_package_versions_ignores_missing_vllm_python(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(provenance, "_run", lambda *a, **k: ISOLATED_OUTPUT)
+    versions = package_versions({"VLLM_PYTHON": str(tmp_path / "missing")})
+    assert not any(key.startswith("vllm-venv/") for key in versions)
+
+
+@pytest.mark.parametrize("output", [None, "", "not json", "[1, 2]"])
+def test_package_versions_tolerates_a_failing_vllm_venv(
+    monkeypatch, fake_vllm_python, output
+) -> None:
+    monkeypatch.setattr(provenance, "_run", lambda *a, **k: output)
+    _main_env(monkeypatch, {"olmo-eval": "0.1.0"})
+    assert package_versions({"VLLM_PYTHON": fake_vllm_python}) == {"olmo-eval": "0.1.0"}
+
+
+def test_interpreter_package_versions_queries_a_real_interpreter() -> None:
+    versions = interpreter_package_versions(sys.executable, ("olmo-eval", "no-such-dist-xyz"))
+    assert "olmo-eval" in versions
+    assert "no-such-dist-xyz" not in versions

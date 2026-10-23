@@ -6,11 +6,13 @@ tool or variable never blocks an upload.
 
 from __future__ import annotations
 
+import json
 import os
 import platform
 import re
 import socket
 import subprocess
+import sys
 from collections.abc import Mapping
 from functools import lru_cache
 from importlib.metadata import PackageNotFoundError, version
@@ -45,8 +47,62 @@ def olmo_eval_version() -> str | None:
         return None
 
 
-def package_versions() -> dict[str, str]:
-    """Installed versions of the packages that most affect results."""
+# The vLLM server can run from its own venv (VLLM_PYTHON, set by the Beaker launcher),
+# whose packages the main interpreter cannot see.
+VLLM_VENV_PACKAGES = ("vllm", "torch", "transformers")
+VLLM_VENV_PREFIX = "vllm-venv/"
+
+_VERSIONS_SCRIPT = """
+import json, sys
+from importlib.metadata import PackageNotFoundError, version
+out = {}
+for name in sys.argv[1:]:
+    try:
+        out[name] = version(name)
+    except PackageNotFoundError:
+        pass
+print(json.dumps(out))
+"""
+
+
+@lru_cache(maxsize=4)
+def interpreter_package_versions(python: str, names: tuple[str, ...]) -> dict[str, str]:
+    """Versions of ``names`` installed for another Python interpreter; empty on failure."""
+    out = _run([python, "-I", "-c", _VERSIONS_SCRIPT, *names], timeout=15.0)
+    if not out:
+        return {}
+    try:
+        parsed = json.loads(out)
+    except ValueError:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    return {str(k): str(v) for k, v in parsed.items() if isinstance(v, str)}
+
+
+def _separate_vllm_python(env: Mapping[str, str]) -> str | None:
+    vllm_python = env.get("VLLM_PYTHON")
+    if not vllm_python or not os.path.exists(vllm_python):
+        return None
+    # Compare environments, not binaries: venv interpreters are symlinks to a shared
+    # base Python, so two venvs on the same version resolve to the same file.
+    venv_dir = os.path.dirname(os.path.dirname(os.path.abspath(vllm_python)))
+    try:
+        if os.path.samefile(venv_dir, sys.prefix):
+            return None
+    except OSError:
+        return None
+    return vllm_python
+
+
+def package_versions(env: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Installed versions of the packages that most affect results.
+
+    When the vLLM server runs from a separate venv, that venv's versions are added
+    under ``vllm-venv/<name>``, and its vLLM is recorded as ``vllm`` because that venv
+    is the one serving.
+    """
+    env = os.environ if env is None else env
     versions: dict[str, str] = {}
     for name in TRACKED_PACKAGES:
         try:
@@ -55,6 +111,13 @@ def package_versions() -> dict[str, str]:
             continue
         except Exception:
             continue
+    vllm_python = _separate_vllm_python(env)
+    if vllm_python:
+        isolated = interpreter_package_versions(vllm_python, VLLM_VENV_PACKAGES)
+        for name, value in isolated.items():
+            versions[VLLM_VENV_PREFIX + name] = value
+        if "vllm" in isolated:
+            versions["vllm"] = isolated["vllm"]
     return versions
 
 
