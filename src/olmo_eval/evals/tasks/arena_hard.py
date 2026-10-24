@@ -107,7 +107,8 @@ ARENA_HARD_REPO = "lmarena-ai/arena-hard-auto"
 ARENA_HARD_REVISION = "15f3746e21432264ce9b453999bde4f3c946d2e6"
 ARENA_HARD_DATA_DIR = "data/arena-hard-v2.0"
 
-ARENA_HARD_DEFAULT_JUDGE_MODEL = "gpt-4.1-2025-04-14"
+# sftlab H128 (Arman, 2026-10-24): judge gpt-6.1-sol through the OpenAI API (upstream GPT-4.1 board: gpt-4.1-2025-04-14)
+ARENA_HARD_DEFAULT_JUDGE_MODEL = "gpt-6.1-sol"
 ARENA_HARD_JUDGE_MAX_TOKENS = 16000
 
 ARENA_HARD_SCORER_NAME = "arena_hard_judge"

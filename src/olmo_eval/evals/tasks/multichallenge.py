@@ -102,7 +102,8 @@ MULTICHALLENGE_REPO = "ScaleAI/MultiChallenge"
 # Pinned so a Hub update cannot silently change the conversations mid-comparison.
 MULTICHALLENGE_REVISION = "670fd81f270314d0f8f82b34fcfe2187fd28f699"
 
-MULTICHALLENGE_DEFAULT_JUDGE_MODEL = "gpt-4o-2024-08-06"
+# sftlab H128 (Arman, 2026-10-24): judge gpt-6.1-sol through the OpenAI API (the paper used gpt-4o-2024-08-06)
+MULTICHALLENGE_DEFAULT_JUDGE_MODEL = "gpt-6.1-sol"
 MULTICHALLENGE_JUDGE_MAX_TOKENS = 4096
 
 MULTICHALLENGE_SCORER_NAME = "multichallenge_judge"
